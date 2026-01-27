@@ -3,5 +3,5 @@ class SupabaseConfig {
   static const String anonKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InlmYW52dm5kcWNpeHdkbGhlZHFvIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Njk1MzUyNDQsImV4cCI6MjA4NTExMTI0NH0.hlq7HmLNDmf70LZChjFiORBnTJJXAsJ_zt9YCt9W5i8';
 
   // Backend server base URL (Vercel deployment)
-  static const String backendBaseUrl = 'https://YOUR_VERCEL_APP_URL/api';
+  static const String backendBaseUrl = 'https://cricket-dash-lgvj7b6mt-hriday-patels-projects.vercel.app/api';
 }
