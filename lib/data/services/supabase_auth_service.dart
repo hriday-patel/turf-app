@@ -1,13 +1,13 @@
-import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:supabase_flutter/supabase_flutter.dart' as supa;
 
 /// Supabase Authentication Service
 class SupabaseAuthService {
-  SupabaseClient get _client => Supabase.instance.client;
+  supa.SupabaseClient get _client => supa.Supabase.instance.client;
 
-  User? get currentUser => _client.auth.currentUser;
+  supa.User? get currentUser => _client.auth.currentUser;
   String? get currentUserId => _client.auth.currentUser?.id;
   bool get isLoggedIn => _client.auth.currentUser != null;
-  Stream<AuthState> get authStateChanges => _client.auth.onAuthStateChange;
+  Stream<supa.AuthState> get authStateChanges => _client.auth.onAuthStateChange;
 
   Future<String> signUpWithEmail({
     required String email,
@@ -48,12 +48,12 @@ class SupabaseAuthService {
     );
   }
 
-  Future<AuthResponse> verifyPhoneOtp({
+  Future<supa.AuthResponse> verifyPhoneOtp({
     required String phone,
     required String token,
   }) async {
     return await _client.auth.verifyOTP(
-      type: OtpType.sms,
+      type: supa.OtpType.sms,
       phone: phone,
       token: token,
     );

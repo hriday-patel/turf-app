@@ -32,8 +32,10 @@ class SupabaseService {
     return _client
         .from('turfs')
         .stream(primaryKey: ['id'])
-        .eq('owner_id', ownerId)
-        .order('created_at', ascending: false);
+        .order('created_at', ascending: false)
+        .map((rows) => rows
+            .where((row) => row['owner_id'] == ownerId)
+            .toList());
   }
 
   Future<List<Map<String, dynamic>>> getApprovedTurfs({String? city}) async {
@@ -72,9 +74,10 @@ class SupabaseService {
     return _client
         .from('slots')
         .stream(primaryKey: ['id'])
-        .eq('turf_id', turfId)
-        .eq('date', date)
-        .order('start_time', ascending: true);
+        .order('start_time', ascending: true)
+        .map((rows) => rows
+            .where((row) => row['turf_id'] == turfId && row['date'] == date)
+            .toList());
   }
 
   Future<bool> slotsExistForDate(String turfId, String date) async {
@@ -115,15 +118,17 @@ class SupabaseService {
     return _client
         .from('bookings')
         .stream(primaryKey: ['id'])
-        .in_('turf_id', turfIds)
-        .order('created_at', ascending: false);
+        .order('created_at', ascending: false)
+        .map((rows) => rows
+            .where((row) => turfIds.contains(row['turf_id']))
+            .toList());
   }
 
   Future<List<Map<String, dynamic>>> getTodaysBookings(List<String> turfIds, String date) async {
     return await _client
         .from('bookings')
         .select('*')
-        .in_('turf_id', turfIds)
+        .inFilter('turf_id', turfIds)
         .eq('booking_date', date)
         .order('created_at', ascending: false);
   }
@@ -132,7 +137,7 @@ class SupabaseService {
     return await _client
         .from('bookings')
         .select('*')
-        .in_('turf_id', turfIds)
+        .inFilter('turf_id', turfIds)
         .eq('payment_status', 'PAY_AT_TURF')
         .order('created_at', ascending: false);
   }
@@ -140,10 +145,6 @@ class SupabaseService {
   Future<void> updateBooking(String bookingId, Map<String, dynamic> data) async {
     data['updated_at'] = DateTime.now().toIso8601String();
     await _client.from('bookings').update(data).eq('id', bookingId);
-  }
-
-  Future<Map<String, dynamic>?> getBookingById(String bookingId) async {
-    return await _client.from('bookings').select('*').eq('id', bookingId).maybeSingle();
   }
 
   Future<Map<String, dynamic>?> getBookingById(String bookingId) async {

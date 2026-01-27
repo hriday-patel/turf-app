@@ -11,6 +11,7 @@ create table if not exists owners (
   is_verified boolean not null default false,
   auth_methods text[] not null default array['email'],
   profile_image text,
+  status text not null default 'ACTIVE',
   created_at timestamptz not null default now(),
   updated_at timestamptz
 );
@@ -24,6 +25,7 @@ create table if not exists players (
   role text not null default 'PLAYER',
   profile_image text,
   favorite_turfs text[] not null default array[]::text[],
+  status text not null default 'ACTIVE',
   created_at timestamptz not null default now(),
   updated_at timestamptz
 );
@@ -48,6 +50,7 @@ create table if not exists turfs (
   is_approved boolean not null default false,
   verification_status text not null default 'PENDING',
   rejection_reason text,
+  status text not null default 'ACTIVE',
   created_at timestamptz not null default now(),
   updated_at timestamptz
 );
@@ -76,6 +79,7 @@ create unique index if not exists slots_unique_time
 -- Bookings
 create table if not exists bookings (
   id uuid primary key default gen_random_uuid(),
+  owner_id uuid not null references owners(id) on delete cascade,
   turf_id uuid not null references turfs(id) on delete cascade,
   slot_id uuid not null references slots(id) on delete restrict,
   booking_date date not null,
@@ -94,13 +98,46 @@ create table if not exists bookings (
   cancelled_at timestamptz,
   cancelled_by text,
   cancellation_reason text,
+  created_by text,
+  updated_by text,
   created_at timestamptz not null default now(),
   updated_at timestamptz
 );
 
+-- Ensure owner_id exists if table was created before this change
+alter table bookings add column if not exists owner_id uuid;
+
+do $$
+begin
+  if not exists (
+    select 1
+    from pg_constraint
+    where conname = 'bookings_owner_fk'
+  ) then
+    alter table bookings
+      add constraint bookings_owner_fk
+      foreign key (owner_id) references owners(id) on delete cascade;
+  end if;
+end$$;
+
 create unique index if not exists bookings_slot_unique
   on bookings (slot_id)
   where booking_status = 'CONFIRMED';
+
+create index if not exists bookings_owner_date_idx
+  on bookings (owner_id, booking_date);
+
+create index if not exists slots_turf_date_idx
+  on slots (turf_id, date, start_time);
+
+create index if not exists turfs_owner_idx
+  on turfs (owner_id, created_at desc);
+
+create index if not exists bookings_payment_status_idx
+  on bookings (payment_status, created_at desc);
+
+create index if not exists bookings_status_idx
+  on bookings (booking_status, created_at desc);
 
 -- RLS
 alter table owners enable row level security;
@@ -110,6 +147,9 @@ alter table slots enable row level security;
 alter table bookings enable row level security;
 
 -- Owners policies
+drop policy if exists "owners_select_own" on owners;
+drop policy if exists "owners_update_own" on owners;
+drop policy if exists "owners_insert_own" on owners;
 create policy "owners_select_own" on owners
   for select using (auth.uid() = id);
 create policy "owners_update_own" on owners
@@ -118,6 +158,9 @@ create policy "owners_insert_own" on owners
   for insert with check (auth.uid() = id);
 
 -- Players policies
+drop policy if exists "players_select_own" on players;
+drop policy if exists "players_update_own" on players;
+drop policy if exists "players_insert_own" on players;
 create policy "players_select_own" on players
   for select using (auth.uid() = id);
 create policy "players_update_own" on players
@@ -126,6 +169,9 @@ create policy "players_insert_own" on players
   for insert with check (auth.uid() = id);
 
 -- Turfs policies
+drop policy if exists "turfs_select_owner" on turfs;
+drop policy if exists "turfs_insert_owner" on turfs;
+drop policy if exists "turfs_update_owner" on turfs;
 create policy "turfs_select_owner" on turfs
   for select using (auth.uid() = owner_id);
 create policy "turfs_insert_owner" on turfs
@@ -134,6 +180,9 @@ create policy "turfs_update_owner" on turfs
   for update using (auth.uid() = owner_id);
 
 -- Slots policies (owners via turf)
+drop policy if exists "slots_select_owner" on slots;
+drop policy if exists "slots_insert_owner" on slots;
+drop policy if exists "slots_update_owner" on slots;
 create policy "slots_select_owner" on slots
   for select using (exists(select 1 from turfs t where t.id = slots.turf_id and t.owner_id = auth.uid()));
 create policy "slots_insert_owner" on slots
@@ -142,6 +191,9 @@ create policy "slots_update_owner" on slots
   for update using (exists(select 1 from turfs t where t.id = slots.turf_id and t.owner_id = auth.uid()));
 
 -- Bookings policies (owners via turf)
+drop policy if exists "bookings_select_owner" on bookings;
+drop policy if exists "bookings_insert_owner" on bookings;
+drop policy if exists "bookings_update_owner" on bookings;
 create policy "bookings_select_owner" on bookings
   for select using (exists(select 1 from turfs t where t.id = bookings.turf_id and t.owner_id = auth.uid()));
 create policy "bookings_insert_owner" on bookings
@@ -251,6 +303,7 @@ begin
     where id = slot_id;
 
   insert into bookings (
+    owner_id,
     turf_id,
     slot_id,
     booking_date,
@@ -268,6 +321,7 @@ begin
     booking_status,
     created_at
   ) values (
+    (select t.owner_id from turfs t where t.id = (booking_data->>'turf_id')::uuid),
     (booking_data->>'turf_id')::uuid,
     (booking_data->>'slot_id')::uuid,
     (booking_data->>'booking_date')::date,

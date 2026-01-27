@@ -1,12 +1,13 @@
 import 'package:flutter/material.dart';
-import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:supabase_flutter/supabase_flutter.dart' as supa;
 import '../../../data/services/supabase_auth_service.dart';
 import '../../../data/services/supabase_service.dart';
+import '../../../data/services/supabase_backend_service.dart';
 import '../../../data/models/owner_model.dart';
 import '../../../data/models/player_model.dart';
 import '../../../core/constants/enums.dart';
 
-enum AuthState {
+enum AuthStatus {
   initial,
   loading,
   authenticated,
@@ -19,8 +20,9 @@ enum AuthState {
 class AuthProvider extends ChangeNotifier {
   final SupabaseAuthService _authService = SupabaseAuthService();
   final SupabaseService _supabaseService = SupabaseService();
+  final SupabaseBackendService _backendService = SupabaseBackendService();
 
-  AuthState _authState = AuthState.initial;
+  AuthStatus _authState = AuthStatus.initial;
   OwnerModel? _currentOwner;
   PlayerModel? _currentPlayer;
   String? _errorMessage;
@@ -31,13 +33,13 @@ class AuthProvider extends ChangeNotifier {
   String? _phoneNumber;
 
   // Getters
-  AuthState get authState => _authState;
+  AuthStatus get authState => _authState;
   OwnerModel? get currentOwner => _currentOwner;
   PlayerModel? get currentPlayer => _currentPlayer;
   String? get errorMessage => _errorMessage;
   String? get phoneNumber => _phoneNumber;
-  bool get isAuthenticated => _authState == AuthState.authenticated;
-  bool get isLoading => _authState == AuthState.loading || _isLoading;
+  bool get isAuthenticated => _authState == AuthStatus.authenticated;
+  bool get isLoading => _authState == AuthStatus.loading || _isLoading;
   String? get currentUserId => _authService.currentUserId;
 
   UserRole? get currentUserRole {
@@ -61,12 +63,12 @@ class AuthProvider extends ChangeNotifier {
 
   /// Initialize auth state listener
   void _init() {
-    _authService.authStateChanges.listen((AuthState state) async {
+    _authService.authStateChanges.listen((supa.AuthState state) async {
       final user = state.session?.user;
       if (user != null) {
         await _loadUserProfile(user.id);
       } else {
-        _authState = AuthState.unauthenticated;
+        _authState = AuthStatus.unauthenticated;
         _currentOwner = null;
         _currentPlayer = null;
         notifyListeners();
@@ -80,16 +82,16 @@ class AuthProvider extends ChangeNotifier {
 
     try {
       _isProfileLoading = true;
-      _authState = AuthState.loading;
+      _authState = AuthStatus.loading;
       notifyListeners();
 
       final ownerData = await _supabaseService.getOwner(uid);
       if (ownerData != null) {
         _currentOwner = OwnerModel.fromMap(ownerData);
         _currentPlayer = null;
-        _authState = AuthState.authenticated;
+        _authState = AuthStatus.authenticated;
       } else {
-        final playerData = await Supabase.instance.client
+        final playerData = await supa.Supabase.instance.client
             .from('players')
             .select('*')
             .eq('id', uid)
@@ -98,15 +100,15 @@ class AuthProvider extends ChangeNotifier {
         if (playerData != null) {
           _currentPlayer = PlayerModel.fromMap(playerData);
           _currentOwner = null;
-          _authState = AuthState.authenticated;
+          _authState = AuthStatus.authenticated;
         } else {
-          _authState = AuthState.unauthenticated;
+          _authState = AuthStatus.unauthenticated;
           _currentOwner = null;
           _currentPlayer = null;
         }
       }
     } catch (e) {
-      _authState = AuthState.error;
+      _authState = AuthStatus.error;
       _errorMessage = 'Failed to load profile: ${e.toString()}';
     } finally {
       _isProfileLoading = false;
@@ -117,21 +119,21 @@ class AuthProvider extends ChangeNotifier {
   /// Check initial auth state (for splash screen)
   Future<bool> checkAuthState() async {
     try {
-      _authState = AuthState.loading;
+      _authState = AuthStatus.loading;
       notifyListeners();
 
       final user = _authService.currentUser;
 
       if (user != null) {
         await _loadUserProfile(user.id);
-        return _authState == AuthState.authenticated;
+        return _authState == AuthStatus.authenticated;
       } else {
-        _authState = AuthState.unauthenticated;
+        _authState = AuthStatus.unauthenticated;
         notifyListeners();
         return false;
       }
     } catch (e) {
-      _authState = AuthState.unauthenticated;
+      _authState = AuthStatus.unauthenticated;
       notifyListeners();
       return false;
     }
@@ -146,7 +148,7 @@ class AuthProvider extends ChangeNotifier {
     required UserRole role,
   }) async {
     try {
-      _authState = AuthState.loading;
+      _authState = AuthStatus.loading;
       _errorMessage = null;
       notifyListeners();
 
@@ -155,15 +157,17 @@ class AuthProvider extends ChangeNotifier {
       }
 
       if (role == UserRole.owner) {
-        final isEmailTaken =
-            await _authService.isEmailRegistered(email.trim().toLowerCase());
-        if (isEmailTaken) {
+        final existsByEmail = await _backendService.ownerExists(
+          email: email.trim().toLowerCase(),
+        );
+        if (existsByEmail) {
           throw 'Email already registered. Please sign in instead.';
         }
 
-        final isPhoneTaken =
-            await _supabaseService.checkOwnerExists(phone: phone.trim());
-        if (isPhoneTaken) {
+        final existsByPhone = await _backendService.ownerExists(
+          phone: phone.trim(),
+        );
+        if (existsByPhone) {
           throw 'Phone already registered. Please sign in instead.';
         }
       }
@@ -175,16 +179,12 @@ class AuthProvider extends ChangeNotifier {
 
       final now = DateTime.now();
       if (role == UserRole.owner) {
-        await Supabase.instance.client.from('owners').insert({
-          'id': uid,
-          'name': name,
-          'email': email,
-          'phone': phone,
-          'role': 'OWNER',
-          'is_verified': false,
-          'auth_methods': ['email'],
-          'created_at': now.toIso8601String(),
-        });
+        await _backendService.createOwnerProfile(
+          id: uid,
+          name: name,
+          email: email,
+          phone: phone,
+        );
         _currentOwner = OwnerModel(
           uid: uid,
           name: name,
@@ -196,15 +196,12 @@ class AuthProvider extends ChangeNotifier {
         );
         _currentPlayer = null;
       } else {
-        await Supabase.instance.client.from('players').insert({
-          'id': uid,
-          'name': name,
-          'email': email,
-          'phone': phone,
-          'role': 'PLAYER',
-          'favorite_turfs': [],
-          'created_at': now.toIso8601String(),
-        });
+        await _backendService.createPlayerProfile(
+          id: uid,
+          name: name,
+          email: email,
+          phone: phone,
+        );
         _currentPlayer = PlayerModel(
           uid: uid,
           name: name,
@@ -217,11 +214,11 @@ class AuthProvider extends ChangeNotifier {
         _currentOwner = null;
       }
 
-      _authState = AuthState.authenticated;
+      _authState = AuthStatus.authenticated;
       notifyListeners();
       return true;
     } catch (e) {
-      _authState = AuthState.error;
+      _authState = AuthStatus.error;
       _errorMessage = e.toString();
       notifyListeners();
       return false;
@@ -236,7 +233,7 @@ class AuthProvider extends ChangeNotifier {
       _phoneNumber = phone;
       notifyListeners();
 
-      final exists = await _supabaseService.checkOwnerExists(phone: phone);
+      final exists = await _backendService.ownerExists(phone: phone);
       if (!exists) {
         _isLoading = false;
         _errorMessage = 'Phone number not registered. Please sign up.';
@@ -312,7 +309,7 @@ class AuthProvider extends ChangeNotifier {
       final phone = _phoneNumber ?? '';
 
       if (role == UserRole.owner) {
-        await Supabase.instance.client.from('owners').upsert({
+        await supa.Supabase.instance.client.from('owners').upsert({
           'id': currentUserId!,
           'name': name,
           'email': email,
@@ -323,7 +320,7 @@ class AuthProvider extends ChangeNotifier {
           'updated_at': DateTime.now().toIso8601String(),
         });
       } else {
-        await Supabase.instance.client.from('players').upsert({
+        await supa.Supabase.instance.client.from('players').upsert({
           'id': currentUserId!,
           'name': name,
           'email': email,
@@ -352,7 +349,7 @@ class AuthProvider extends ChangeNotifier {
     required String password,
   }) async {
     try {
-      _authState = AuthState.loading;
+      _authState = AuthStatus.loading;
       _errorMessage = null;
       notifyListeners();
 
@@ -370,7 +367,7 @@ class AuthProvider extends ChangeNotifier {
 
       return true;
     } catch (e) {
-      _authState = AuthState.error;
+      _authState = AuthStatus.error;
       _errorMessage = e.toString();
       notifyListeners();
       return false;
@@ -383,7 +380,7 @@ class AuthProvider extends ChangeNotifier {
       await _authService.signOut();
       _currentOwner = null;
       _currentPlayer = null;
-      _authState = AuthState.unauthenticated;
+      _authState = AuthStatus.unauthenticated;
       notifyListeners();
     } catch (e) {
       _errorMessage = 'Failed to sign out: ${e.toString()}';
@@ -406,8 +403,8 @@ class AuthProvider extends ChangeNotifier {
   /// Clear error message
   void clearError() {
     _errorMessage = null;
-    if (_authState == AuthState.error) {
-      _authState = AuthState.unauthenticated;
+    if (_authState == AuthStatus.error) {
+      _authState = AuthStatus.unauthenticated;
     }
     notifyListeners();
   }
