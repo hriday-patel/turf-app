@@ -6,6 +6,7 @@ class SupabaseConfig {
   // Override with: --dart-define=BACKEND_BASE_URL=https://your-url/api
   static const String backendBaseUrl = String.fromEnvironment(
     'BACKEND_BASE_URL',
-    defaultValue: 'https://cricket-dash.vercel.app/api',
+    defaultValue:
+        'https://cricket-dash-1d40cxm7b-hriday-patels-projects.vercel.app/api',
   );
 }
