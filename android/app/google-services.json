@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "1045777718518",
+    "project_id": "box-cricket-apphp2309",
+    "storage_bucket": "box-cricket-apphp2309.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:1045777718518:android:1e3d75d9caf7a8dc1760d7",
+        "android_client_info": {
+          "package_name": "com.example.turf_app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCL5DgEYLFuThC8jJoUnwB2vHouBMvJ8V4"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

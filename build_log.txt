@@ -1,0 +1,52 @@
+Building macOS application...                                   
+/Users/hriday/Desktop/Turf-App/macos/Pods/FirebaseCoreInternal/FirebaseCore/Internal/Sources/HeartbeatLogging/HeartbeatsPayload.swift:20:24: warning: using '@_implementationOnly' without enabling library evolution for 'FirebaseCoreInternal' may lead to instability during execution
+  @_implementationOnly import GoogleUtilities
+                       ^
+/Users/hriday/Desktop/Turf-App/macos/Pods/FirebaseCoreInternal/FirebaseCore/Internal/Sources/HeartbeatLogging/HeartbeatsPayload.swift:20:24: warning: using '@_implementationOnly' without enabling library evolution for 'FirebaseCoreInternal' may lead to instability during execution
+  @_implementationOnly import GoogleUtilities
+                       ^
+ld: warning: ignoring duplicate libraries: '-lc++'
+ld: warning: ignoring duplicate libraries: '-lc++'
+/Users/hriday/Desktop/Turf-App/macos/Pods/FirebaseStorage/FirebaseStorage/Sources/Storage.swift:27:22: warning: using '@_implementationOnly' without enabling library evolution for 'FirebaseStorage' may lead to instability during execution
+@_implementationOnly import FirebaseCoreExtension
+                     ^
+/Users/hriday/Desktop/Turf-App/macos/Pods/FirebaseStorage/FirebaseStorage/Sources/StorageComponent.swift:21:22: warning: using '@_implementationOnly' without enabling library evolution for 'FirebaseStorage' may lead to instability during execution
+@_implementationOnly import FirebaseCoreExtension
+                     ^
+/Users/hriday/Desktop/Turf-App/macos/Pods/FirebaseStorage/FirebaseStorage/Sources/Internal/StorageTokenAuthorizer.swift:20:22: warning: using '@_implementationOnly' without enabling library evolution for 'FirebaseStorage' may lead to instability during execution
+@_implementationOnly import FirebaseCoreExtension
+                     ^
+/Users/hriday/Desktop/Turf-App/macos/Pods/FirebaseStorage/FirebaseStorage/Sources/StorageUploadTask.swift:20:24: warning: using '@_implementationOnly' without enabling library evolution for 'FirebaseStorage' may lead to instability during execution
+  @_implementationOnly import GoogleUtilities
+                       ^
+/Users/hriday/Desktop/Turf-App/macos/Pods/FirebaseStorage/FirebaseStorage/Sources/StorageReference.swift:329:14: warning: weak variable 'weakSelf' was never mutated; consider changing to 'let' constant
+    weak var weakSelf = self
+         ~~~ ^
+         let
+/Users/hriday/Desktop/Turf-App/macos/Pods/FirebaseStorage/FirebaseStorage/Sources/Storage.swift:27:22: warning: using '@_implementationOnly' without enabling library evolution for 'FirebaseStorage' may lead to instability during execution
+@_implementationOnly import FirebaseCoreExtension
+                     ^
+/Users/hriday/Desktop/Turf-App/macos/Pods/FirebaseStorage/FirebaseStorage/Sources/StorageComponent.swift:21:22: warning: using '@_implementationOnly' without enabling library evolution for 'FirebaseStorage' may lead to instability during execution
+@_implementationOnly import FirebaseCoreExtension
+                     ^
+/Users/hriday/Desktop/Turf-App/macos/Pods/FirebaseStorage/FirebaseStorage/Sources/Internal/StorageTokenAuthorizer.swift:20:22: warning: using '@_implementationOnly' without enabling library evolution for 'FirebaseStorage' may lead to instability during execution
+@_implementationOnly import FirebaseCoreExtension
+                     ^
+/Users/hriday/Desktop/Turf-App/macos/Pods/FirebaseStorage/FirebaseStorage/Sources/StorageUploadTask.swift:20:24: warning: using '@_implementationOnly' without enabling library evolution for 'FirebaseStorage' may lead to instability during execution
+  @_implementationOnly import GoogleUtilities
+                       ^
+/Users/hriday/Desktop/Turf-App/macos/Pods/FirebaseStorage/FirebaseStorage/Sources/StorageReference.swift:329:14: warning: weak variable 'weakSelf' was never mutated; consider changing to 'let' constant
+    weak var weakSelf = self
+         ~~~ ^
+         let
+ld: warning: ignoring duplicate libraries: '-lc++'
+ld: warning: ignoring duplicate libraries: '-lc++'
+error: unsupported option '-G' for target 'x86_64-apple-macos10.15' (in target 'BoringSSL-GRPC' from project 'Pods')
+warning: Run script build phase 'Run Script' will be run during every build because it does not specify any outputs. To address this issue, either add output dependencies to the script phase, or configure it to run in every build by unchecking "Based on dependency analysis" in the script phase. (in target 'Flutter Assemble' from project 'Runner')
+warning: Run script build phase 'Create Symlinks to Header Folders' will be run during every build because it does not specify any outputs. To address this issue, either add output dependencies to the script phase, or configure it to run in every build by unchecking "Based on dependency analysis" in the script phase. (in target 'gRPC-Core' from project 'Pods')
+warning: Run script build phase 'Create Symlinks to Header Folders' will be run during every build because it does not specify any outputs. To address this issue, either add output dependencies to the script phase, or configure it to run in every build by unchecking "Based on dependency analysis" in the script phase. (in target 'gRPC-C++' from project 'Pods')
+warning: Run script build phase 'Create Symlinks to Header Folders' will be run during every build because it does not specify any outputs. To address this issue, either add output dependencies to the script phase, or configure it to run in every build by unchecking "Based on dependency analysis" in the script phase. (in target 'abseil' from project 'Pods')
+warning: Run script build phase 'Create Symlinks to Header Folders' will be run during every build because it does not specify any outputs. To address this issue, either add output dependencies to the script phase, or configure it to run in every build by unchecking "Based on dependency analysis" in the script phase. (in target 'BoringSSL-GRPC' from project 'Pods')
+** BUILD FAILED **
+
+Build process failed

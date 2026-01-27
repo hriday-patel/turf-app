@@ -1,0 +1,91 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // Helper function to check if user is authenticated
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+    
+    // Helper function to check if user owns the document
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+    
+    // Helper function to get turf owner ID
+    function getTurfOwnerId(turfId) {
+      return get(/databases/$(database)/documents/turfs/$(turfId)).data.ownerId;
+    }
+    
+    // Owners collection
+    match /owners/{ownerId} {
+      // SIMPLIFIED RULES: Allow any authenticated user to read/write their own data
+      // We rely on the app logic to ensure users only access their own data for now
+      allow read, write: if request.auth != null && request.auth.uid == ownerId;
+    }
+
+    // Owner email index (unique constraint)
+    match /owner_email_index/{email} {
+      allow read: if false;
+      allow create: if isAuthenticated()
+        && request.resource.data.ownerId == request.auth.uid
+        && !exists(/databases/$(database)/documents/owner_email_index/$(email));
+      allow update: if false;
+      allow delete: if isAuthenticated() && request.auth.uid == resource.data.ownerId;
+    }
+
+    // Owner phone index (unique constraint)
+    match /owner_phone_index/{phone} {
+      allow read: if false;
+      allow create: if isAuthenticated()
+        && request.resource.data.ownerId == request.auth.uid
+        && !exists(/databases/$(database)/documents/owner_phone_index/$(phone));
+      allow update: if false;
+      allow delete: if isAuthenticated() && request.auth.uid == resource.data.ownerId;
+    }
+    
+    // Players collection
+    match /players/{playerId} {
+      allow read: if isOwner(playerId);
+      allow create: if isAuthenticated() && request.auth.uid == playerId;
+      allow update: if isOwner(playerId);
+      allow delete: if false;
+    }
+    
+    // Turfs collection
+    match /turfs/{turfId} {
+      // Anyone can read approved turfs
+      allow read: if resource.data.isApproved == true || 
+                     isOwner(resource.data.ownerId);
+      // Only authenticated users can create turfs
+      allow create: if isAuthenticated() && 
+                       request.resource.data.ownerId == request.auth.uid;
+      // Only turf owner can update
+      allow update: if isOwner(resource.data.ownerId);
+      // Only turf owner can delete (soft delete recommended)
+      allow delete: if isOwner(resource.data.ownerId);
+    }
+    
+    // Slots collection
+    match /slots/{slotId} {
+      // Public read for availability checking
+      allow read: if true;
+      // Owners can create/update slots for their turfs
+      allow create: if isAuthenticated();
+      allow update: if isAuthenticated();
+      allow delete: if false;
+    }
+    
+    // Bookings collection
+    match /bookings/{bookingId} {
+      // User can read their own bookings OR owner can read their turf bookings
+      allow read: if isOwner(resource.data.userId) ||
+                     isOwner(getTurfOwnerId(resource.data.turfId));
+      // Authenticated users can create bookings
+      allow create: if isAuthenticated();
+      // Only turf owner can update bookings
+      allow update: if isOwner(getTurfOwnerId(resource.data.turfId));
+      allow delete: if false;
+    }
+  }
+}
