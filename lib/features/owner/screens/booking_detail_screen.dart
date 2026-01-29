@@ -2,8 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../../config/colors.dart';
 import '../../../data/models/booking_model.dart';
-import '../../../data/services/supabase_service.dart';
+import '../../../data/services/database_service.dart';
 import '../../../core/constants/enums.dart';
+import '../../../app/routes.dart';
 import '../../auth/providers/auth_provider.dart';
 import '../providers/booking_provider.dart';
 
@@ -18,8 +19,8 @@ class BookingDetailScreen extends StatefulWidget {
   State<BookingDetailScreen> createState() => _BookingDetailScreenState();
 }
 
-class _BookingDetailScreenState extends State<BookingDetailScreen> {
-  final SupabaseService _supabaseService = SupabaseService();
+class _BookingDetailScreenState extends State<BookingDetailScreen> with RouteAware {
+  final DatabaseService _dbService = DatabaseService();
   BookingModel? _booking;
   bool _isLoading = true;
   bool _isProcessing = false;
@@ -30,10 +31,31 @@ class _BookingDetailScreenState extends State<BookingDetailScreen> {
     super.initState();
     _loadBooking();
   }
+  
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final route = ModalRoute.of(context);
+    if (route is PageRoute) {
+      AppRoutes.routeObserver.subscribe(this, route);
+    }
+  }
+  
+  @override
+  void dispose() {
+    AppRoutes.routeObserver.unsubscribe(this);
+    super.dispose();
+  }
+  
+  @override
+  void didPopNext() {
+    debugPrint('BookingDetail: didPopNext - refreshing data');
+    _loadBooking();
+  }
 
   Future<void> _loadBooking() async {
     try {
-      final data = await _supabaseService.getBookingById(widget.bookingId);
+      final data = await _dbService.getBooking(widget.bookingId);
       if (data != null) {
         setState(() {
           _booking = BookingModel.fromMap(data);

@@ -1,12 +1,12 @@
 import 'package:flutter/material.dart';
 import '../../../data/models/turf_model.dart';
-import '../../../data/services/supabase_service.dart';
+import '../../../data/services/database_service.dart';
 import '../../../core/constants/enums.dart';
 
 /// Turf Provider
 /// Manages turf-related state and operations
 class TurfProvider extends ChangeNotifier {
-  final SupabaseService _supabaseService = SupabaseService();
+  final DatabaseService _dbService = DatabaseService();
 
   List<TurfModel> _turfs = [];
   TurfModel? _selectedTurf;
@@ -28,7 +28,7 @@ class TurfProvider extends ChangeNotifier {
 
   /// Load turfs for an owner
   void loadOwnerTurfs(String ownerId) {
-    _supabaseService.streamOwnerTurfs(ownerId).listen(
+    _dbService.streamOwnerTurfs(ownerId).listen(
       (rows) {
         _turfs = rows.map((row) => TurfModel.fromMap(row)).toList();
         notifyListeners();
@@ -52,6 +52,7 @@ class TurfProvider extends ChangeNotifier {
     required String address,
     required TurfType turfType,
     String? description,
+    int numberOfNets = 1,
     required String openTime,
     required String closeTime,
     required int slotDurationMinutes,
@@ -71,6 +72,8 @@ class TurfProvider extends ChangeNotifier {
         'address': address,
         'turf_type': turfType.value,
         'description': description,
+        'number_of_nets': numberOfNets,
+        'status': 'OPEN',
         'open_time': openTime,
         'close_time': closeTime,
         'slot_duration_minutes': slotDurationMinutes,
@@ -83,7 +86,7 @@ class TurfProvider extends ChangeNotifier {
       };
 
       final resultTurfId =
-          await _supabaseService.createTurf(data, turfId: turfId);
+          await _dbService.createTurf(data, turfId: turfId);
       
       _isLoading = false;
       notifyListeners();
@@ -97,13 +100,33 @@ class TurfProvider extends ChangeNotifier {
     }
   }
 
+  /// Update turf status (open/closed/renovation)
+  Future<bool> updateTurfStatus(String turfId, TurfStatus status) async {
+    return await updateTurf(turfId, {'status': status.value});
+  }
+
   /// Update turf
   Future<bool> updateTurf(String turfId, Map<String, dynamic> data) async {
     try {
       _isLoading = true;
       notifyListeners();
 
-      await _supabaseService.updateTurf(turfId, data);
+      await _dbService.updateTurf(turfId, data);
+      
+      // Update the local turf immediately for instant UI feedback
+      final index = _turfs.indexWhere((t) => t.turfId == turfId);
+      if (index != -1) {
+        final currentTurf = _turfs[index];
+        final updatedMap = currentTurf.toMap();
+        updatedMap.addAll(data);
+        updatedMap['updated_at'] = DateTime.now().toIso8601String();
+        _turfs[index] = TurfModel.fromMap(updatedMap);
+        
+        // Also update selected turf if it's the same
+        if (_selectedTurf?.turfId == turfId) {
+          _selectedTurf = _turfs[index];
+        }
+      }
       
       _isLoading = false;
       notifyListeners();
@@ -113,6 +136,18 @@ class TurfProvider extends ChangeNotifier {
       _errorMessage = 'Failed to update turf: $e';
       notifyListeners();
       return false;
+    }
+  }
+  
+  /// Force refresh turfs from database
+  Future<void> refreshTurfs(String ownerId) async {
+    try {
+      final rows = await _dbService.getOwnerTurfs(ownerId);
+      _turfs = rows.map((row) => TurfModel.fromMap(row)).toList();
+      notifyListeners();
+    } catch (e) {
+      _errorMessage = 'Failed to refresh turfs: $e';
+      notifyListeners();
     }
   }
 

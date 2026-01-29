@@ -5,6 +5,7 @@ import 'package:table_calendar/table_calendar.dart';
 import '../../../config/colors.dart';
 import '../../../core/constants/enums.dart';
 import '../../../data/models/turf_model.dart';
+import '../../../app/routes.dart';
 import '../providers/turf_provider.dart';
 import '../providers/slot_provider.dart';
 import '../providers/booking_provider.dart';
@@ -20,7 +21,7 @@ class ManualBookingScreen extends StatefulWidget {
   State<ManualBookingScreen> createState() => _ManualBookingScreenState();
 }
 
-class _ManualBookingScreenState extends State<ManualBookingScreen> {
+class _ManualBookingScreenState extends State<ManualBookingScreen> with RouteAware {
   final _formKey = GlobalKey<FormState>();
   final _nameController = TextEditingController();
   final _phoneController = TextEditingController();
@@ -37,6 +38,29 @@ class _ManualBookingScreenState extends State<ManualBookingScreen> {
     super.initState();
     _loadSlots();
   }
+  
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final route = ModalRoute.of(context);
+    if (route is PageRoute) {
+      AppRoutes.routeObserver.subscribe(this, route);
+    }
+  }
+  
+  @override
+  void dispose() {
+    AppRoutes.routeObserver.unsubscribe(this);
+    _nameController.dispose();
+    _phoneController.dispose();
+    super.dispose();
+  }
+  
+  @override
+  void didPopNext() {
+    debugPrint('ManualBooking: didPopNext - refreshing slots');
+    _loadSlots();
+  }
 
   void _loadSlots() {
     final slotProvider = Provider.of<SlotProvider>(context, listen: false);
@@ -49,13 +73,6 @@ class _ManualBookingScreenState extends State<ManualBookingScreen> {
         slotProvider.loadSlots(widget.turfId, dateStr);
       });
     }
-  }
-
-  @override
-  void dispose() {
-    _nameController.dispose();
-    _phoneController.dispose();
-    super.dispose();
   }
 
   Future<void> _submitBooking() async {

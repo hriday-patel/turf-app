@@ -16,11 +16,45 @@ class OwnerDashboardScreen extends StatefulWidget {
   State<OwnerDashboardScreen> createState() => _OwnerDashboardScreenState();
 }
 
-class _OwnerDashboardScreenState extends State<OwnerDashboardScreen> {
+class _OwnerDashboardScreenState extends State<OwnerDashboardScreen>
+    with WidgetsBindingObserver, RouteAware {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _loadData();
+  }
+  
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    // Subscribe to route changes
+    final route = ModalRoute.of(context);
+    if (route is PageRoute) {
+      AppRoutes.routeObserver.subscribe(this, route);
+    }
+  }
+  
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    AppRoutes.routeObserver.unsubscribe(this);
+    super.dispose();
+  }
+  
+  @override
+  void didPopNext() {
+    // Called when returning to this screen from another screen
+    debugPrint('Dashboard: didPopNext - refreshing data');
+    _loadData();
+  }
+  
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      // Refresh when app comes to foreground
+      _loadData();
+    }
   }
 
   void _loadData() {
@@ -122,7 +156,7 @@ class _OwnerDashboardScreenState extends State<OwnerDashboardScreen> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        AppStrings.welcomeBack,
+                        'Welcome back,',
                         style: TextStyle(
                           fontSize: 14,
                           color: Colors.white.withOpacity(0.8),
@@ -413,33 +447,105 @@ class _OwnerDashboardScreenState extends State<OwnerDashboardScreen> {
             ),
           ),
           const SizedBox(height: 16),
-          Row(
-            children: [
-              Expanded(
-                child: _buildActionCard(
-                  title: 'My Turfs',
-                  subtitle: 'Manage turfs',
-                  icon: Icons.stadium_outlined,
-                  color: AppColors.primary,
-                  onTap: () => Navigator.pushNamed(context, AppRoutes.myTurfs),
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: _buildActionCard(
-                  title: 'Bookings',
-                  subtitle: 'View all',
-                  icon: Icons.calendar_month_outlined,
-                  color: AppColors.secondary,
-                  onTap: () => Navigator.pushNamed(
-                    context,
-                    AppRoutes.bookingManagement,
-                  ),
-                ),
-              ),
-            ],
+          _buildFullWidthActionCard(
+            title: 'My Turfs',
+            subtitle: 'Manage your turfs, view status, and edit details',
+            icon: Icons.stadium_outlined,
+            color: AppColors.primary,
+            onTap: () => Navigator.pushNamed(context, AppRoutes.myTurfs),
+          ),
+          const SizedBox(height: 12),
+          _buildFullWidthActionCard(
+            title: 'Bookings',
+            subtitle: 'View all bookings, manage payments and schedules',
+            icon: Icons.calendar_month_outlined,
+            color: AppColors.secondary,
+            onTap: () => Navigator.pushNamed(
+              context,
+              AppRoutes.bookingManagement,
+            ),
+          ),
+          const SizedBox(height: 12),
+          _buildFullWidthActionCard(
+            title: 'Add New Turf',
+            subtitle: 'Register a new turf for your business',
+            icon: Icons.add_circle_outline,
+            color: AppColors.success,
+            onTap: () => Navigator.pushNamed(context, AppRoutes.addTurf),
           ),
         ],
+      ),
+    );
+  }
+
+  Widget _buildFullWidthActionCard({
+    required String title,
+    required String subtitle,
+    required IconData icon,
+    required Color color,
+    required VoidCallback onTap,
+  }) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        width: double.infinity,
+        padding: const EdgeInsets.all(20),
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            colors: [color, color.withOpacity(0.8)],
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+          ),
+          borderRadius: BorderRadius.circular(16),
+          boxShadow: [
+            BoxShadow(
+              color: color.withOpacity(0.3),
+              blurRadius: 8,
+              offset: const Offset(0, 4),
+            ),
+          ],
+        ),
+        child: Row(
+          children: [
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Colors.white.withOpacity(0.2),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Icon(icon, color: Colors.white, size: 28),
+            ),
+            const SizedBox(width: 16),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    title,
+                    style: const TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.white,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    subtitle,
+                    style: TextStyle(
+                      fontSize: 13,
+                      color: Colors.white.withOpacity(0.9),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            Icon(
+              Icons.arrow_forward_ios,
+              color: Colors.white.withOpacity(0.7),
+              size: 18,
+            ),
+          ],
+        ),
       ),
     );
   }

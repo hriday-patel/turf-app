@@ -1,16 +1,14 @@
 import 'package:flutter/material.dart';
 import '../../../data/models/slot_model.dart';
 import '../../../data/models/turf_model.dart';
-import '../../../data/services/supabase_service.dart';
-import '../../../data/services/supabase_backend_service.dart';
+import '../../../data/services/database_service.dart';
 import '../../../core/constants/enums.dart';
 import '../../../core/utils/price_calculator.dart';
 
 /// Slot Provider
 /// Manages slot generation, availability, and state
 class SlotProvider extends ChangeNotifier {
-  final SupabaseService _supabaseService = SupabaseService();
-  final SupabaseBackendService _backendService = SupabaseBackendService();
+  final DatabaseService _dbService = DatabaseService();
 
   List<SlotModel> _slots = [];
   String? _selectedDate;
@@ -36,7 +34,7 @@ class SlotProvider extends ChangeNotifier {
     _isLoading = true;
     notifyListeners();
 
-    _supabaseService.streamTurfSlots(turfId, date).listen(
+    _dbService.streamTurfSlots(turfId, date).listen(
       (rows) {
         _slots = rows.map((row) => SlotModel.fromMap(row)).toList();
         _isLoading = false;
@@ -61,7 +59,7 @@ class SlotProvider extends ChangeNotifier {
 
       // Check if slots already exist
         final exists =
-          await _supabaseService.slotsExistForDate(turf.turfId, date);
+          await _dbService.slotsExistForDate(turf.turfId, date);
       if (exists) {
         _isLoading = false;
         notifyListeners();
@@ -117,7 +115,7 @@ class SlotProvider extends ChangeNotifier {
       }
 
       // Batch create slots
-      await _supabaseService.batchCreateSlots(slotsData);
+      await _dbService.batchCreateSlots(slotsData);
 
       _isLoading = false;
       notifyListeners();
@@ -133,7 +131,7 @@ class SlotProvider extends ChangeNotifier {
   /// Block a slot (owner action)
   Future<bool> blockSlot(String slotId, String ownerId, String? reason) async {
     try {
-      await _supabaseService.blockSlot(slotId, ownerId, reason);
+      await _dbService.blockSlot(slotId, ownerId, reason);
       return true;
     } catch (e) {
       _errorMessage = 'Failed to block slot: $e';
@@ -145,7 +143,7 @@ class SlotProvider extends ChangeNotifier {
   /// Unblock a slot
   Future<bool> unblockSlot(String slotId) async {
     try {
-      await _supabaseService.unblockSlot(slotId);
+      await _dbService.unblockSlot(slotId);
       return true;
     } catch (e) {
       _errorMessage = 'Failed to unblock slot: $e';
@@ -157,7 +155,7 @@ class SlotProvider extends ChangeNotifier {
   /// Reserve a slot (for booking flow)
   Future<bool> reserveSlot(String slotId, String userId) async {
     try {
-      return await _backendService.reserveSlot(
+      return await _dbService.reserveSlot(
         slotId: slotId,
         userId: userId,
         reservationMinutes: 10,
@@ -172,7 +170,7 @@ class SlotProvider extends ChangeNotifier {
   /// Confirm booking (mark as booked)
   Future<bool> confirmBooking(String slotId) async {
     try {
-      await _backendService.bookSlot(slotId: slotId);
+      await _dbService.bookSlot(slotId);
       return true;
     } catch (e) {
       _errorMessage = 'Failed to confirm booking: $e';
@@ -184,7 +182,7 @@ class SlotProvider extends ChangeNotifier {
   /// Release slot (cancel reservation)
   Future<bool> releaseSlot(String slotId) async {
     try {
-      await _backendService.releaseSlot(slotId: slotId);
+      await _dbService.releaseSlot(slotId);
       return true;
     } catch (e) {
       _errorMessage = 'Failed to release slot: $e';

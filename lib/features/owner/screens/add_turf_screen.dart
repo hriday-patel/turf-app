@@ -1,4 +1,5 @@
-import 'dart:io';
+import 'dart:typed_data';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
@@ -16,22 +17,24 @@ import '../providers/turf_provider.dart';
 /// Add Turf Screen
 /// Multi-step form to add a new turf with pricing rules
 class AddTurfScreen extends StatefulWidget {
-  const AddTurfScreen({super.key});
+  final TurfModel? editTurf; // If provided, we're editing
+
+  const AddTurfScreen({super.key, this.editTurf});
 
   @override
   State<AddTurfScreen> createState() => _AddTurfScreenState();
 }
 
-class _AddTurfScreenState extends State<AddTurfScreen> {
+class _AddTurfScreenState extends State<AddTurfScreen> with RouteAware {
   final Uuid _uuid = const Uuid();
   final PageController _pageController = PageController();
   int _currentStep = 0;
   bool _isLoading = false;
+  bool get isEditing => widget.editTurf != null;
 
   // Form Keys
   final _basicFormKey = GlobalKey<FormState>();
   final _scheduleFormKey = GlobalKey<FormState>();
-  final _pricingFormKey = GlobalKey<FormState>();
 
   // Basic Info Controllers
   final _turfNameController = TextEditingController();
@@ -39,6 +42,7 @@ class _AddTurfScreenState extends State<AddTurfScreen> {
   final _addressController = TextEditingController();
   final _descriptionController = TextEditingController();
   TurfType _selectedTurfType = TurfType.boxCricket;
+  int _numberOfNets = 1;
 
   // Schedule Controllers
   TimeOfDay _openTime = const TimeOfDay(hour: 6, minute: 0);
@@ -46,43 +50,221 @@ class _AddTurfScreenState extends State<AddTurfScreen> {
   int _slotDuration = 60;
   List<String> _selectedDays = ['MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT', 'SUN'];
 
-  // Pricing Controllers
-  final _weekdayDayPriceController = TextEditingController(text: '1000');
-  final _weekdayNightPriceController = TextEditingController(text: '1200');
-  final _saturdayDayPriceController = TextEditingController(text: '1400');
-  final _saturdayNightPriceController = TextEditingController(text: '1600');
-  final _sundayDayPriceController = TextEditingController(text: '1500');
-  final _sundayNightPriceController = TextEditingController(text: '1700');
-  final _holidayDayPriceController = TextEditingController(text: '1800');
-  final _holidayNightPriceController = TextEditingController(text: '2000');
-  TimeOfDay _nightStartTime = const TimeOfDay(hour: 18, minute: 0);
+  // Pricing Controllers - per net, per day type, per time slot
+  List<Map<String, Map<String, TextEditingController>>> _netPricingControllers = [];
 
-  // Images
-  final List<File> _selectedImages = [];
+  // Time slots
+  static const List<Map<String, String>> _timeSlots = [
+    {'label': 'Morning', 'start': '06:00', 'end': '12:00'},
+    {'label': 'Afternoon', 'start': '12:00', 'end': '18:00'},
+    {'label': 'Evening', 'start': '18:00', 'end': '00:00'},
+    {'label': 'Night', 'start': '00:00', 'end': '06:00'},
+  ];
+
+  static const List<String> _dayTypes = ['weekday', 'weekend', 'holiday'];
+
+  // Images - store as XFile for cross-platform support (new images)
+  final List<XFile> _selectedImages = [];
   final ImagePicker _imagePicker = ImagePicker();
+  
+  // Existing images from server (for edit mode)
+  List<TurfImage> _existingImages = [];
+
+  @override
+  void initState() {
+    super.initState();
+    _initializePricingControllers();
+    if (isEditing) {
+      _populateFromTurf(widget.editTurf!);
+    }
+  }
+  
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final route = ModalRoute.of(context);
+    if (route is PageRoute) {
+      AppRoutes.routeObserver.subscribe(this, route);
+    }
+  }
+  
+  @override
+  void didPopNext() {
+    debugPrint('AddTurf: didPopNext - refreshing data if editing');
+    if (isEditing && widget.editTurf != null) {
+      final turfProvider = Provider.of<TurfProvider>(context, listen: false);
+      final authProvider = Provider.of<AuthProvider>(context, listen: false);
+      if (authProvider.currentUserId != null) {
+        turfProvider.loadOwnerTurfs(authProvider.currentUserId!);
+      }
+    }
+  }
+
+  void _initializePricingControllers() {
+    // Dispose old controllers if any
+    for (var netControllers in _netPricingControllers) {
+      for (var dayControllers in netControllers.values) {
+        for (var controller in dayControllers.values) {
+          controller.dispose();
+        }
+      }
+    }
+    
+    _netPricingControllers = List.generate(_numberOfNets, (netIndex) {
+      return {
+        for (var dayType in _dayTypes)
+          dayType: {
+            for (var slot in _timeSlots)
+              slot['label']!: TextEditingController(
+                text: _getDefaultPrice(dayType, slot['label']!).toString(),
+              ),
+          },
+      };
+    });
+  }
+
+  int _getDefaultPrice(String dayType, String slotLabel) {
+    int basePrice = 1000;
+    if (dayType == 'weekend') basePrice = 1300;
+    if (dayType == 'holiday') basePrice = 1500;
+    if (slotLabel == 'Evening') basePrice = (basePrice * 1.2).round();
+    if (slotLabel == 'Night') basePrice = (basePrice * 1.1).round();
+    return basePrice;
+  }
+
+  void _populateFromTurf(TurfModel turf) {
+    _turfNameController.text = turf.turfName;
+    _cityController.text = turf.city;
+    _addressController.text = turf.address;
+    _descriptionController.text = turf.description ?? '';
+    _selectedTurfType = turf.turfType;
+    _numberOfNets = turf.numberOfNets;
+    
+    final openParts = turf.openTime.split(':');
+    _openTime = TimeOfDay(
+      hour: int.parse(openParts[0]),
+      minute: int.parse(openParts[1]),
+    );
+    
+    final closeParts = turf.closeTime.split(':');
+    _closeTime = TimeOfDay(
+      hour: int.parse(closeParts[0]),
+      minute: int.parse(closeParts[1]),
+    );
+    
+    _slotDuration = turf.slotDurationMinutes;
+    _selectedDays = List.from(turf.daysOpen);
+    
+    // Load existing images
+    _existingImages = List.from(turf.images);
+    
+    // Initialize pricing controllers with existing values from turf
+    _initializePricingControllersFromTurf(turf);
+  }
+  
+  /// Initialize pricing controllers with values from existing turf
+  void _initializePricingControllersFromTurf(TurfModel turf) {
+    // Dispose old controllers if any
+    for (var netControllers in _netPricingControllers) {
+      for (var dayControllers in netControllers.values) {
+        for (var controller in dayControllers.values) {
+          controller.dispose();
+        }
+      }
+    }
+    
+    _netPricingControllers = List.generate(_numberOfNets, (netIndex) {
+      // Get pricing for this net from the turf's pricing rules
+      final netPricing = turf.pricingRules.getNetPricing(netIndex + 1);
+      
+      return {
+        'weekday': {
+          'Morning': TextEditingController(
+            text: netPricing?.weekday.morning.price.toInt().toString() ?? 
+                  _getDefaultPrice('weekday', 'Morning').toString(),
+          ),
+          'Afternoon': TextEditingController(
+            text: netPricing?.weekday.afternoon.price.toInt().toString() ?? 
+                  _getDefaultPrice('weekday', 'Afternoon').toString(),
+          ),
+          'Evening': TextEditingController(
+            text: netPricing?.weekday.evening.price.toInt().toString() ?? 
+                  _getDefaultPrice('weekday', 'Evening').toString(),
+          ),
+          'Night': TextEditingController(
+            text: netPricing?.weekday.night.price.toInt().toString() ?? 
+                  _getDefaultPrice('weekday', 'Night').toString(),
+          ),
+        },
+        'weekend': {
+          'Morning': TextEditingController(
+            text: netPricing?.weekend.morning.price.toInt().toString() ?? 
+                  _getDefaultPrice('weekend', 'Morning').toString(),
+          ),
+          'Afternoon': TextEditingController(
+            text: netPricing?.weekend.afternoon.price.toInt().toString() ?? 
+                  _getDefaultPrice('weekend', 'Afternoon').toString(),
+          ),
+          'Evening': TextEditingController(
+            text: netPricing?.weekend.evening.price.toInt().toString() ?? 
+                  _getDefaultPrice('weekend', 'Evening').toString(),
+          ),
+          'Night': TextEditingController(
+            text: netPricing?.weekend.night.price.toInt().toString() ?? 
+                  _getDefaultPrice('weekend', 'Night').toString(),
+          ),
+        },
+        'holiday': {
+          'Morning': TextEditingController(
+            text: netPricing?.holiday.morning.price.toInt().toString() ?? 
+                  _getDefaultPrice('holiday', 'Morning').toString(),
+          ),
+          'Afternoon': TextEditingController(
+            text: netPricing?.holiday.afternoon.price.toInt().toString() ?? 
+                  _getDefaultPrice('holiday', 'Afternoon').toString(),
+          ),
+          'Evening': TextEditingController(
+            text: netPricing?.holiday.evening.price.toInt().toString() ?? 
+                  _getDefaultPrice('holiday', 'Evening').toString(),
+          ),
+          'Night': TextEditingController(
+            text: netPricing?.holiday.night.price.toInt().toString() ?? 
+                  _getDefaultPrice('holiday', 'Night').toString(),
+          ),
+        },
+      };
+    });
+  }
+
+  void _updateNumberOfNets(int newCount) {
+    if (newCount == _numberOfNets) return;
+    setState(() {
+      _numberOfNets = newCount;
+      _initializePricingControllers();
+    });
+  }
 
   @override
   void dispose() {
+    AppRoutes.routeObserver.unsubscribe(this);
     _pageController.dispose();
     _turfNameController.dispose();
     _cityController.dispose();
     _addressController.dispose();
     _descriptionController.dispose();
-    _weekdayDayPriceController.dispose();
-    _weekdayNightPriceController.dispose();
-    _saturdayDayPriceController.dispose();
-    _saturdayNightPriceController.dispose();
-    _sundayDayPriceController.dispose();
-    _sundayNightPriceController.dispose();
-    _holidayDayPriceController.dispose();
-    _holidayNightPriceController.dispose();
+    for (var netControllers in _netPricingControllers) {
+      for (var dayControllers in netControllers.values) {
+        for (var controller in dayControllers.values) {
+          controller.dispose();
+        }
+      }
+    }
     super.dispose();
   }
 
   void _nextStep() {
     if (_currentStep == 0 && !_basicFormKey.currentState!.validate()) return;
     if (_currentStep == 1 && !_scheduleFormKey.currentState!.validate()) return;
-    if (_currentStep == 2 && !_pricingFormKey.currentState!.validate()) return;
 
     if (_currentStep < 3) {
       _pageController.nextPage(
@@ -113,12 +295,59 @@ class _AddTurfScreenState extends State<AddTurfScreen> {
 
       if (images.isNotEmpty) {
         setState(() {
-          _selectedImages.addAll(images.map((x) => File(x.path)));
+          _selectedImages.addAll(images);
         });
       }
     } catch (e) {
       _showError('Failed to pick images: $e');
     }
+  }
+
+  PricingRules _buildPricingRules() {
+    List<NetPricing> netPricingList = [];
+    
+    for (int i = 0; i < _numberOfNets; i++) {
+      final controllers = _netPricingControllers[i];
+      
+      DayTypePricing buildDayTypePricing(String dayType) {
+        return DayTypePricing(
+          morning: TimeSlotPricing(
+            label: 'Morning',
+            startTime: '06:00',
+            endTime: '12:00',
+            price: double.tryParse(controllers[dayType]!['Morning']!.text) ?? 1000,
+          ),
+          afternoon: TimeSlotPricing(
+            label: 'Afternoon',
+            startTime: '12:00',
+            endTime: '18:00',
+            price: double.tryParse(controllers[dayType]!['Afternoon']!.text) ?? 1000,
+          ),
+          evening: TimeSlotPricing(
+            label: 'Evening',
+            startTime: '18:00',
+            endTime: '00:00',
+            price: double.tryParse(controllers[dayType]!['Evening']!.text) ?? 1200,
+          ),
+          night: TimeSlotPricing(
+            label: 'Night',
+            startTime: '00:00',
+            endTime: '06:00',
+            price: double.tryParse(controllers[dayType]!['Night']!.text) ?? 1100,
+          ),
+        );
+      }
+      
+      netPricingList.add(NetPricing(
+        netNumber: i + 1,
+        netName: 'Net ${i + 1}',
+        weekday: buildDayTypePricing('weekday'),
+        weekend: buildDayTypePricing('weekend'),
+        holiday: buildDayTypePricing('holiday'),
+      ));
+    }
+    
+    return PricingRules(netPricing: netPricingList);
   }
 
   Future<void> _submitTurf() async {
@@ -129,117 +358,136 @@ class _AddTurfScreenState extends State<AddTurfScreen> {
       final turfProvider = Provider.of<TurfProvider>(context, listen: false);
       final storageService = StorageService();
 
-      // Create pricing rules
       final openTimeStr = '${_openTime.hour.toString().padLeft(2, '0')}:${_openTime.minute.toString().padLeft(2, '0')}';
       final closeTimeStr = '${_closeTime.hour.toString().padLeft(2, '0')}:${_closeTime.minute.toString().padLeft(2, '0')}';
-      final nightStartStr = '${_nightStartTime.hour.toString().padLeft(2, '0')}:${_nightStartTime.minute.toString().padLeft(2, '0')}';
 
-      final pricingRules = PricingRules(
-        weekday: DayPricing(
-          day: PricingRule(
-            start: openTimeStr,
-            end: nightStartStr,
-            price: double.parse(_weekdayDayPriceController.text),
-          ),
-          night: PricingRule(
-            start: nightStartStr,
-            end: closeTimeStr,
-            price: double.parse(_weekdayNightPriceController.text),
-          ),
-        ),
-        saturday: DayPricing(
-          day: PricingRule(
-            start: openTimeStr,
-            end: nightStartStr,
-            price: double.parse(_saturdayDayPriceController.text),
-          ),
-          night: PricingRule(
-            start: nightStartStr,
-            end: closeTimeStr,
-            price: double.parse(_saturdayNightPriceController.text),
-          ),
-        ),
-        sunday: DayPricing(
-          day: PricingRule(
-            start: openTimeStr,
-            end: nightStartStr,
-            price: double.parse(_sundayDayPriceController.text),
-          ),
-          night: PricingRule(
-            start: nightStartStr,
-            end: closeTimeStr,
-            price: double.parse(_sundayNightPriceController.text),
-          ),
-        ),
-        holiday: DayPricing(
-          day: PricingRule(
-            start: openTimeStr,
-            end: nightStartStr,
-            price: double.parse(_holidayDayPriceController.text),
-          ),
-          night: PricingRule(
-            start: nightStartStr,
-            end: closeTimeStr,
-            price: double.parse(_holidayNightPriceController.text),
-          ),
-        ),
-      );
+      final pricingRules = _buildPricingRules();
 
-      // Pre-generate turf ID to associate images
-      final turfId = _uuid.v4();
+      final turfId = isEditing ? widget.editTurf!.turfId : _uuid.v4();
 
-      // Upload images first (if any)
+      // Upload images (if any) - don't block turf creation on image upload failure
       List<TurfImage> turfImages = [];
+      bool imageUploadFailed = false;
+      String imageUploadMessage = '';
+      
       if (_selectedImages.isNotEmpty) {
         try {
-          final imageUrls = await storageService.uploadMultipleTurfImages(
-            imageFiles: _selectedImages,
+          // Convert XFile to bytes for web compatibility
+          final List<Uint8List> imageBytesList = [];
+          for (final xFile in _selectedImages) {
+            final bytes = await xFile.readAsBytes();
+            imageBytesList.add(bytes);
+          }
+          
+          // Use the new method with status for better feedback
+          final uploadResult = await storageService.uploadMultipleTurfImageBytesWithStatus(
+            imageBytesList: imageBytesList,
             turfId: turfId,
           );
           
-          turfImages = imageUrls.map((url) => TurfImage(
-            url: url,
+          // Check results
+          if (uploadResult.allFailed) {
+            imageUploadFailed = true;
+            imageUploadMessage = kIsWeb 
+                ? 'Image upload failed (network/CORS issue on web). Images not saved.'
+                : 'All images failed to upload';
+            debugPrint('All image uploads failed');
+          } else if (uploadResult.failedCount > 0) {
+            imageUploadFailed = true;
+            imageUploadMessage = '${uploadResult.successCount}/${uploadResult.totalAttempted} images uploaded';
+            debugPrint('Some images failed: ${uploadResult.successCount}/${uploadResult.totalAttempted}');
+          }
+          
+          turfImages = uploadResult.urls.asMap().entries.map((entry) => TurfImage(
+            url: entry.value,
             type: TurfImageType.ground,
+            isPrimary: entry.key == 0,
           )).toList();
         } catch (e) {
-          // If image upload fails, we show error and stop
-          setState(() => _isLoading = false);
-          _showError('Failed to upload images: $e');
-          return;
+          // Image upload failed, but continue with turf creation
+          imageUploadFailed = true;
+          imageUploadMessage = 'Image upload error';
+          debugPrint('Image upload error: $e');
         }
       }
 
-      // Create turf
-      final resultId = await turfProvider.addTurf(
-        turfId: turfId,
-        ownerId: authProvider.currentUserId!,
-        turfName: _turfNameController.text.trim(),
-        city: _cityController.text.trim(),
-        address: _addressController.text.trim(),
-        turfType: _selectedTurfType,
-        description: _descriptionController.text.trim().isEmpty 
-            ? null 
-            : _descriptionController.text.trim(),
-        openTime: openTimeStr,
-        closeTime: closeTimeStr,
-        slotDurationMinutes: _slotDuration,
-        daysOpen: _selectedDays,
-        pricingRules: pricingRules,
-        images: turfImages,
-      );
+      if (isEditing) {
+        // Combine existing images with newly uploaded images
+        final List<Map<String, dynamic>> allImages = [
+          ..._existingImages.map((i) => i.toMap()),
+          ...turfImages.map((i) => i.toMap()),
+        ];
+        
+        // Update existing turf
+        final success = await turfProvider.updateTurf(turfId, {
+          'turf_name': _turfNameController.text.trim(),
+          'city': _cityController.text.trim(),
+          'address': _addressController.text.trim(),
+          'turf_type': _selectedTurfType.value,
+          'description': _descriptionController.text.trim().isEmpty 
+              ? null 
+              : _descriptionController.text.trim(),
+          'number_of_nets': _numberOfNets,
+          'open_time': openTimeStr,
+          'close_time': closeTimeStr,
+          'slot_duration_minutes': _slotDuration,
+          'days_open': _selectedDays,
+          'pricing_rules': pricingRules.toMap(),
+          'images': allImages,
+        });
 
-      setState(() => _isLoading = false);
+        setState(() => _isLoading = false);
 
-      if (resultId != null && mounted) {
-        // Success!
-        _showSuccess(AppStrings.turfAddedSuccess);
-        Navigator.pushReplacementNamed(context, AppRoutes.verificationPending);
-      } else if (mounted) {
-        _showError(turfProvider.errorMessage ?? 'Failed to add turf');
+        if (success && mounted) {
+          // Force refresh turfs from database to ensure UI is updated
+          await turfProvider.refreshTurfs(authProvider.currentUserId!);
+          
+          if (imageUploadFailed && _selectedImages.isNotEmpty) {
+            _showSuccess('Turf updated! $imageUploadMessage');
+          } else {
+            _showSuccess('Turf updated successfully');
+          }
+          Navigator.pop(context, true);
+        } else if (mounted) {
+          _showError(turfProvider.errorMessage ?? 'Failed to update turf');
+        }
+      } else {
+        // Create new turf
+        final resultId = await turfProvider.addTurf(
+          turfId: turfId,
+          ownerId: authProvider.currentUserId!,
+          turfName: _turfNameController.text.trim(),
+          city: _cityController.text.trim(),
+          address: _addressController.text.trim(),
+          turfType: _selectedTurfType,
+          description: _descriptionController.text.trim().isEmpty 
+              ? null 
+              : _descriptionController.text.trim(),
+          numberOfNets: _numberOfNets,
+          openTime: openTimeStr,
+          closeTime: closeTimeStr,
+          slotDurationMinutes: _slotDuration,
+          daysOpen: _selectedDays,
+          pricingRules: pricingRules,
+          images: turfImages,
+        );
+
+        setState(() => _isLoading = false);
+
+        if (resultId != null && mounted) {
+          if (imageUploadFailed && _selectedImages.isNotEmpty) {
+            _showSuccess('${AppStrings.turfAddedSuccess}! $imageUploadMessage');
+          } else {
+            _showSuccess(AppStrings.turfAddedSuccess);
+          }
+          Navigator.pushReplacementNamed(context, AppRoutes.verificationPending);
+        } else if (mounted) {
+          _showError(turfProvider.errorMessage ?? 'Failed to add turf');
+        }
       }
     } catch (e) {
       setState(() => _isLoading = false);
-      _showError('Failed to add turf: $e');
+      _showError('Failed to ${isEditing ? 'update' : 'add'} turf: $e');
     }
   }
 
@@ -268,15 +516,12 @@ class _AddTurfScreenState extends State<AddTurfScreen> {
     return Scaffold(
       backgroundColor: AppColors.background,
       appBar: AppBar(
-        title: const Text('Add New Turf'),
+        title: Text(isEditing ? 'Edit Turf' : 'Add New Turf'),
         backgroundColor: AppColors.primary,
       ),
       body: Column(
         children: [
-          // Step Indicator
           _buildStepIndicator(),
-          
-          // Form Pages
           Expanded(
             child: PageView(
               controller: _pageController,
@@ -289,8 +534,6 @@ class _AddTurfScreenState extends State<AddTurfScreen> {
               ],
             ),
           ),
-          
-          // Navigation Buttons
           _buildNavigationButtons(),
         ],
       ),
@@ -410,7 +653,12 @@ class _AddTurfScreenState extends State<AddTurfScreen> {
             ),
             const SizedBox(height: 16),
             
+            // Turf Type Dropdown
             _buildDropdown(),
+            const SizedBox(height: 16),
+            
+            // Number of Nets
+            _buildNetsSelector(),
             const SizedBox(height: 16),
             
             _buildTextField(
@@ -423,6 +671,90 @@ class _AddTurfScreenState extends State<AddTurfScreen> {
           ],
         ),
       ),
+    );
+  }
+
+  Widget _buildNetsSelector() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text(
+          'Number of Nets/Boxes',
+          style: TextStyle(
+            fontSize: 14,
+            fontWeight: FontWeight.w500,
+            color: AppColors.textPrimary,
+          ),
+        ),
+        const SizedBox(height: 8),
+        Wrap(
+          spacing: 12,
+          children: List.generate(6, (index) {
+            final count = index + 1;
+            final isSelected = _numberOfNets == count;
+            return ChoiceChip(
+              label: Text('$count'),
+              selected: isSelected,
+              onSelected: (selected) {
+                if (selected) _updateNumberOfNets(count);
+              },
+              selectedColor: AppColors.primary,
+              labelStyle: TextStyle(
+                color: isSelected ? Colors.white : AppColors.textPrimary,
+                fontWeight: FontWeight.w600,
+              ),
+            );
+          }),
+        ),
+        const SizedBox(height: 8),
+        Text(
+          'Select how many nets or boxes are available at this turf',
+          style: TextStyle(fontSize: 12, color: AppColors.textSecondary),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildDropdown() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text(
+          'Turf Type',
+          style: TextStyle(
+            fontSize: 14,
+            fontWeight: FontWeight.w500,
+            color: AppColors.textPrimary,
+          ),
+        ),
+        const SizedBox(height: 8),
+        Container(
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: AppColors.border),
+          ),
+          child: DropdownButtonFormField<TurfType>(
+            value: _selectedTurfType,
+            decoration: const InputDecoration(
+              prefixIcon: Icon(Icons.sports_cricket, color: AppColors.primary),
+              border: InputBorder.none,
+              contentPadding: EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+            ),
+            items: TurfType.values.map((type) {
+              return DropdownMenuItem(
+                value: type,
+                child: Text(type.displayName),
+              );
+            }).toList(),
+            onChanged: (value) {
+              if (value != null) {
+                setState(() => _selectedTurfType = value);
+              }
+            },
+          ),
+        ),
+      ],
     );
   }
 
@@ -449,7 +781,6 @@ class _AddTurfScreenState extends State<AddTurfScreen> {
             ),
             const SizedBox(height: 24),
             
-            // Opening & Closing Time
             Row(
               children: [
                 Expanded(
@@ -471,7 +802,6 @@ class _AddTurfScreenState extends State<AddTurfScreen> {
             ),
             const SizedBox(height: 24),
             
-            // Slot Duration
             const Text(
               'Slot Duration',
               style: TextStyle(
@@ -500,7 +830,6 @@ class _AddTurfScreenState extends State<AddTurfScreen> {
             ),
             const SizedBox(height: 24),
             
-            // Days Open
             const Text(
               'Days Open',
               style: TextStyle(
@@ -544,77 +873,161 @@ class _AddTurfScreenState extends State<AddTurfScreen> {
   }
 
   Widget _buildPricingStep() {
-    return SingleChildScrollView(
-      padding: const EdgeInsets.all(20),
-      child: Form(
-        key: _pricingFormKey,
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text(
-              'Pricing Rules',
-              style: TextStyle(
-                fontSize: 20,
-                fontWeight: FontWeight.bold,
-                color: AppColors.textPrimary,
+    return DefaultTabController(
+      length: _numberOfNets,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Padding(
+            padding: const EdgeInsets.all(20),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'Pricing Rules',
+                  style: TextStyle(
+                    fontSize: 20,
+                    fontWeight: FontWeight.bold,
+                    color: AppColors.textPrimary,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  'Set prices for each net across different time slots',
+                  style: TextStyle(color: AppColors.textSecondary),
+                ),
+              ],
+            ),
+          ),
+          if (_numberOfNets > 1)
+            Container(
+              color: Colors.white,
+              child: TabBar(
+                labelColor: AppColors.primary,
+                unselectedLabelColor: AppColors.textSecondary,
+                indicatorColor: AppColors.primary,
+                tabs: List.generate(_numberOfNets, (i) => Tab(text: 'Net ${i + 1}')),
               ),
             ),
-            const SizedBox(height: 8),
-            Text(
-              'Set different prices for day/night and weekday/weekend',
-              style: TextStyle(color: AppColors.textSecondary),
+          Expanded(
+            child: TabBarView(
+              children: List.generate(_numberOfNets, (netIndex) {
+                return _buildNetPricingContent(netIndex);
+              }),
             ),
-            const SizedBox(height: 24),
-            
-            // Night Start Time
-            _buildTimePicker(
-              label: 'Night Pricing Starts At',
-              time: _nightStartTime,
-              onChanged: (time) => setState(() => _nightStartTime = time),
-            ),
-            const SizedBox(height: 24),
-            
-            // Weekday Pricing
-            _buildPricingSection(
-              title: 'Weekday (Mon-Fri)',
-              color: AppColors.primary,
-              dayController: _weekdayDayPriceController,
-              nightController: _weekdayNightPriceController,
-            ),
-            const SizedBox(height: 16),
-            
-            // Saturday Pricing
-            _buildPricingSection(
-              title: 'Saturday',
-              color: AppColors.secondary,
-              dayController: _saturdayDayPriceController,
-              nightController: _saturdayNightPriceController,
-            ),
-            const SizedBox(height: 16),
-            
-            // Sunday Pricing
-            _buildPricingSection(
-              title: 'Sunday',
-              color: AppColors.info,
-              dayController: _sundayDayPriceController,
-              nightController: _sundayNightPriceController,
-            ),
-            const SizedBox(height: 16),
-            
-            // Holiday Pricing
-            _buildPricingSection(
-              title: 'Public Holidays',
-              color: AppColors.warning,
-              dayController: _holidayDayPriceController,
-              nightController: _holidayNightPriceController,
-            ),
-          ],
-        ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildNetPricingContent(int netIndex) {
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(20),
+      child: Column(
+        children: [
+          _buildDayTypePricing(netIndex, 'weekday', 'Weekdays (Mon-Fri)', AppColors.primary),
+          const SizedBox(height: 20),
+          _buildDayTypePricing(netIndex, 'weekend', 'Weekends (Sat-Sun)', AppColors.secondary),
+          const SizedBox(height: 20),
+          _buildDayTypePricing(netIndex, 'holiday', 'Public Holidays', AppColors.warning),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildDayTypePricing(int netIndex, String dayType, String title, Color color) {
+    final controllers = _netPricingControllers[netIndex][dayType]!;
+    
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: color.withOpacity(0.3)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                width: 4,
+                height: 24,
+                decoration: BoxDecoration(
+                  color: color,
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Text(
+                title,
+                style: TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.bold,
+                  color: color,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 16),
+          ...List.generate(_timeSlots.length, (i) {
+            final slot = _timeSlots[i];
+            return Padding(
+              padding: const EdgeInsets.only(bottom: 12),
+              child: Row(
+                children: [
+                  Expanded(
+                    flex: 2,
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          slot['label']!,
+                          style: const TextStyle(
+                            fontWeight: FontWeight.w500,
+                            color: AppColors.textPrimary,
+                          ),
+                        ),
+                        Text(
+                          '${slot['start']} - ${slot['end']}',
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: AppColors.textSecondary,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  Expanded(
+                    flex: 1,
+                    child: TextFormField(
+                      controller: controllers[slot['label']!],
+                      keyboardType: TextInputType.number,
+                      inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+                      decoration: InputDecoration(
+                        prefixText: '₹ ',
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            );
+          }),
+        ],
       ),
     );
   }
 
   Widget _buildImagesStep() {
+    final int totalImages = _existingImages.length + _selectedImages.length;
+    final bool hasExistingImages = _existingImages.isNotEmpty;
+    final bool hasNewImages = _selectedImages.isNotEmpty;
+    
     return SingleChildScrollView(
       padding: const EdgeInsets.all(20),
       child: Column(
@@ -635,7 +1048,6 @@ class _AddTurfScreenState extends State<AddTurfScreen> {
           ),
           const SizedBox(height: 24),
           
-          // Add Images Button
           InkWell(
             onTap: _pickImages,
             borderRadius: BorderRadius.circular(16),
@@ -648,7 +1060,6 @@ class _AddTurfScreenState extends State<AddTurfScreen> {
                 border: Border.all(
                   color: AppColors.primary.withOpacity(0.3),
                   width: 2,
-                  style: BorderStyle.solid,
                 ),
               ),
               child: Column(
@@ -673,8 +1084,127 @@ class _AddTurfScreenState extends State<AddTurfScreen> {
           ),
           const SizedBox(height: 16),
           
-          // Selected Images Grid
-          if (_selectedImages.isNotEmpty)
+          // Show existing images from server (edit mode)
+          if (hasExistingImages) ...[
+            Text(
+              'Current Images (${_existingImages.length})',
+              style: const TextStyle(
+                fontSize: 14,
+                fontWeight: FontWeight.w600,
+                color: AppColors.textSecondary,
+              ),
+            ),
+            const SizedBox(height: 8),
+            GridView.builder(
+              shrinkWrap: true,
+              physics: const NeverScrollableScrollPhysics(),
+              gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                crossAxisCount: 3,
+                crossAxisSpacing: 8,
+                mainAxisSpacing: 8,
+              ),
+              itemCount: _existingImages.length,
+              itemBuilder: (context, index) {
+                final image = _existingImages[index];
+                return Stack(
+                  children: [
+                    Container(
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(12),
+                        color: AppColors.disabled,
+                      ),
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(12),
+                        child: Image.network(
+                          image.url,
+                          fit: BoxFit.cover,
+                          width: double.infinity,
+                          height: double.infinity,
+                          loadingBuilder: (context, child, loadingProgress) {
+                            if (loadingProgress == null) return child;
+                            return Center(
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                value: loadingProgress.expectedTotalBytes != null
+                                    ? loadingProgress.cumulativeBytesLoaded /
+                                        loadingProgress.expectedTotalBytes!
+                                    : null,
+                              ),
+                            );
+                          },
+                          errorBuilder: (context, error, stackTrace) {
+                            return Container(
+                              color: AppColors.disabled,
+                              child: const Center(
+                                child: Icon(
+                                  Icons.broken_image_outlined,
+                                  color: AppColors.textSecondary,
+                                ),
+                              ),
+                            );
+                          },
+                        ),
+                      ),
+                    ),
+                    Positioned(
+                      top: 4,
+                      right: 4,
+                      child: GestureDetector(
+                        onTap: () {
+                          setState(() => _existingImages.removeAt(index));
+                        },
+                        child: Container(
+                          padding: const EdgeInsets.all(4),
+                          decoration: BoxDecoration(
+                            color: Colors.black.withOpacity(0.6),
+                            shape: BoxShape.circle,
+                          ),
+                          child: const Icon(
+                            Icons.close,
+                            size: 16,
+                            color: Colors.white,
+                          ),
+                        ),
+                      ),
+                    ),
+                    if (image.isPrimary || (index == 0 && !_existingImages.any((i) => i.isPrimary)))
+                      Positioned(
+                        bottom: 4,
+                        left: 4,
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                          decoration: BoxDecoration(
+                            color: AppColors.primary,
+                            borderRadius: BorderRadius.circular(4),
+                          ),
+                          child: const Text(
+                            'Primary',
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontSize: 10,
+                              fontWeight: FontWeight.w500,
+                            ),
+                          ),
+                        ),
+                      ),
+                  ],
+                );
+              },
+            ),
+            const SizedBox(height: 16),
+          ],
+          
+          // Show newly selected images
+          if (hasNewImages) ...[
+            Text(
+              'New Images (${_selectedImages.length})',
+              style: const TextStyle(
+                fontSize: 14,
+                fontWeight: FontWeight.w600,
+                color: AppColors.textSecondary,
+              ),
+            ),
+            const SizedBox(height: 8),
             GridView.builder(
               shrinkWrap: true,
               physics: const NeverScrollableScrollPhysics(),
@@ -687,14 +1217,30 @@ class _AddTurfScreenState extends State<AddTurfScreen> {
               itemBuilder: (context, index) {
                 return Stack(
                   children: [
-                    Container(
-                      decoration: BoxDecoration(
-                        borderRadius: BorderRadius.circular(12),
-                        image: DecorationImage(
-                          image: FileImage(_selectedImages[index]),
-                          fit: BoxFit.cover,
-                        ),
-                      ),
+                    FutureBuilder<Uint8List>(
+                      future: _selectedImages[index].readAsBytes(),
+                      builder: (context, snapshot) {
+                        if (snapshot.hasData) {
+                          return Container(
+                            decoration: BoxDecoration(
+                              borderRadius: BorderRadius.circular(12),
+                              image: DecorationImage(
+                                image: MemoryImage(snapshot.data!),
+                                fit: BoxFit.cover,
+                              ),
+                            ),
+                          );
+                        }
+                        return Container(
+                          decoration: BoxDecoration(
+                            color: AppColors.disabled,
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          child: const Center(
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          ),
+                        );
+                      },
                     ),
                     Positioned(
                       top: 4,
@@ -717,15 +1263,13 @@ class _AddTurfScreenState extends State<AddTurfScreen> {
                         ),
                       ),
                     ),
-                    if (index == 0)
+                    // Mark first new image as primary only if no existing images
+                    if (index == 0 && _existingImages.isEmpty)
                       Positioned(
                         bottom: 4,
                         left: 4,
                         child: Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 6,
-                            vertical: 2,
-                          ),
+                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                           decoration: BoxDecoration(
                             color: AppColors.primary,
                             borderRadius: BorderRadius.circular(4),
@@ -744,10 +1288,10 @@ class _AddTurfScreenState extends State<AddTurfScreen> {
                 );
               },
             ),
+          ],
           
           const SizedBox(height: 24),
           
-          // Tip
           Container(
             padding: const EdgeInsets.all(16),
             decoration: BoxDecoration(
@@ -800,18 +1344,15 @@ class _AddTurfScreenState extends State<AddTurfScreen> {
                     borderRadius: BorderRadius.circular(12),
                   ),
                 ),
-                child: const Text('Back'),
+                child: const Text('Previous'),
               ),
-            )
-          else
-            const Spacer(),
-          const SizedBox(width: 16),
+            ),
+          if (_currentStep > 0) const SizedBox(width: 12),
           Expanded(
-            flex: 2,
             child: ElevatedButton(
               onPressed: _isLoading
                   ? null
-                  : (_currentStep == 3 ? _submitTurf : _nextStep),
+                  : (_currentStep < 3 ? _nextStep : _submitTurf),
               style: ElevatedButton.styleFrom(
                 backgroundColor: AppColors.primary,
                 padding: const EdgeInsets.symmetric(vertical: 14),
@@ -821,14 +1362,19 @@ class _AddTurfScreenState extends State<AddTurfScreen> {
               ),
               child: _isLoading
                   ? const SizedBox(
-                      width: 24,
-                      height: 24,
+                      height: 20,
+                      width: 20,
                       child: CircularProgressIndicator(
                         strokeWidth: 2,
                         color: Colors.white,
                       ),
                     )
-                  : Text(_currentStep == 3 ? 'Submit for Review' : 'Next'),
+                  : Text(
+                      _currentStep < 3
+                          ? 'Next'
+                          : (isEditing ? 'Update Turf' : 'Submit for Review'),
+                      style: const TextStyle(color: Colors.white),
+                    ),
             ),
           ),
         ],
@@ -862,56 +1408,20 @@ class _AddTurfScreenState extends State<AddTurfScreen> {
           validator: validator,
           decoration: InputDecoration(
             hintText: hint,
-            prefixIcon: Icon(prefixIcon, size: 20),
+            prefixIcon: Icon(prefixIcon, color: AppColors.primary),
             filled: true,
             fillColor: Colors.white,
             border: OutlineInputBorder(
               borderRadius: BorderRadius.circular(12),
-              borderSide: const BorderSide(color: AppColors.inputBorder),
+              borderSide: const BorderSide(color: AppColors.border),
             ),
             enabledBorder: OutlineInputBorder(
               borderRadius: BorderRadius.circular(12),
-              borderSide: const BorderSide(color: AppColors.inputBorder),
+              borderSide: const BorderSide(color: AppColors.border),
             ),
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildDropdown() {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        const Text(
-          'Turf Type',
-          style: TextStyle(
-            fontSize: 14,
-            fontWeight: FontWeight.w500,
-            color: AppColors.textPrimary,
-          ),
-        ),
-        const SizedBox(height: 8),
-        Container(
-          padding: const EdgeInsets.symmetric(horizontal: 12),
-          decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: AppColors.inputBorder),
-          ),
-          child: DropdownButtonHideUnderline(
-            child: DropdownButton<TurfType>(
-              value: _selectedTurfType,
-              isExpanded: true,
-              items: TurfType.values.map((type) {
-                return DropdownMenuItem(
-                  value: type,
-                  child: Text(type.displayName),
-                );
-              }).toList(),
-              onChanged: (value) {
-                if (value != null) setState(() => _selectedTurfType = value);
-              },
+            focusedBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(12),
+              borderSide: const BorderSide(color: AppColors.primary, width: 2),
             ),
           ),
         ),
@@ -944,125 +1454,25 @@ class _AddTurfScreenState extends State<AddTurfScreen> {
             );
             if (picked != null) onChanged(picked);
           },
-          borderRadius: BorderRadius.circular(12),
           child: Container(
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
             decoration: BoxDecoration(
               color: Colors.white,
               borderRadius: BorderRadius.circular(12),
-              border: Border.all(color: AppColors.inputBorder),
+              border: Border.all(color: AppColors.border),
             ),
             child: Row(
               children: [
-                const Icon(Icons.access_time, size: 20, color: AppColors.textSecondary),
+                const Icon(Icons.access_time, color: AppColors.primary),
                 const SizedBox(width: 12),
                 Text(
                   time.format(context),
-                  style: const TextStyle(fontSize: 15),
+                  style: const TextStyle(
+                    fontSize: 16,
+                    color: AppColors.textPrimary,
+                  ),
                 ),
               ],
-            ),
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildPricingSection({
-    required String title,
-    required Color color,
-    required TextEditingController dayController,
-    required TextEditingController nightController,
-  }) {
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: color.withOpacity(0.3)),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Container(
-                width: 4,
-                height: 20,
-                decoration: BoxDecoration(
-                  color: color,
-                  borderRadius: BorderRadius.circular(2),
-                ),
-              ),
-              const SizedBox(width: 8),
-              Text(
-                title,
-                style: TextStyle(
-                  fontSize: 14,
-                  fontWeight: FontWeight.w600,
-                  color: color,
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 16),
-          Row(
-            children: [
-              Expanded( 
-                child: _buildPriceField(
-                  label: 'Day Price',
-                  controller: dayController,
-                  icon: Icons.wb_sunny_outlined,
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: _buildPriceField(
-                  label: 'Night Price',
-                  controller: nightController,
-                  icon: Icons.nightlight_round,
-                ),
-              ),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildPriceField({
-    required String label,
-    required TextEditingController controller,
-    required IconData icon,
-  }) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          label,
-          style: TextStyle(
-            fontSize: 12,
-            color: AppColors.textSecondary,
-          ),
-        ),
-        const SizedBox(height: 6),
-        TextFormField(
-          controller: controller,
-          keyboardType: TextInputType.number,
-          inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-          validator: (v) => v?.isEmpty == true ? 'Required' : null,
-          decoration: InputDecoration(
-            prefixIcon: Icon(icon, size: 18),
-            prefixText: '₹ ',
-            contentPadding: const EdgeInsets.symmetric(
-              horizontal: 12,
-              vertical: 10,
-            ),
-            filled: true,
-            fillColor: AppColors.inputBackground,
-            border: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(8),
-              borderSide: BorderSide.none,
             ),
           ),
         ),

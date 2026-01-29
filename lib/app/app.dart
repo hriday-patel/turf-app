@@ -17,6 +17,7 @@ class TurfApp extends StatelessWidget {
       initialRoute: AppRoutes.splash,
       routes: AppRoutes.routes,
       onGenerateRoute: AppRoutes.onGenerateRoute,
+      navigatorObservers: [AppRoutes.routeObserver],
     );
   }
 }

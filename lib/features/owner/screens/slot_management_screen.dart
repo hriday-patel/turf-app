@@ -4,6 +4,7 @@ import 'package:table_calendar/table_calendar.dart';
 import '../../../config/colors.dart';
 import '../../../core/constants/enums.dart';
 import '../../../data/models/turf_model.dart';
+import '../../../app/routes.dart';
 import '../providers/turf_provider.dart';
 import '../providers/slot_provider.dart';
 import '../../auth/providers/auth_provider.dart';
@@ -19,13 +20,34 @@ class SlotManagementScreen extends StatefulWidget {
   State<SlotManagementScreen> createState() => _SlotManagementScreenState();
 }
 
-class _SlotManagementScreenState extends State<SlotManagementScreen> {
+class _SlotManagementScreenState extends State<SlotManagementScreen> with RouteAware {
   DateTime _selectedDate = DateTime.now();
   CalendarFormat _calendarFormat = CalendarFormat.week;
 
   @override
   void initState() {
     super.initState();
+    _loadSlots();
+  }
+  
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final route = ModalRoute.of(context);
+    if (route is PageRoute) {
+      AppRoutes.routeObserver.subscribe(this, route);
+    }
+  }
+  
+  @override
+  void dispose() {
+    AppRoutes.routeObserver.unsubscribe(this);
+    super.dispose();
+  }
+  
+  @override
+  void didPopNext() {
+    debugPrint('SlotManagement: didPopNext - refreshing data');
     _loadSlots();
   }
 

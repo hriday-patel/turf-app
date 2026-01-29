@@ -1,8 +1,7 @@
 import 'package:flutter/material.dart';
-import 'package:supabase_flutter/supabase_flutter.dart' as supa;
-import '../../../data/services/supabase_auth_service.dart';
-import '../../../data/services/supabase_service.dart';
-import '../../../data/services/supabase_backend_service.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
+import '../../../data/services/auth_service.dart';
+import '../../../data/services/database_service.dart';
 import '../../../data/models/owner_model.dart';
 import '../../../data/models/player_model.dart';
 import '../../../core/constants/enums.dart';
@@ -18,18 +17,14 @@ enum AuthStatus {
 /// Authentication Provider
 /// Manages user authentication state and operations
 class AuthProvider extends ChangeNotifier {
-  final SupabaseAuthService _authService = SupabaseAuthService();
-  final SupabaseService _supabaseService = SupabaseService();
-  final SupabaseBackendService _backendService = SupabaseBackendService();
+  final AuthService _authService = AuthService();
+  final DatabaseService _dbService = DatabaseService();
 
   AuthStatus _authState = AuthStatus.initial;
   OwnerModel? _currentOwner;
   PlayerModel? _currentPlayer;
   String? _errorMessage;
-  bool _isProfileLoading = false;
   bool _isLoading = false;
-
-  // Phone Auth State
   String? _phoneNumber;
 
   // Getters
@@ -52,18 +47,9 @@ class AuthProvider extends ChangeNotifier {
     _init();
   }
 
-  bool _isStrongPassword(String password) {
-    final hasMinLength = password.length >= 8;
-    final hasUpper = password.contains(RegExp(r'[A-Z]'));
-    final hasLower = password.contains(RegExp(r'[a-z]'));
-    final hasNumber = password.contains(RegExp(r'[0-9]'));
-    final hasSpecial = password.contains(RegExp(r'[!@#$%^&*(),.?":{}|<>]'));
-    return hasMinLength && hasUpper && hasLower && hasNumber && hasSpecial;
-  }
-
   /// Initialize auth state listener
   void _init() {
-    _authService.authStateChanges.listen((supa.AuthState state) async {
+    _authService.authStateChanges.listen((AuthState state) async {
       final user = state.session?.user;
       if (user != null) {
         await _loadUserProfile(user.id);
@@ -78,42 +64,40 @@ class AuthProvider extends ChangeNotifier {
 
   /// Load user profile (Owner or Player)
   Future<void> _loadUserProfile(String uid) async {
-    if (_isProfileLoading) return;
-
     try {
-      _isProfileLoading = true;
       _authState = AuthStatus.loading;
       notifyListeners();
 
-      final ownerData = await _supabaseService.getOwner(uid);
+      // Try to load owner profile
+      final ownerData = await _dbService.getOwner(uid);
       if (ownerData != null) {
         _currentOwner = OwnerModel.fromMap(ownerData);
         _currentPlayer = null;
         _authState = AuthStatus.authenticated;
-      } else {
-        final playerData = await supa.Supabase.instance.client
-            .from('players')
-            .select('*')
-            .eq('id', uid)
-            .maybeSingle();
-
-        if (playerData != null) {
-          _currentPlayer = PlayerModel.fromMap(playerData);
-          _currentOwner = null;
-          _authState = AuthStatus.authenticated;
-        } else {
-          _authState = AuthStatus.unauthenticated;
-          _currentOwner = null;
-          _currentPlayer = null;
-        }
+        notifyListeners();
+        return;
       }
+
+      // Try to load player profile
+      final playerData = await _dbService.getPlayer(uid);
+      if (playerData != null) {
+        _currentPlayer = PlayerModel.fromMap(playerData);
+        _currentOwner = null;
+        _authState = AuthStatus.authenticated;
+        notifyListeners();
+        return;
+      }
+
+      // No profile found - user is authenticated but not registered
+      _authState = AuthStatus.unauthenticated;
+      _currentOwner = null;
+      _currentPlayer = null;
+      notifyListeners();
     } catch (e) {
       _authState = AuthStatus.error;
       _errorMessage = 'Failed to load profile: ${e.toString()}';
-    } finally {
-      _isProfileLoading = false;
+      notifyListeners();
     }
-    notifyListeners();
   }
 
   /// Check initial auth state (for splash screen)
@@ -139,7 +123,17 @@ class AuthProvider extends ChangeNotifier {
     }
   }
 
-  /// Sign up new user
+  /// Validate password strength
+  bool _isStrongPassword(String password) {
+    if (password.length < 8) return false;
+    if (!password.contains(RegExp(r'[A-Z]'))) return false;
+    if (!password.contains(RegExp(r'[a-z]'))) return false;
+    if (!password.contains(RegExp(r'[0-9]'))) return false;
+    if (!password.contains(RegExp(r'[!@#$%^&*(),.?":{}|<>]'))) return false;
+    return true;
+  }
+
+  /// Sign up new user (Owner or Player)
   Future<bool> signUp({
     required String name,
     required String email,
@@ -152,39 +146,40 @@ class AuthProvider extends ChangeNotifier {
       _errorMessage = null;
       notifyListeners();
 
+      // Validate password
       if (!_isStrongPassword(password)) {
-        throw 'Password must be at least 8 characters and include upper, lower, number, and special character.';
+        throw 'Password must be at least 8 characters with uppercase, lowercase, number, and special character.';
       }
 
+      // Check if owner already exists
       if (role == UserRole.owner) {
-        final existsByEmail = await _backendService.ownerExists(
-          email: email.trim().toLowerCase(),
-        );
+        final existsByEmail = await _dbService.ownerExists(email: email);
         if (existsByEmail) {
           throw 'Email already registered. Please sign in instead.';
         }
 
-        final existsByPhone = await _backendService.ownerExists(
-          phone: phone.trim(),
-        );
+        final existsByPhone = await _dbService.ownerExists(phone: phone);
         if (existsByPhone) {
           throw 'Phone already registered. Please sign in instead.';
         }
       }
 
+      // Create auth user
       final uid = await _authService.signUpWithEmail(
         email: email,
         password: password,
       );
 
-      final now = DateTime.now();
+      // Create profile in database using RPC
       if (role == UserRole.owner) {
-        await _backendService.createOwnerProfile(
+        await _dbService.createOwnerProfile(
           id: uid,
           name: name,
           email: email,
           phone: phone,
         );
+
+        // Set owner locally
         _currentOwner = OwnerModel(
           uid: uid,
           name: name,
@@ -192,23 +187,25 @@ class AuthProvider extends ChangeNotifier {
           phone: phone,
           role: UserRole.owner,
           isVerified: false,
-          createdAt: now,
+          createdAt: DateTime.now(),
         );
         _currentPlayer = null;
       } else {
-        await _backendService.createPlayerProfile(
+        await _dbService.createPlayerProfile(
           id: uid,
           name: name,
           email: email,
           phone: phone,
         );
+
+        // Set player locally
         _currentPlayer = PlayerModel(
           uid: uid,
           name: name,
           email: email,
           phone: phone,
           role: UserRole.player,
-          createdAt: now,
+          createdAt: DateTime.now(),
           favoriteTurfs: [],
         );
         _currentOwner = null;
@@ -219,124 +216,6 @@ class AuthProvider extends ChangeNotifier {
       return true;
     } catch (e) {
       _authState = AuthStatus.error;
-      _errorMessage = e.toString();
-      notifyListeners();
-      return false;
-    }
-  }
-
-  /// Verify phone number to send OTP (LOGIN ONLY)
-  Future<bool> verifyPhone(String phone) async {
-    try {
-      _isLoading = true;
-      _errorMessage = null;
-      _phoneNumber = phone;
-      notifyListeners();
-
-      final exists = await _backendService.ownerExists(phone: phone);
-      if (!exists) {
-        _isLoading = false;
-        _errorMessage = 'Phone number not registered. Please sign up.';
-        notifyListeners();
-        return false;
-      }
-
-      await _authService.sendPhoneOtp(phone: phone);
-      _isLoading = false;
-      notifyListeners();
-      return true;
-    } catch (e) {
-      _errorMessage = e.toString();
-      _isLoading = false;
-      notifyListeners();
-      return false;
-    }
-  }
-
-  /// Verify OTP and sign in
-  Future<bool> verifyOTP(String smsCode) async {
-    try {
-      _isLoading = true;
-      _errorMessage = null;
-      notifyListeners();
-
-      final phone = _phoneNumber ?? '';
-      if (phone.isEmpty) throw 'Phone number is missing';
-
-      final response = await _authService.verifyPhoneOtp(
-        phone: phone,
-        token: smsCode,
-      );
-
-      final uid = response.user?.id;
-      if (uid == null) throw 'Authentication failed.';
-
-      await _loadUserProfile(uid);
-
-      if (_currentOwner == null) {
-        await signOut();
-        throw 'Phone number not registered. Please sign up.';
-      }
-
-      await _supabaseService.updateOwner(uid, {
-        'auth_methods': ['email', 'otp'],
-      });
-
-      _isLoading = false;
-      notifyListeners();
-      return true;
-    } catch (e) {
-      _isLoading = false;
-      _errorMessage = e.toString();
-      notifyListeners();
-      return false;
-    }
-  }
-
-  /// Complete profile setup
-  Future<bool> completeProfile({
-    required String name,
-    required String email,
-    required UserRole role,
-  }) async {
-    try {
-      if (currentUserId == null) throw 'User not authenticated';
-
-      _isLoading = true;
-      _errorMessage = null;
-      notifyListeners();
-
-      final phone = _phoneNumber ?? '';
-
-      if (role == UserRole.owner) {
-        await supa.Supabase.instance.client.from('owners').upsert({
-          'id': currentUserId!,
-          'name': name,
-          'email': email,
-          'phone': phone,
-          'role': 'OWNER',
-          'is_verified': false,
-          'auth_methods': ['otp'],
-          'updated_at': DateTime.now().toIso8601String(),
-        });
-      } else {
-        await supa.Supabase.instance.client.from('players').upsert({
-          'id': currentUserId!,
-          'name': name,
-          'email': email,
-          'phone': phone,
-          'role': 'PLAYER',
-          'updated_at': DateTime.now().toIso8601String(),
-        });
-      }
-
-      await _loadUserProfile(currentUserId!);
-
-      _isLoading = false;
-      notifyListeners();
-      return true;
-    } catch (e) {
-      _isLoading = false;
       _errorMessage = e.toString();
       notifyListeners();
       return false;
@@ -360,14 +239,88 @@ class AuthProvider extends ChangeNotifier {
 
       await _loadUserProfile(uid);
 
-      if (_currentOwner == null) {
+      if (_currentOwner == null && _currentPlayer == null) {
         await signOut();
-        throw 'Access denied. Not an Owner account.';
+        throw 'Account not found. Please sign up.';
       }
 
       return true;
     } catch (e) {
       _authState = AuthStatus.error;
+      _errorMessage = e.toString();
+      notifyListeners();
+      return false;
+    }
+  }
+
+  /// Send OTP to phone number (for login only)
+  Future<bool> sendPhoneOtp(String phone) async {
+    try {
+      _isLoading = true;
+      _errorMessage = null;
+      _phoneNumber = phone;
+      notifyListeners();
+
+      // Check if owner exists with this phone
+      final exists = await _dbService.ownerExists(phone: phone);
+      if (!exists) {
+        _isLoading = false;
+        _errorMessage = 'Phone number not registered. Please sign up.';
+        notifyListeners();
+        return false;
+      }
+
+      await _authService.sendPhoneOtp(phone: phone);
+      
+      _isLoading = false;
+      notifyListeners();
+      return true;
+    } catch (e) {
+      _isLoading = false;
+      _errorMessage = e.toString();
+      notifyListeners();
+      return false;
+    }
+  }
+
+  /// Verify OTP and sign in
+  Future<bool> verifyOTP(String smsCode) async {
+    try {
+      _isLoading = true;
+      _errorMessage = null;
+      notifyListeners();
+
+      if (_phoneNumber == null || _phoneNumber!.isEmpty) {
+        throw 'Phone number is missing';
+      }
+
+      final response = await _authService.verifyPhoneOtp(
+        phone: _phoneNumber!,
+        token: smsCode,
+      );
+
+      final uid = response.user?.id;
+      if (uid == null) {
+        throw 'Authentication failed.';
+      }
+
+      await _loadUserProfile(uid);
+
+      if (_currentOwner == null) {
+        await signOut();
+        throw 'Phone number not registered. Please sign up.';
+      }
+
+      // Update auth methods
+      await _dbService.updateOwner(uid, {
+        'auth_methods': ['email', 'otp'],
+      });
+
+      _isLoading = false;
+      notifyListeners();
+      return true;
+    } catch (e) {
+      _isLoading = false;
       _errorMessage = e.toString();
       notifyListeners();
       return false;
@@ -380,6 +333,7 @@ class AuthProvider extends ChangeNotifier {
       await _authService.signOut();
       _currentOwner = null;
       _currentPlayer = null;
+      _phoneNumber = null;
       _authState = AuthStatus.unauthenticated;
       notifyListeners();
     } catch (e) {
@@ -413,6 +367,75 @@ class AuthProvider extends ChangeNotifier {
   Future<void> refreshProfile() async {
     if (_authService.currentUserId != null) {
       await _loadUserProfile(_authService.currentUserId!);
+    }
+  }
+
+  /// Verify phone - alias for sendPhoneOtp (for UI compatibility)
+  Future<bool> verifyPhone(String phone) async {
+    return await sendPhoneOtp(phone);
+  }
+
+  /// Complete profile for player after phone OTP verification
+  Future<bool> completeProfile({
+    required String name,
+    required String email,
+    required UserRole role,
+  }) async {
+    try {
+      _isLoading = true;
+      _errorMessage = null;
+      notifyListeners();
+
+      final uid = _authService.currentUserId;
+      if (uid == null) {
+        throw 'Not authenticated';
+      }
+
+      if (role == UserRole.player) {
+        await _dbService.createPlayerProfile(
+          id: uid,
+          name: name,
+          email: email,
+          phone: _phoneNumber ?? '',
+        );
+
+        _currentPlayer = PlayerModel(
+          uid: uid,
+          name: name,
+          email: email,
+          phone: _phoneNumber ?? '',
+          role: UserRole.player,
+          createdAt: DateTime.now(),
+          favoriteTurfs: [],
+        );
+      } else {
+        await _dbService.createOwnerProfile(
+          id: uid,
+          name: name,
+          email: email,
+          phone: _phoneNumber ?? '',
+        );
+
+        _currentOwner = OwnerModel(
+          uid: uid,
+          name: name,
+          email: email,
+          phone: _phoneNumber ?? '',
+          role: UserRole.owner,
+          isVerified: false,
+          createdAt: DateTime.now(),
+        );
+      }
+
+      _authState = AuthStatus.authenticated;
+      _isLoading = false;
+      notifyListeners();
+      return true;
+    } catch (e) {
+      _isLoading = false;
+      _errorMessage = e.toString();
+      notifyListeners();
+      return false;
     }
   }
 }

@@ -16,7 +16,7 @@ class BookingManagementScreen extends StatefulWidget {
 }
 
 class _BookingManagementScreenState extends State<BookingManagementScreen>
-    with SingleTickerProviderStateMixin {
+    with SingleTickerProviderStateMixin, RouteAware {
   late TabController _tabController;
 
   @override
@@ -24,6 +24,15 @@ class _BookingManagementScreenState extends State<BookingManagementScreen>
     super.initState();
     _tabController = TabController(length: 3, vsync: this);
     _loadBookings();
+  }
+  
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final route = ModalRoute.of(context);
+    if (route is PageRoute) {
+      AppRoutes.routeObserver.subscribe(this, route);
+    }
   }
 
   void _loadBookings() {
@@ -38,8 +47,15 @@ class _BookingManagementScreenState extends State<BookingManagementScreen>
 
   @override
   void dispose() {
+    AppRoutes.routeObserver.unsubscribe(this);
     _tabController.dispose();
     super.dispose();
+  }
+  
+  @override
+  void didPopNext() {
+    debugPrint('BookingManagement: didPopNext - refreshing data');
+    _loadBookings();
   }
 
   @override
@@ -52,6 +68,10 @@ class _BookingManagementScreenState extends State<BookingManagementScreen>
         bottom: TabBar(
           controller: _tabController,
           indicatorColor: Colors.white,
+          indicatorWeight: 3,
+          labelColor: Colors.white,
+          unselectedLabelColor: Colors.white70,
+          labelStyle: const TextStyle(fontWeight: FontWeight.w600),
           tabs: const [Tab(text: 'All'), Tab(text: 'Today'), Tab(text: 'Pending')],
         ),
       ),

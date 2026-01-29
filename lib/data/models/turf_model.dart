@@ -19,17 +19,240 @@ class TurfLocation {
       };
 }
 
-/// Pricing rule for a specific day/time combination
-class PricingRule {
-  final String start;  // "06:00"
-  final String end;    // "18:00"
-  final double price;   // 1000
+/// Time slot pricing for a specific period
+class TimeSlotPricing {
+  final String label;      // "Morning", "Afternoon", "Evening", "Night"
+  final String startTime;  // "06:00"
+  final String endTime;    // "12:00"
+  final double price;
 
-  PricingRule({
-    required this.start,
-    required this.end,
+  TimeSlotPricing({
+    required this.label,
+    required this.startTime,
+    required this.endTime,
     required this.price,
   });
+
+  factory TimeSlotPricing.fromMap(Map<String, dynamic> map) {
+    return TimeSlotPricing(
+      label: map['label'] ?? '',
+      startTime: map['start_time'] ?? map['start'] ?? '06:00',
+      endTime: map['end_time'] ?? map['end'] ?? '12:00',
+      price: (map['price'] ?? 0).toDouble(),
+    );
+  }
+
+  Map<String, dynamic> toMap() {
+    return {
+      'label': label,
+      'start_time': startTime,
+      'end_time': endTime,
+      'price': price,
+    };
+  }
+}
+
+/// Day type pricing (contains 4 time slots)
+class DayTypePricing {
+  final TimeSlotPricing morning;    // 6:00 AM - 12:00 PM
+  final TimeSlotPricing afternoon;  // 12:00 PM - 6:00 PM
+  final TimeSlotPricing evening;    // 6:00 PM - 12:00 AM
+  final TimeSlotPricing night;      // 12:00 AM - 6:00 AM
+
+  DayTypePricing({
+    required this.morning,
+    required this.afternoon,
+    required this.evening,
+    required this.night,
+  });
+
+  factory DayTypePricing.fromMap(Map<String, dynamic> map) {
+    // Handle legacy format
+    if (map.containsKey('day') && map.containsKey('night')) {
+      final dayPrice = (map['day']?['price'] ?? 1000).toDouble();
+      final nightPrice = (map['night']?['price'] ?? 1200).toDouble();
+      return DayTypePricing(
+        morning: TimeSlotPricing(label: 'Morning', startTime: '06:00', endTime: '12:00', price: dayPrice),
+        afternoon: TimeSlotPricing(label: 'Afternoon', startTime: '12:00', endTime: '18:00', price: dayPrice),
+        evening: TimeSlotPricing(label: 'Evening', startTime: '18:00', endTime: '00:00', price: nightPrice),
+        night: TimeSlotPricing(label: 'Night', startTime: '00:00', endTime: '06:00', price: nightPrice),
+      );
+    }
+    return DayTypePricing(
+      morning: TimeSlotPricing.fromMap(map['morning'] ?? {}),
+      afternoon: TimeSlotPricing.fromMap(map['afternoon'] ?? {}),
+      evening: TimeSlotPricing.fromMap(map['evening'] ?? {}),
+      night: TimeSlotPricing.fromMap(map['night'] ?? {}),
+    );
+  }
+
+  Map<String, dynamic> toMap() {
+    return {
+      'morning': morning.toMap(),
+      'afternoon': afternoon.toMap(),
+      'evening': evening.toMap(),
+      'night': night.toMap(),
+    };
+  }
+
+  /// Get price for a specific time
+  double getPriceForTime(String time) {
+    final hour = int.tryParse(time.split(':')[0]) ?? 0;
+    if (hour >= 6 && hour < 12) return morning.price;
+    if (hour >= 12 && hour < 18) return afternoon.price;
+    if (hour >= 18 && hour < 24) return evening.price;
+    return night.price; // 0-6
+  }
+
+  factory DayTypePricing.defaultPricing({double basePrice = 1000}) {
+    return DayTypePricing(
+      morning: TimeSlotPricing(label: 'Morning', startTime: '06:00', endTime: '12:00', price: basePrice),
+      afternoon: TimeSlotPricing(label: 'Afternoon', startTime: '12:00', endTime: '18:00', price: basePrice),
+      evening: TimeSlotPricing(label: 'Evening', startTime: '18:00', endTime: '00:00', price: basePrice * 1.2),
+      night: TimeSlotPricing(label: 'Night', startTime: '00:00', endTime: '06:00', price: basePrice * 1.1),
+    );
+  }
+}
+
+/// Net/Box pricing (each net can have different pricing)
+class NetPricing {
+  final int netNumber;          // 1, 2, 3, etc.
+  final String netName;         // "Net 1", "Box A", etc.
+  final DayTypePricing weekday;
+  final DayTypePricing weekend;
+  final DayTypePricing holiday;
+
+  NetPricing({
+    required this.netNumber,
+    required this.netName,
+    required this.weekday,
+    required this.weekend,
+    required this.holiday,
+  });
+
+  factory NetPricing.fromMap(Map<String, dynamic> map) {
+    return NetPricing(
+      netNumber: map['net_number'] ?? map['netNumber'] ?? 1,
+      netName: map['net_name'] ?? map['netName'] ?? 'Net 1',
+      weekday: DayTypePricing.fromMap(map['weekday'] ?? {}),
+      weekend: DayTypePricing.fromMap(map['weekend'] ?? {}),
+      holiday: DayTypePricing.fromMap(map['holiday'] ?? {}),
+    );
+  }
+
+  Map<String, dynamic> toMap() {
+    return {
+      'net_number': netNumber,
+      'net_name': netName,
+      'weekday': weekday.toMap(),
+      'weekend': weekend.toMap(),
+      'holiday': holiday.toMap(),
+    };
+  }
+
+  factory NetPricing.defaultForNet(int netNumber, {double basePrice = 1000}) {
+    return NetPricing(
+      netNumber: netNumber,
+      netName: 'Net $netNumber',
+      weekday: DayTypePricing.defaultPricing(basePrice: basePrice),
+      weekend: DayTypePricing.defaultPricing(basePrice: basePrice * 1.3),
+      holiday: DayTypePricing.defaultPricing(basePrice: basePrice * 1.5),
+    );
+  }
+}
+
+/// Complete pricing rules for a turf (with all nets)
+class PricingRules {
+  final List<NetPricing> netPricing;
+
+  PricingRules({required this.netPricing});
+
+  factory PricingRules.fromMap(Map<String, dynamic> map) {
+    // Handle new format with nets
+    if (map.containsKey('nets') || map.containsKey('netPricing')) {
+      final netsList = map['nets'] ?? map['netPricing'] ?? [];
+      return PricingRules(
+        netPricing: (netsList as List)
+            .map((e) => NetPricing.fromMap(e as Map<String, dynamic>))
+            .toList(),
+      );
+    }
+    
+    // Handle legacy format (convert to single net)
+    final weekdayData = map['weekday'] ?? {};
+    final saturdayData = map['saturday'] ?? map['weekend'] ?? {};
+    final holidayData = map['holiday'] ?? {};
+    
+    return PricingRules(
+      netPricing: [
+        NetPricing(
+          netNumber: 1,
+          netName: 'Net 1',
+          weekday: DayTypePricing.fromMap(weekdayData),
+          weekend: DayTypePricing.fromMap(saturdayData),
+          holiday: DayTypePricing.fromMap(holidayData),
+        ),
+      ],
+    );
+  }
+
+  Map<String, dynamic> toMap() {
+    return {
+      'nets': netPricing.map((e) => e.toMap()).toList(),
+    };
+  }
+
+  /// Get pricing for a specific net by number
+  NetPricing? getNetPricing(int netNumber) {
+    try {
+      return netPricing.firstWhere((n) => n.netNumber == netNumber);
+    } catch (e) {
+      return netPricing.isNotEmpty ? netPricing.first : null;
+    }
+  }
+
+  /// Get default pricing rules for N nets
+  factory PricingRules.defaultRules({int numberOfNets = 1, double basePrice = 1000}) {
+    return PricingRules(
+      netPricing: List.generate(
+        numberOfNets,
+        (i) => NetPricing.defaultForNet(i + 1, basePrice: basePrice),
+      ),
+    );
+  }
+
+  /// Get pricing for a specific net, day type, and time
+  double getPrice({required int netNumber, required String dayType, required String time}) {
+    final net = netPricing.firstWhere(
+      (n) => n.netNumber == netNumber,
+      orElse: () => netPricing.first,
+    );
+    
+    DayTypePricing dayPricing;
+    switch (dayType.toLowerCase()) {
+      case 'weekend':
+      case 'saturday':
+      case 'sunday':
+        dayPricing = net.weekend;
+        break;
+      case 'holiday':
+        dayPricing = net.holiday;
+        break;
+      default:
+        dayPricing = net.weekday;
+    }
+    
+    return dayPricing.getPriceForTime(time);
+  }
+}
+
+// Legacy support classes
+class PricingRule {
+  final String start;
+  final String end;
+  final double price;
+
+  PricingRule({required this.start, required this.end, required this.price});
 
   factory PricingRule.fromMap(Map<String, dynamic> map) {
     return PricingRule(
@@ -39,24 +262,14 @@ class PricingRule {
     );
   }
 
-  Map<String, dynamic> toMap() {
-    return {
-      'start': start,
-      'end': end,
-      'price': price,
-    };
-  }
+  Map<String, dynamic> toMap() => {'start': start, 'end': end, 'price': price};
 }
 
-/// Day pricing containing day and night rates
 class DayPricing {
   final PricingRule day;
   final PricingRule night;
 
-  DayPricing({
-    required this.day,
-    required this.night,
-  });
+  DayPricing({required this.day, required this.night});
 
   factory DayPricing.fromMap(Map<String, dynamic> map) {
     return DayPricing(
@@ -65,71 +278,7 @@ class DayPricing {
     );
   }
 
-  Map<String, dynamic> toMap() {
-    return {
-      'day': day.toMap(),
-      'night': night.toMap(),
-    };
-  }
-}
-
-/// Complete pricing rules for a turf
-class PricingRules {
-  final DayPricing weekday;
-  final DayPricing saturday;
-  final DayPricing sunday;
-  final DayPricing holiday;
-
-  PricingRules({
-    required this.weekday,
-    required this.saturday,
-    required this.sunday,
-    required this.holiday,
-  });
-
-  factory PricingRules.fromMap(Map<String, dynamic> map) {
-    // Handle backward compatibility with old 'weekend' field
-    final saturdayData = map['saturday'] ?? map['weekend'] ?? {};
-    final sundayData = map['sunday'] ?? map['weekend'] ?? {};
-    
-    return PricingRules(
-      weekday: DayPricing.fromMap(map['weekday'] ?? {}),
-      saturday: DayPricing.fromMap(saturdayData),
-      sunday: DayPricing.fromMap(sundayData),
-      holiday: DayPricing.fromMap(map['holiday'] ?? {}),
-    );
-  }
-
-  Map<String, dynamic> toMap() {
-    return {
-      'weekday': weekday.toMap(),
-      'saturday': saturday.toMap(),
-      'sunday': sunday.toMap(),
-      'holiday': holiday.toMap(),
-    };
-  }
-
-  /// Get default pricing rules
-  factory PricingRules.defaultRules() {
-    return PricingRules(
-      weekday: DayPricing(
-        day: PricingRule(start: '06:00', end: '18:00', price: 1000),
-        night: PricingRule(start: '18:00', end: '23:00', price: 1200),
-      ),
-      saturday: DayPricing(
-        day: PricingRule(start: '06:00', end: '18:00', price: 1400),
-        night: PricingRule(start: '18:00', end: '23:00', price: 1600),
-      ),
-      sunday: DayPricing(
-        day: PricingRule(start: '06:00', end: '18:00', price: 1500),
-        night: PricingRule(start: '18:00', end: '23:00', price: 1700),
-      ),
-      holiday: DayPricing(
-        day: PricingRule(start: '06:00', end: '18:00', price: 1800),
-        night: PricingRule(start: '18:00', end: '23:00', price: 2000),
-      ),
-    );
-  }
+  Map<String, dynamic> toMap() => {'day': day.toMap(), 'night': night.toMap()};
 }
 
 /// Turf image with metadata
@@ -186,12 +335,14 @@ class TurfModel {
   final TurfLocation? location;
   final TurfType turfType;
   final String? description;
+  final int numberOfNets;  // Number of nets/boxes
   
   // Operational Details
   final String openTime;
   final String closeTime;
   final int slotDurationMinutes;
   final List<String> daysOpen;
+  final TurfStatus status;  // Open, Closed, Renovation
   
   // Pricing
   final PricingRules pricingRules;
@@ -218,10 +369,12 @@ class TurfModel {
     this.location,
     required this.turfType,
     this.description,
+    this.numberOfNets = 1,
     required this.openTime,
     required this.closeTime,
     this.slotDurationMinutes = 60,
     this.daysOpen = const ['MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT', 'SUN'],
+    this.status = TurfStatus.open,
     required this.pricingRules,
     this.publicHolidays = const [],
     this.images = const [],
@@ -251,10 +404,12 @@ class TurfModel {
           : null,
       turfType: TurfTypeExtension.fromString(data['turf_type'] ?? data['turfType'] ?? 'BOX_CRICKET'),
       description: data['description'],
+      numberOfNets: data['number_of_nets'] ?? data['numberOfNets'] ?? 1,
       openTime: data['open_time'] ?? data['openTime'] ?? '06:00',
       closeTime: data['close_time'] ?? data['closeTime'] ?? '23:00',
       slotDurationMinutes: data['slot_duration_minutes'] ?? data['slotDurationMinutes'] ?? 60,
       daysOpen: List<String>.from(data['days_open'] ?? data['daysOpen'] ?? ['MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT', 'SUN']),
+      status: TurfStatusExtension.fromString(data['status'] ?? 'OPEN'),
       pricingRules: PricingRules.fromMap(data['pricing_rules'] ?? data['pricingRules'] ?? {}),
       publicHolidays: List<String>.from(data['public_holidays'] ?? data['publicHolidays'] ?? []),
       images: (data['images'] as List<dynamic>?)
@@ -280,10 +435,12 @@ class TurfModel {
       'location': location?.toMap(),
       'turf_type': turfType.value,
       'description': description,
+      'number_of_nets': numberOfNets,
       'open_time': openTime,
       'close_time': closeTime,
       'slot_duration_minutes': slotDurationMinutes,
       'days_open': daysOpen,
+      'status': status.value,
       'pricing_rules': pricingRules.toMap(),
       'public_holidays': publicHolidays,
       'images': images.map((e) => e.toMap()).toList(),
@@ -309,10 +466,12 @@ class TurfModel {
     TurfLocation? location,
     TurfType? turfType,
     String? description,
+    int? numberOfNets,
     String? openTime,
     String? closeTime,
     int? slotDurationMinutes,
     List<String>? daysOpen,
+    TurfStatus? status,
     PricingRules? pricingRules,
     List<String>? publicHolidays,
     List<TurfImage>? images,
@@ -330,10 +489,12 @@ class TurfModel {
       location: location ?? this.location,
       turfType: turfType ?? this.turfType,
       description: description ?? this.description,
+      numberOfNets: numberOfNets ?? this.numberOfNets,
       openTime: openTime ?? this.openTime,
       closeTime: closeTime ?? this.closeTime,
       slotDurationMinutes: slotDurationMinutes ?? this.slotDurationMinutes,
       daysOpen: daysOpen ?? this.daysOpen,
+      status: status ?? this.status,
       pricingRules: pricingRules ?? this.pricingRules,
       publicHolidays: publicHolidays ?? this.publicHolidays,
       images: images ?? this.images,
@@ -347,6 +508,6 @@ class TurfModel {
 
   @override
   String toString() {
-    return 'TurfModel(turfId: $turfId, turfName: $turfName, city: $city)';
+    return 'TurfModel(turfId: $turfId, turfName: $turfName, city: $city, nets: $numberOfNets)';
   }
 }

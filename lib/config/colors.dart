@@ -52,6 +52,7 @@ class AppColors {
   // UI Elements
   static const Color divider = Color(0xFFE0E0E0);
   static const Color disabled = Color(0xFFE0E0E0);
+  static const Color border = Color(0xFFE0E0E0);
   static const Color chipBackground = Color(0xFFE8F5E9);
   static const Color shimmerBase = Color(0xFFE0E0E0);
   static const Color shimmerHighlight = Color(0xFFF5F5F5);

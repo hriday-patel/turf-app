@@ -1,14 +1,12 @@
 import 'package:flutter/material.dart';
 import '../../../data/models/booking_model.dart';
-import '../../../data/services/supabase_service.dart';
-import '../../../data/services/supabase_backend_service.dart';
+import '../../../data/services/database_service.dart';
 import '../../../core/constants/enums.dart';
 
 /// Booking Provider
 /// Manages booking state and operations
 class BookingProvider extends ChangeNotifier {
-  final SupabaseService _supabaseService = SupabaseService();
-  final SupabaseBackendService _backendService = SupabaseBackendService();
+  final DatabaseService _dbService = DatabaseService();
 
   List<BookingModel> _bookings = [];
   List<BookingModel> _todaysBookings = [];
@@ -31,7 +29,7 @@ class BookingProvider extends ChangeNotifier {
   void loadOwnerBookings(String ownerId, List<String> turfIds) {
     if (turfIds.isEmpty) return;
 
-    _supabaseService.streamOwnerBookings(turfIds).listen(
+    _dbService.streamBookingsByTurfs(turfIds).listen(
       (rows) {
         _bookings = rows.map((row) => BookingModel.fromMap(row)).toList();
         notifyListeners();
@@ -47,7 +45,7 @@ class BookingProvider extends ChangeNotifier {
   Future<void> loadTodaysBookings(List<String> turfIds) async {
     try {
       final bookingDate = DateTime.now().toIso8601String().split('T').first;
-      final snapshot = await _supabaseService.getTodaysBookings(
+      final snapshot = await _dbService.getTodaysBookings(
         turfIds,
         bookingDate,
       );
@@ -63,7 +61,7 @@ class BookingProvider extends ChangeNotifier {
   /// Load pending payments
   Future<void> loadPendingPayments(List<String> turfIds) async {
     try {
-        final snapshot = await _supabaseService.getPendingPayments(turfIds);
+        final snapshot = await _dbService.getPendingPayments(turfIds);
         _pendingPayments =
           snapshot.map((row) => BookingModel.fromMap(row)).toList();
       notifyListeners();
@@ -110,7 +108,7 @@ class BookingProvider extends ChangeNotifier {
       };
 
       // Use atomic transaction to book slot + create booking
-      final bookingId = await _backendService.createAtomicBooking(
+      final bookingId = await _dbService.createBookingAtomic(
         slotId: slotId,
         bookingData: data,
       );
@@ -167,7 +165,7 @@ class BookingProvider extends ChangeNotifier {
       };
 
       // Use atomic transaction to book slot + create booking
-      final bookingId = await _backendService.createAtomicBooking(
+      final bookingId = await _dbService.createBookingAtomic(
         slotId: slotId,
         bookingData: data,
       );
@@ -192,7 +190,7 @@ class BookingProvider extends ChangeNotifier {
   ) async {
     try {
       // Use atomic transaction to release slot + cancel booking
-      final success = await _backendService.cancelBooking(
+      final success = await _dbService.cancelBooking(
         bookingId: bookingId,
         slotId: slotId,
         cancelledBy: cancelledBy,
@@ -215,7 +213,7 @@ class BookingProvider extends ChangeNotifier {
   /// Mark payment as received (for offline bookings)
   Future<bool> markPaymentReceived(String bookingId) async {
     try {
-      await _supabaseService.updateBooking(bookingId, {
+      await _dbService.updateBooking(bookingId, {
         'payment_status': 'PAID',
       });
       return true;

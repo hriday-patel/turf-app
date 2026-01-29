@@ -6,6 +6,7 @@ import '../../../data/models/turf_model.dart';
 import '../providers/turf_provider.dart';
 import '../../../core/utils/price_calculator.dart';
 import '../../../core/constants/enums.dart';
+import '../../auth/providers/auth_provider.dart';
 
 /// Turf Detail Screen
 /// Shows full turf information and provides access to slot management
@@ -18,7 +19,43 @@ class TurfDetailScreen extends StatefulWidget {
   State<TurfDetailScreen> createState() => _TurfDetailScreenState();
 }
 
-class _TurfDetailScreenState extends State<TurfDetailScreen> {
+class _TurfDetailScreenState extends State<TurfDetailScreen> with RouteAware {
+  @override
+  void initState() {
+    super.initState();
+    _refreshData();
+  }
+  
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final route = ModalRoute.of(context);
+    if (route is PageRoute) {
+      AppRoutes.routeObserver.subscribe(this, route);
+    }
+  }
+  
+  @override
+  void dispose() {
+    AppRoutes.routeObserver.unsubscribe(this);
+    super.dispose();
+  }
+  
+  @override
+  void didPopNext() {
+    debugPrint('TurfDetail: didPopNext - refreshing data');
+    _refreshData();
+  }
+  
+  Future<void> _refreshData() async {
+    final authProvider = Provider.of<AuthProvider>(context, listen: false);
+    final turfProvider = Provider.of<TurfProvider>(context, listen: false);
+    if (authProvider.currentUserId != null) {
+      // Force refresh from database to get latest data
+      await turfProvider.refreshTurfs(authProvider.currentUserId!);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Consumer<TurfProvider>(
@@ -62,6 +99,30 @@ class _TurfDetailScreenState extends State<TurfDetailScreen> {
                         ? Image.network(
                             turf.primaryImageUrl!,
                             fit: BoxFit.cover,
+                            width: double.infinity,
+                            height: double.infinity,
+                            loadingBuilder: (context, child, loadingProgress) {
+                              if (loadingProgress == null) return child;
+                              return Center(
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                  color: Colors.white,
+                                  value: loadingProgress.expectedTotalBytes != null
+                                      ? loadingProgress.cumulativeBytesLoaded /
+                                          loadingProgress.expectedTotalBytes!
+                                      : null,
+                                ),
+                              );
+                            },
+                            errorBuilder: (context, error, stackTrace) {
+                              return Center(
+                                child: Icon(
+                                  Icons.sports_cricket,
+                                  size: 80,
+                                  color: Colors.white.withOpacity(0.5),
+                                ),
+                              );
+                            },
                           )
                         : Center(
                             child: Icon(
@@ -298,6 +359,8 @@ class _TurfDetailScreenState extends State<TurfDetailScreen> {
   }
 
   Widget _buildPricingSection(TurfModel turf) {
+    final pricingRules = turf.pricingRules;
+    
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
@@ -326,36 +389,110 @@ class _TurfDetailScreenState extends State<TurfDetailScreen> {
               ),
             ],
           ),
+          const SizedBox(height: 8),
+          Text(
+            '${turf.numberOfNets} Net(s) Available',
+            style: TextStyle(
+              fontSize: 13,
+              color: AppColors.textSecondary,
+            ),
+          ),
           const SizedBox(height: 12),
-          _buildPriceRow(
-            'Weekday',
-            turf.pricingRules.weekday.day.price,
-            turf.pricingRules.weekday.night.price,
-            AppColors.primary,
-          ),
-          const Divider(height: 16),
-          _buildPriceRow(
-            'Saturday',
-            turf.pricingRules.saturday.day.price,
-            turf.pricingRules.saturday.night.price,
-            AppColors.secondary,
-          ),
-          const Divider(height: 16),
-          _buildPriceRow(
-            'Sunday',
-            turf.pricingRules.sunday.day.price,
-            turf.pricingRules.sunday.night.price,
-            AppColors.info,
-          ),
-          const Divider(height: 16),
-          _buildPriceRow(
-            'Holiday',
-            turf.pricingRules.holiday.day.price,
-            turf.pricingRules.holiday.night.price,
-            AppColors.warning,
-          ),
+          // Show first net pricing summary
+          if (pricingRules.netPricing.isNotEmpty) ...[
+            _buildDayTypePricingRow(
+              'Weekday',
+              pricingRules.netPricing.first.weekday,
+              AppColors.primary,
+            ),
+            const Divider(height: 16),
+            _buildDayTypePricingRow(
+              'Weekend',
+              pricingRules.netPricing.first.weekend,
+              AppColors.secondary,
+            ),
+            const Divider(height: 16),
+            _buildDayTypePricingRow(
+              'Holiday',
+              pricingRules.netPricing.first.holiday,
+              AppColors.warning,
+            ),
+          ],
+          if (turf.numberOfNets > 1) ...[
+            const SizedBox(height: 12),
+            Text(
+              'Showing prices for Net 1. Other nets may have different pricing.',
+              style: TextStyle(
+                fontSize: 11,
+                fontStyle: FontStyle.italic,
+                color: AppColors.textSecondary,
+              ),
+            ),
+          ],
         ],
       ),
+    );
+  }
+
+  Widget _buildDayTypePricingRow(String label, DayTypePricing pricing, Color color) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Container(
+              width: 4,
+              height: 20,
+              decoration: BoxDecoration(
+                color: color,
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+            const SizedBox(width: 12),
+            Text(
+              label,
+              style: TextStyle(
+                fontWeight: FontWeight.w600,
+                color: color,
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 8),
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceAround,
+          children: [
+            _buildTimeSlotPrice('Morning', pricing.morning.price, Icons.wb_sunny_outlined),
+            _buildTimeSlotPrice('Afternoon', pricing.afternoon.price, Icons.wb_cloudy_outlined),
+            _buildTimeSlotPrice('Evening', pricing.evening.price, Icons.wb_twilight),
+            _buildTimeSlotPrice('Night', pricing.night.price, Icons.nightlight_outlined),
+          ],
+        ),
+      ],
+    );
+  }
+
+  Widget _buildTimeSlotPrice(String label, double price, IconData icon) {
+    return Column(
+      children: [
+        Icon(icon, size: 16, color: AppColors.textSecondary),
+        const SizedBox(height: 4),
+        Text(
+          PriceCalculator.formatPrice(price),
+          style: const TextStyle(
+            fontSize: 13,
+            fontWeight: FontWeight.w600,
+            color: AppColors.textPrimary,
+          ),
+        ),
+        Text(
+          label,
+          style: TextStyle(
+            fontSize: 10,
+            color: AppColors.textSecondary,
+          ),
+        ),
+      ],
     );
   }
 

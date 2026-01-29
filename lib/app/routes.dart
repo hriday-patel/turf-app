@@ -14,6 +14,9 @@ import '../features/owner/screens/manual_booking_screen.dart';
 import '../features/owner/screens/verification_pending_screen.dart';
 
 class AppRoutes {
+  // Route observer for tracking navigation
+  static final RouteObserver<PageRoute> routeObserver = RouteObserver<PageRoute>();
+  
   // Route names
   static const String splash = '/';
   static const String loginSelection = '/login-selection';

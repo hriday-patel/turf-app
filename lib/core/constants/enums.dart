@@ -8,8 +8,7 @@ enum UserRole {
 /// Types of turf available
 enum TurfType {
   boxCricket,
-  football,
-  multiSport,
+  groundCricket,
 }
 
 extension TurfTypeExtension on TurfType {
@@ -17,10 +16,8 @@ extension TurfTypeExtension on TurfType {
     switch (this) {
       case TurfType.boxCricket:
         return 'Box Cricket';
-      case TurfType.football:
-        return 'Football';
-      case TurfType.multiSport:
-        return 'Multi-Sport';
+      case TurfType.groundCricket:
+        return 'Ground Cricket';
     }
   }
   
@@ -28,10 +25,8 @@ extension TurfTypeExtension on TurfType {
     switch (this) {
       case TurfType.boxCricket:
         return 'BOX_CRICKET';
-      case TurfType.football:
-        return 'FOOTBALL';
-      case TurfType.multiSport:
-        return 'MULTI_SPORT';
+      case TurfType.groundCricket:
+        return 'GROUND_CRICKET';
     }
   }
   
@@ -39,12 +34,58 @@ extension TurfTypeExtension on TurfType {
     switch (value) {
       case 'BOX_CRICKET':
         return TurfType.boxCricket;
+      case 'GROUND_CRICKET':
+        return TurfType.groundCricket;
+      // Legacy support
       case 'FOOTBALL':
-        return TurfType.football;
       case 'MULTI_SPORT':
-        return TurfType.multiSport;
+        return TurfType.boxCricket;
       default:
         return TurfType.boxCricket;
+    }
+  }
+}
+
+/// Turf operational status
+enum TurfStatus {
+  open,
+  closed,
+  renovation,
+}
+
+extension TurfStatusExtension on TurfStatus {
+  String get displayName {
+    switch (this) {
+      case TurfStatus.open:
+        return 'Open';
+      case TurfStatus.closed:
+        return 'Closed';
+      case TurfStatus.renovation:
+        return 'Under Renovation';
+    }
+  }
+  
+  String get value {
+    switch (this) {
+      case TurfStatus.open:
+        return 'OPEN';
+      case TurfStatus.closed:
+        return 'CLOSED';
+      case TurfStatus.renovation:
+        return 'RENOVATION';
+    }
+  }
+  
+  static TurfStatus fromString(String value) {
+    switch (value) {
+      case 'CLOSED':
+        return TurfStatus.closed;
+      case 'RENOVATION':
+        return TurfStatus.renovation;
+      case 'ACTIVE':
+      case 'OPEN':
+      default:
+        return TurfStatus.open;
     }
   }
 }
@@ -318,8 +359,7 @@ extension BookingStatusExtension on BookingStatus {
 /// Day type for pricing calculation
 enum DayType {
   weekday,
-  saturday,
-  sunday,
+  weekend,
   holiday,
 }
 
@@ -328,10 +368,8 @@ extension DayTypeExtension on DayType {
     switch (this) {
       case DayType.weekday:
         return 'Weekday';
-      case DayType.saturday:
-        return 'Saturday';
-      case DayType.sunday:
-        return 'Sunday';
+      case DayType.weekend:
+        return 'Weekend';
       case DayType.holiday:
         return 'Holiday';
     }
@@ -341,10 +379,8 @@ extension DayTypeExtension on DayType {
     switch (this) {
       case DayType.weekday:
         return 'WEEKDAY';
-      case DayType.saturday:
-        return 'SATURDAY';
-      case DayType.sunday:
-        return 'SUNDAY';
+      case DayType.weekend:
+        return 'WEEKEND';
       case DayType.holiday:
         return 'HOLIDAY';
     }
@@ -352,14 +388,12 @@ extension DayTypeExtension on DayType {
   
   static DayType fromString(String value) {
     switch (value) {
+      case 'WEEKEND':
       case 'SATURDAY':
-        return DayType.saturday;
       case 'SUNDAY':
-        return DayType.sunday;
+        return DayType.weekend;
       case 'HOLIDAY':
         return DayType.holiday;
-      case 'WEEKEND': // Backwards compatibility
-        return DayType.saturday;
       default:
         return DayType.weekday;
     }
