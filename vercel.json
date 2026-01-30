@@ -38,6 +38,10 @@
       "dest": "/api/bookings/cancel.js"
     },
     {
+      "src": "/api/storage/upload-image",
+      "dest": "/api/storage/upload-image.js"
+    },
+    {
       "src": "/api/health",
       "dest": "/api/health.js"
     },
