@@ -155,8 +155,8 @@ class _AddTurfScreenState extends State<AddTurfScreen> with RouteAware {
     _slotDuration = turf.slotDurationMinutes;
     _selectedDays = List.from(turf.daysOpen);
     
-    // Load existing images
-    _existingImages = List.from(turf.images);
+    // Load existing images - filter out any invalid ones
+    _existingImages = turf.images.where((img) => img.isValid).toList();
     
     // Initialize pricing controllers with existing values from turf
     _initializePricingControllersFromTurf(turf);
@@ -401,7 +401,8 @@ class _AddTurfScreenState extends State<AddTurfScreen> with RouteAware {
           turfImages = uploadResult.urls.asMap().entries.map((entry) => TurfImage(
             url: entry.value,
             type: TurfImageType.ground,
-            isPrimary: entry.key == 0,
+            // New images are only primary if there are no existing images
+            isPrimary: _existingImages.isEmpty && entry.key == 0,
           )).toList();
         } catch (e) {
           // Image upload failed, but continue with turf creation
@@ -413,10 +414,32 @@ class _AddTurfScreenState extends State<AddTurfScreen> with RouteAware {
 
       if (isEditing) {
         // Combine existing images with newly uploaded images
-        final List<Map<String, dynamic>> allImages = [
-          ..._existingImages.map((i) => i.toMap()),
-          ...turfImages.map((i) => i.toMap()),
+        // Filter out any invalid images and ensure proper primary flag
+        final List<TurfImage> combinedImages = [
+          ..._existingImages.where((img) => img.isValid),
+          ...turfImages.where((img) => img.isValid),
         ];
+        
+        // Ensure at least one image is marked as primary (if any images exist)
+        final List<Map<String, dynamic>> allImages;
+        if (combinedImages.isNotEmpty) {
+          final hasPrimary = combinedImages.any((img) => img.isPrimary);
+          if (!hasPrimary) {
+            // Mark the first image as primary
+            allImages = combinedImages.asMap().entries.map((entry) {
+              final img = entry.value;
+              return {
+                'url': img.url,
+                'type': img.type.value,
+                'isPrimary': entry.key == 0,
+              };
+            }).toList();
+          } else {
+            allImages = combinedImages.map((i) => i.toMap()).toList();
+          }
+        } else {
+          allImages = [];
+        }
         
         // Update existing turf
         final success = await turfProvider.updateTurf(turfId, {
@@ -436,23 +459,35 @@ class _AddTurfScreenState extends State<AddTurfScreen> with RouteAware {
           'images': allImages,
         });
 
+        if (!mounted) return;
+        
         setState(() => _isLoading = false);
 
-        if (success && mounted) {
+        if (success) {
           // Force refresh turfs from database to ensure UI is updated
           await turfProvider.refreshTurfs(authProvider.currentUserId!);
+          
+          if (!mounted) return;
           
           if (imageUploadFailed && _selectedImages.isNotEmpty) {
             _showSuccess('Turf updated! $imageUploadMessage');
           } else {
             _showSuccess('Turf updated successfully');
           }
-          Navigator.pop(context, true);
-        } else if (mounted) {
+          
+          // Use Navigator.of with proper error handling
+          if (Navigator.canPop(context)) {
+            Navigator.pop(context, true);
+          } else {
+            Navigator.pushReplacementNamed(context, AppRoutes.myTurfs);
+          }
+        } else {
           _showError(turfProvider.errorMessage ?? 'Failed to update turf');
         }
       } else {
-        // Create new turf
+        // Create new turf - filter invalid images
+        final validNewImages = turfImages.where((img) => img.isValid).toList();
+        
         final resultId = await turfProvider.addTurf(
           turfId: turfId,
           ownerId: authProvider.currentUserId!,
@@ -469,29 +504,33 @@ class _AddTurfScreenState extends State<AddTurfScreen> with RouteAware {
           slotDurationMinutes: _slotDuration,
           daysOpen: _selectedDays,
           pricingRules: pricingRules,
-          images: turfImages,
+          images: validNewImages,
         );
 
+        if (!mounted) return;
+        
         setState(() => _isLoading = false);
 
-        if (resultId != null && mounted) {
+        if (resultId != null) {
           if (imageUploadFailed && _selectedImages.isNotEmpty) {
             _showSuccess('${AppStrings.turfAddedSuccess}! $imageUploadMessage');
           } else {
             _showSuccess(AppStrings.turfAddedSuccess);
           }
           Navigator.pushReplacementNamed(context, AppRoutes.verificationPending);
-        } else if (mounted) {
+        } else {
           _showError(turfProvider.errorMessage ?? 'Failed to add turf');
         }
       }
     } catch (e) {
+      if (!mounted) return;
       setState(() => _isLoading = false);
       _showError('Failed to ${isEditing ? 'update' : 'add'} turf: $e');
     }
   }
 
   void _showError(String message) {
+    if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(message),
@@ -502,6 +541,7 @@ class _AddTurfScreenState extends State<AddTurfScreen> with RouteAware {
   }
 
   void _showSuccess(String message) {
+    if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(message),
@@ -511,31 +551,56 @@ class _AddTurfScreenState extends State<AddTurfScreen> with RouteAware {
     );
   }
 
+  /// Refresh turf data in provider
+  void _refreshTurfData() {
+    final authProvider = Provider.of<AuthProvider>(context, listen: false);
+    final turfProvider = Provider.of<TurfProvider>(context, listen: false);
+    if (authProvider.currentUserId != null) {
+      turfProvider.loadOwnerTurfs(authProvider.currentUserId!);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: AppColors.background,
-      appBar: AppBar(
-        title: Text(isEditing ? 'Edit Turf' : 'Add New Turf'),
-        backgroundColor: AppColors.primary,
-      ),
-      body: Column(
-        children: [
-          _buildStepIndicator(),
-          Expanded(
-            child: PageView(
-              controller: _pageController,
-              physics: const NeverScrollableScrollPhysics(),
-              children: [
-                _buildBasicInfoStep(),
-                _buildScheduleStep(),
-                _buildPricingStep(),
-                _buildImagesStep(),
-              ],
-            ),
+    return PopScope(
+      canPop: true,
+      onPopInvokedWithResult: (didPop, result) {
+        if (didPop) {
+          // Always refresh data when navigating back
+          _refreshTurfData();
+        }
+      },
+      child: Scaffold(
+        backgroundColor: AppColors.background,
+        appBar: AppBar(
+          title: Text(isEditing ? 'Edit Turf' : 'Add New Turf'),
+          backgroundColor: AppColors.primary,
+          leading: IconButton(
+            icon: const Icon(Icons.arrow_back),
+            onPressed: () {
+              _refreshTurfData();
+              Navigator.pop(context);
+            },
           ),
-          _buildNavigationButtons(),
-        ],
+        ),
+        body: Column(
+          children: [
+            _buildStepIndicator(),
+            Expanded(
+              child: PageView(
+                controller: _pageController,
+                physics: const NeverScrollableScrollPhysics(),
+                children: [
+                  _buildBasicInfoStep(),
+                  _buildScheduleStep(),
+                  _buildPricingStep(),
+                  _buildImagesStep(),
+                ],
+              ),
+            ),
+            _buildNavigationButtons(),
+          ],
+        ),
       ),
     );
   }

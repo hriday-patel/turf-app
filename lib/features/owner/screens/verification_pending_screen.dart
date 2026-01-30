@@ -1,12 +1,37 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 import '../../../config/colors.dart';
 import '../../../core/constants/strings.dart';
 import '../../../app/routes.dart';
+import '../../auth/providers/auth_provider.dart';
+import '../providers/turf_provider.dart';
 
 /// Verification Pending Screen
 /// Shown after owner submits a new turf for verification
-class VerificationPendingScreen extends StatelessWidget {
+class VerificationPendingScreen extends StatefulWidget {
   const VerificationPendingScreen({super.key});
+
+  @override
+  State<VerificationPendingScreen> createState() => _VerificationPendingScreenState();
+}
+
+class _VerificationPendingScreenState extends State<VerificationPendingScreen> {
+  @override
+  void initState() {
+    super.initState();
+    // Refresh turfs when this screen loads to ensure data is up to date
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _refreshTurfs();
+    });
+  }
+  
+  void _refreshTurfs() {
+    final authProvider = Provider.of<AuthProvider>(context, listen: false);
+    final turfProvider = Provider.of<TurfProvider>(context, listen: false);
+    if (authProvider.currentUserId != null) {
+      turfProvider.loadOwnerTurfs(authProvider.currentUserId!);
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -118,6 +143,8 @@ class VerificationPendingScreen extends StatelessWidget {
                 height: 54,
                 child: ElevatedButton(
                   onPressed: () {
+                    // Refresh data before navigating to dashboard
+                    _refreshTurfs();
                     Navigator.pushNamedAndRemoveUntil(
                       context,
                       AppRoutes.ownerDashboard,
@@ -145,13 +172,8 @@ class VerificationPendingScreen extends StatelessWidget {
               // Add Another Turf
               TextButton(
                 onPressed: () {
-                  Navigator.pushReplacementNamed(context, AppRoutes.addTurf);
-                },
-                child: const Text(
-                  'Add Another Turf',
-                  style: TextStyle(
-                    fontSize: 14,
-                    fontWeight: FontWeight.w600,
+                  // Use push instead of pushReplacement so back navigation works
+                  Navigator.pushNamed(context, AppRoutes.addTurf);
                     color: AppColors.primary,
                   ),
                 ),

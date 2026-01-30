@@ -109,6 +109,7 @@ class TurfProvider extends ChangeNotifier {
   Future<bool> updateTurf(String turfId, Map<String, dynamic> data) async {
     try {
       _isLoading = true;
+      _errorMessage = null;
       notifyListeners();
 
       await _dbService.updateTurf(turfId, data);
@@ -118,13 +119,46 @@ class TurfProvider extends ChangeNotifier {
       if (index != -1) {
         final currentTurf = _turfs[index];
         final updatedMap = currentTurf.toMap();
-        updatedMap.addAll(data);
-        updatedMap['updated_at'] = DateTime.now().toIso8601String();
-        _turfs[index] = TurfModel.fromMap(updatedMap);
         
-        // Also update selected turf if it's the same
-        if (_selectedTurf?.turfId == turfId) {
-          _selectedTurf = _turfs[index];
+        // Merge data carefully - handle special fields
+        for (final entry in data.entries) {
+          final key = entry.key;
+          final value = entry.value;
+          
+          // Convert snake_case to the format used in toMap if needed
+          if (key == 'turf_name') {
+            updatedMap['turf_name'] = value;
+          } else if (key == 'turf_type') {
+            updatedMap['turf_type'] = value;
+          } else if (key == 'open_time') {
+            updatedMap['open_time'] = value;
+          } else if (key == 'close_time') {
+            updatedMap['close_time'] = value;
+          } else if (key == 'slot_duration_minutes') {
+            updatedMap['slot_duration_minutes'] = value;
+          } else if (key == 'days_open') {
+            updatedMap['days_open'] = value;
+          } else if (key == 'pricing_rules') {
+            updatedMap['pricing_rules'] = value;
+          } else if (key == 'number_of_nets') {
+            updatedMap['number_of_nets'] = value;
+          } else {
+            updatedMap[key] = value;
+          }
+        }
+        
+        updatedMap['updated_at'] = DateTime.now().toIso8601String();
+        
+        try {
+          _turfs[index] = TurfModel.fromMap(updatedMap);
+          
+          // Also update selected turf if it's the same
+          if (_selectedTurf?.turfId == turfId) {
+            _selectedTurf = _turfs[index];
+          }
+        } catch (parseError) {
+          // If parsing fails, we'll rely on the next refresh
+          debugPrint('Failed to parse updated turf locally: $parseError');
         }
       }
       

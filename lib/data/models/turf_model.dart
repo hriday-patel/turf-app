@@ -293,11 +293,26 @@ class TurfImage {
     this.isPrimary = false,
   });
 
+  /// Check if this image has a valid URL
+  bool get isValid => url.isNotEmpty && _isValidUrl(url);
+  
+  /// Validate URL format
+  static bool _isValidUrl(String url) {
+    if (url.isEmpty) return false;
+    try {
+      final uri = Uri.parse(url);
+      return uri.hasScheme && (uri.scheme == 'http' || uri.scheme == 'https');
+    } catch (e) {
+      return false;
+    }
+  }
+
   factory TurfImage.fromMap(Map<String, dynamic> map) {
+    final urlValue = map['url']?.toString() ?? '';
     return TurfImage(
-      url: map['url'] ?? '',
+      url: urlValue,
       type: _parseImageType(map['type']),
-      isPrimary: map['isPrimary'] ?? false,
+      isPrimary: map['isPrimary'] == true || map['is_primary'] == true,
     );
   }
 
@@ -307,6 +322,15 @@ class TurfImage {
       'type': type.value,
       'isPrimary': isPrimary,
     };
+  }
+  
+  /// Create a copy with modified primary status
+  TurfImage copyWith({bool? isPrimary}) {
+    return TurfImage(
+      url: url,
+      type: type,
+      isPrimary: isPrimary ?? this.isPrimary,
+    );
   }
 
   static TurfImageType _parseImageType(String? type) {
@@ -412,9 +436,7 @@ class TurfModel {
       status: TurfStatusExtension.fromString(data['status'] ?? 'OPEN'),
       pricingRules: PricingRules.fromMap(data['pricing_rules'] ?? data['pricingRules'] ?? {}),
       publicHolidays: List<String>.from(data['public_holidays'] ?? data['publicHolidays'] ?? []),
-      images: (data['images'] as List<dynamic>?)
-          ?.map((e) => TurfImage.fromMap(e as Map<String, dynamic>))
-          .toList() ?? [],
+      images: _parseImages(data['images']),
       isApproved: data['is_approved'] ?? data['isApproved'] ?? false,
       verificationStatus: VerificationStatusExtension.fromString(data['verification_status'] ?? data['verificationStatus'] ?? 'PENDING'),
       rejectionReason: data['rejection_reason'] ?? data['rejectionReason'],
@@ -423,6 +445,24 @@ class TurfModel {
           ? parseDate(data['updated_at'] ?? data['updatedAt'])
           : null,
     );
+  }
+  
+  /// Parse and filter images, removing invalid ones
+  static List<TurfImage> _parseImages(dynamic imagesData) {
+    if (imagesData == null) return [];
+    if (imagesData is! List) return [];
+    
+    final List<TurfImage> result = [];
+    for (final item in imagesData) {
+      if (item is Map<String, dynamic>) {
+        final image = TurfImage.fromMap(item);
+        // Only include images with valid URLs
+        if (image.isValid) {
+          result.add(image);
+        }
+      }
+    }
+    return result;
   }
 
   /// Convert to Supabase map
@@ -452,10 +492,20 @@ class TurfModel {
     };
   }
 
-  /// Get primary image URL
+  /// Get primary image URL (only returns valid URLs)
   String? get primaryImageUrl {
-    final primary = images.where((img) => img.isPrimary).firstOrNull;
-    return primary?.url ?? images.firstOrNull?.url;
+    // First try to find a primary image with a valid URL
+    final primary = images.where((img) => img.isPrimary && img.isValid).firstOrNull;
+    if (primary != null) return primary.url;
+    
+    // Fallback to first valid image
+    final firstValid = images.where((img) => img.isValid).firstOrNull;
+    return firstValid?.url;
+  }
+  
+  /// Get all valid image URLs
+  List<String> get validImageUrls {
+    return images.where((img) => img.isValid).map((img) => img.url).toList();
   }
 
   /// Copy with modified fields
