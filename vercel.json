@@ -42,6 +42,10 @@
       "dest": "/api/storage/upload-image.js"
     },
     {
+      "src": "/api/admin/approve-turf",
+      "dest": "/api/admin/approve-turf.js"
+    },
+    {
       "src": "/api/health",
       "dest": "/api/health.js"
     },
