@@ -174,6 +174,12 @@ class _VerificationPendingScreenState extends State<VerificationPendingScreen> {
                 onPressed: () {
                   // Use push instead of pushReplacement so back navigation works
                   Navigator.pushNamed(context, AppRoutes.addTurf);
+                },
+                child: const Text(
+                  'Add Another Turf',
+                  style: TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w600,
                     color: AppColors.primary,
                   ),
                 ),
