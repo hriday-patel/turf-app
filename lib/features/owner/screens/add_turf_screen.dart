@@ -32,6 +32,14 @@ class _AddTurfScreenState extends State<AddTurfScreen> with RouteAware {
   bool _isLoading = false;
   bool get isEditing => widget.editTurf != null;
 
+  // Track original basic info values to detect changes
+  String? _originalTurfName;
+  String? _originalCity;
+  String? _originalAddress;
+  TurfType? _originalTurfType;
+  int? _originalNumberOfNets;
+  String? _originalDescription;
+
   // Form Keys
   final _basicFormKey = GlobalKey<FormState>();
   final _scheduleFormKey = GlobalKey<FormState>();
@@ -140,6 +148,14 @@ class _AddTurfScreenState extends State<AddTurfScreen> with RouteAware {
     _selectedTurfType = turf.turfType;
     _numberOfNets = turf.numberOfNets;
     
+    // Store original basic info values for change detection
+    _originalTurfName = turf.turfName;
+    _originalCity = turf.city;
+    _originalAddress = turf.address;
+    _originalTurfType = turf.turfType;
+    _originalNumberOfNets = turf.numberOfNets;
+    _originalDescription = turf.description ?? '';
+    
     final openParts = turf.openTime.split(':');
     _openTime = TimeOfDay(
       hour: int.parse(openParts[0]),
@@ -160,6 +176,18 @@ class _AddTurfScreenState extends State<AddTurfScreen> with RouteAware {
     
     // Initialize pricing controllers with existing values from turf
     _initializePricingControllersFromTurf(turf);
+  }
+  
+  /// Check if basic info has changed (requires re-approval)
+  bool _hasBasicInfoChanged() {
+    if (!isEditing) return false;
+    
+    return _turfNameController.text.trim() != _originalTurfName ||
+           _cityController.text.trim() != _originalCity ||
+           _addressController.text.trim() != _originalAddress ||
+           _selectedTurfType != _originalTurfType ||
+           _numberOfNets != _originalNumberOfNets ||
+           _descriptionController.text.trim() != _originalDescription;
   }
   
   /// Initialize pricing controllers with values from existing turf
@@ -441,8 +469,11 @@ class _AddTurfScreenState extends State<AddTurfScreen> with RouteAware {
           allImages = [];
         }
         
-        // Update existing turf
-        final success = await turfProvider.updateTurf(turfId, {
+        // Check if basic info changed - requires re-approval
+        final basicInfoChanged = _hasBasicInfoChanged();
+        
+        // Build update data
+        final updateData = {
           'turf_name': _turfNameController.text.trim(),
           'city': _cityController.text.trim(),
           'address': _addressController.text.trim(),
@@ -457,7 +488,16 @@ class _AddTurfScreenState extends State<AddTurfScreen> with RouteAware {
           'days_open': _selectedDays,
           'pricing_rules': pricingRules.toMap(),
           'images': allImages,
-        });
+        };
+        
+        // If basic info changed, set status back to pending approval
+        if (basicInfoChanged) {
+          updateData['verification_status'] = 'PENDING';
+          updateData['is_approved'] = false;
+        }
+        
+        // Update existing turf
+        final success = await turfProvider.updateTurf(turfId, updateData);
 
         if (!mounted) return;
         
@@ -469,7 +509,17 @@ class _AddTurfScreenState extends State<AddTurfScreen> with RouteAware {
           
           if (!mounted) return;
           
-          if (imageUploadFailed && _selectedImages.isNotEmpty) {
+          if (basicInfoChanged) {
+            // If basic info changed, navigate to verification pending screen
+            _showSuccess('Turf updated. Changes to basic info require re-approval.');
+            // Navigate to verification pending and clear navigation stack
+            Navigator.pushNamedAndRemoveUntil(
+              context, 
+              AppRoutes.verificationPending,
+              (route) => route.isFirst,
+            );
+            return; // Don't continue to other navigation
+          } else if (imageUploadFailed && _selectedImages.isNotEmpty) {
             _showSuccess('Turf updated! $imageUploadMessage');
           } else {
             _showSuccess('Turf updated successfully');
@@ -688,6 +738,35 @@ class _AddTurfScreenState extends State<AddTurfScreen> with RouteAware {
               'Enter the basic details of your turf',
               style: TextStyle(color: AppColors.textSecondary),
             ),
+            
+            // Warning for edit mode
+            if (isEditing) ...[
+              const SizedBox(height: 12),
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: AppColors.warning.withOpacity(0.1),
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: AppColors.warning.withOpacity(0.3)),
+                ),
+                child: Row(
+                  children: [
+                    Icon(Icons.info_outline, color: AppColors.warning, size: 20),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        'Note: Changes to basic info will require re-approval. Pricing, schedule, and images can be changed freely.',
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: AppColors.warning.withOpacity(0.8),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+            
             const SizedBox(height: 24),
             
             _buildTextField(

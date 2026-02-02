@@ -215,6 +215,8 @@ class _BookingDetailScreenState extends State<BookingDetailScreen> with RouteAwa
             icon: Icons.calendar_today_outlined,
             children: [
               _buildInfoRow('Turf', _booking!.turfName),
+              if (_booking!.netNumber > 0)
+                _buildInfoRow('Net', 'Net ${_booking!.netNumber}'),
               _buildInfoRow('Date', _booking!.bookingDate),
               _buildInfoRow('Time', _booking!.displayTimeRange),
               _buildInfoRow('Source', _booking!.bookingSource.displayName),
@@ -227,7 +229,11 @@ class _BookingDetailScreenState extends State<BookingDetailScreen> with RouteAwa
             title: 'Payment Information',
             icon: Icons.payment_outlined,
             children: [
-              _buildInfoRow('Amount', '₹${_booking!.amount.toInt()}'),
+              _buildInfoRow('Total Amount', '₹${_booking!.amount.toInt()}'),
+              if (_booking!.advanceAmount > 0)
+                _buildInfoRow('Advance Paid', '₹${_booking!.advanceAmount.toInt()}'),
+              if (_booking!.isPartialPayment)
+                _buildInfoRow('Remaining', '₹${_booking!.remainingAmount.toInt()}', valueColor: AppColors.warning),
               _buildInfoRow('Mode', _booking!.paymentMode.displayName),
               _buildInfoRow('Status', _booking!.paymentStatus.displayName),
               if (_booking!.transactionId != null)
@@ -389,7 +395,7 @@ class _BookingDetailScreenState extends State<BookingDetailScreen> with RouteAwa
     );
   }
 
-  Widget _buildInfoRow(String label, String value) {
+  Widget _buildInfoRow(String label, String value, {Color? valueColor}) {
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 4),
       child: Row(
@@ -404,9 +410,10 @@ class _BookingDetailScreenState extends State<BookingDetailScreen> with RouteAwa
           ),
           Text(
             value,
-            style: const TextStyle(
+            style: TextStyle(
               fontWeight: FontWeight.w500,
               fontSize: 14,
+              color: valueColor,
             ),
           ),
         ],

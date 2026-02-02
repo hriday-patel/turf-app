@@ -10,6 +10,9 @@ class SlotModel {
   final String startTime;   // "18:00"
   final String endTime;     // "19:00"
   
+  // Net Information (for multi-net turfs)
+  final int netNumber;
+  
   // Status
   final SlotStatus status;
   
@@ -34,6 +37,7 @@ class SlotModel {
     required this.date,
     required this.startTime,
     required this.endTime,
+    this.netNumber = 1,
     this.status = SlotStatus.available,
     this.reservedUntil,
     this.reservedBy,
@@ -58,6 +62,7 @@ class SlotModel {
       date: data['date'] ?? '',
       startTime: data['start_time'] ?? data['startTime'] ?? '',
       endTime: data['end_time'] ?? data['endTime'] ?? '',
+      netNumber: data['net_number'] ?? data['netNumber'] ?? 1,
       status: SlotStatusExtension.fromString(data['status'] ?? 'AVAILABLE'),
       reservedUntil: data['reserved_until'] != null || data['reservedUntil'] != null
           ? parseDate(data['reserved_until'] ?? data['reservedUntil'])
@@ -78,6 +83,7 @@ class SlotModel {
       'date': date,
       'start_time': startTime,
       'end_time': endTime,
+      'net_number': netNumber,
       'status': status.value,
       'reserved_until': reservedUntil?.toIso8601String(),
       'reserved_by': reservedBy,
@@ -139,6 +145,7 @@ class SlotModel {
       date: date,
       startTime: startTime,
       endTime: endTime,
+      netNumber: netNumber,
       status: status ?? this.status,
       reservedUntil: reservedUntil ?? this.reservedUntil,
       reservedBy: reservedBy ?? this.reservedBy,
@@ -152,6 +159,6 @@ class SlotModel {
 
   @override
   String toString() {
-    return 'SlotModel(slotId: $slotId, date: $date, $startTime-$endTime, status: ${status.displayName})';
+    return 'SlotModel(slotId: $slotId, date: $date, $startTime-$endTime, net: $netNumber, status: ${status.displayName})';
   }
 }

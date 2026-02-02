@@ -2,7 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../../config/colors.dart';
 import '../../../core/constants/strings.dart';
+import '../../../core/constants/enums.dart';
 import '../../../app/routes.dart';
+import '../../../data/models/booking_model.dart';
 import '../../auth/providers/auth_provider.dart';
 import '../providers/turf_provider.dart';
 import '../providers/booking_provider.dart';
@@ -46,14 +48,32 @@ class _OwnerDashboardScreenState extends State<OwnerDashboardScreen>
   void didPopNext() {
     // Called when returning to this screen from another screen
     debugPrint('Dashboard: didPopNext - refreshing data');
-    _loadData();
+    _forceRefreshData();
   }
   
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
       // Refresh when app comes to foreground
-      _loadData();
+      _forceRefreshData();
+    }
+  }
+
+  Future<void> _forceRefreshData() async {
+    final authProvider = Provider.of<AuthProvider>(context, listen: false);
+    final turfProvider = Provider.of<TurfProvider>(context, listen: false);
+    final bookingProvider = Provider.of<BookingProvider>(context, listen: false);
+
+    if (authProvider.currentUserId != null) {
+      // Force refresh from database to get latest verification status
+      await turfProvider.refreshTurfs(authProvider.currentUserId!);
+      
+      // Refresh bookings after turfs are updated (only for approved turfs)
+      final approvedTurfIds = turfProvider.approvedTurfs.map((t) => t.turfId).toList();
+      if (approvedTurfIds.isNotEmpty) {
+        bookingProvider.loadTodaysBookings(approvedTurfIds);
+        bookingProvider.loadPendingPayments(approvedTurfIds);
+      }
     }
   }
 
@@ -71,9 +91,11 @@ class _OwnerDashboardScreenState extends State<OwnerDashboardScreen>
     final turfProvider = Provider.of<TurfProvider>(context, listen: false);
     final bookingProvider = Provider.of<BookingProvider>(context, listen: false);
     
-    if (turfProvider.turfIds.isNotEmpty) {
-      bookingProvider.loadTodaysBookings(turfProvider.turfIds);
-      bookingProvider.loadPendingPayments(turfProvider.turfIds);
+    // Only load bookings for approved turfs
+    final approvedTurfIds = turfProvider.approvedTurfs.map((t) => t.turfId).toList();
+    if (approvedTurfIds.isNotEmpty) {
+      bookingProvider.loadTodaysBookings(approvedTurfIds);
+      bookingProvider.loadPendingPayments(approvedTurfIds);
     }
   }
 
@@ -456,7 +478,7 @@ class _OwnerDashboardScreenState extends State<OwnerDashboardScreen>
           ),
           const SizedBox(height: 12),
           _buildFullWidthActionCard(
-            title: 'Bookings',
+            title: 'History',
             subtitle: 'View all bookings, manage payments and schedules',
             icon: Icons.calendar_month_outlined,
             color: AppColors.secondary,
@@ -467,7 +489,7 @@ class _OwnerDashboardScreenState extends State<OwnerDashboardScreen>
           ),
           const SizedBox(height: 12),
           _buildFullWidthActionCard(
-            title: 'Slot Management',
+            title: 'Booking',
             subtitle: 'Manage slots and create manual bookings',
             icon: Icons.access_time_outlined,
             color: AppColors.success,
@@ -673,7 +695,7 @@ class _OwnerDashboardScreenState extends State<OwnerDashboardScreen>
     );
   }
 
-  Widget _buildBookingItem(dynamic booking) {
+  Widget _buildBookingItem(BookingModel booking) {
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
       padding: const EdgeInsets.all(16),
@@ -708,7 +730,7 @@ class _OwnerDashboardScreenState extends State<OwnerDashboardScreen>
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  booking.customerName ?? 'Customer',
+                  booking.customerName.isNotEmpty ? booking.customerName : 'Customer',
                   style: const TextStyle(
                     fontWeight: FontWeight.w600,
                     color: AppColors.textPrimary,
@@ -725,7 +747,7 @@ class _OwnerDashboardScreenState extends State<OwnerDashboardScreen>
               ],
             ),
           ),
-          _buildPaymentBadge(booking.paymentStatus?.displayName ?? 'Pending'),
+          _buildPaymentBadge(booking.paymentStatus.displayName),
         ],
       ),
     );

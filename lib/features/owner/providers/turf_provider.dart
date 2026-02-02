@@ -16,7 +16,7 @@ class TurfProvider extends ChangeNotifier {
   // Getters
   List<TurfModel> get turfs => _turfs;
   List<TurfModel> get approvedTurfs => 
-      _turfs.where((t) => t.isApproved).toList();
+      _turfs.where((t) => t.verificationStatus == VerificationStatus.approved).toList();
   List<TurfModel> get pendingTurfs => 
       _turfs.where((t) => t.verificationStatus == VerificationStatus.pending).toList();
   TurfModel? get selectedTurf => _selectedTurf;
@@ -112,7 +112,35 @@ class TurfProvider extends ChangeNotifier {
       _errorMessage = null;
       notifyListeners();
 
+      // Check if slot-affecting settings are being changed
+      final slotAffectingKeys = [
+        'slot_duration_minutes',
+        'number_of_nets',
+        'pricing_rules',
+        'open_time',
+        'close_time',
+        'days_open',
+      ];
+      
+      final hasSlotAffectingChanges = data.keys.any(
+        (key) => slotAffectingKeys.contains(key)
+      );
+
       await _dbService.updateTurf(turfId, data);
+      
+      // If slot-affecting settings changed, delete future available slots
+      // so they get regenerated with new settings
+      if (hasSlotAffectingChanges) {
+        final deletedCount = await _dbService.deleteFutureAvailableSlots(turfId);
+        debugPrint('Deleted $deletedCount future available slots for regeneration');
+        
+        // If net count was reduced, also delete slots for removed nets
+        if (data.containsKey('number_of_nets')) {
+          final newNetCount = data['number_of_nets'] as int;
+          final removedNetSlotsCount = await _dbService.deleteSlotsForRemovedNets(turfId, newNetCount);
+          debugPrint('Deleted $removedNetSlotsCount slots for removed nets');
+        }
+      }
       
       // Update the local turf immediately for instant UI feedback
       final index = _turfs.indexWhere((t) => t.turfId == turfId);
@@ -142,6 +170,10 @@ class TurfProvider extends ChangeNotifier {
             updatedMap['pricing_rules'] = value;
           } else if (key == 'number_of_nets') {
             updatedMap['number_of_nets'] = value;
+          } else if (key == 'verification_status') {
+            updatedMap['verification_status'] = value;
+          } else if (key == 'is_approved') {
+            updatedMap['is_approved'] = value;
           } else {
             updatedMap[key] = value;
           }

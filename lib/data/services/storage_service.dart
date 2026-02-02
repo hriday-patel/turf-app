@@ -60,9 +60,13 @@ class StorageService {
     required Uint8List imageBytes,
     required String turfId,
     required String fileName,
-    int retryCount = 3,
+    int retryCount = 5,
   }) async {
     Exception? lastError;
+    
+    // Sanitize turfId and fileName to prevent URI errors
+    final sanitizedTurfId = _sanitizeForUri(turfId);
+    final sanitizedFileName = _sanitizeFileName(fileName);
     
     for (int attempt = 1; attempt <= retryCount; attempt++) {
       try {
@@ -76,31 +80,56 @@ class StorageService {
           },
           body: jsonEncode({
             'imageData': base64Image,
-            'turfId': turfId,
-            'fileName': fileName,
+            'turfId': sanitizedTurfId,
+            'fileName': sanitizedFileName,
             'contentType': 'image/jpeg',
           }),
-        ).timeout(const Duration(seconds: 60));
+        ).timeout(const Duration(seconds: 90));
         
         if (response.statusCode == 200) {
           final data = jsonDecode(response.body);
           if (data['success'] == true && data['url'] != null) {
-            debugPrint('Image uploaded successfully via API: ${data['url']}');
-            return data['url'] as String;
+            final url = data['url'] as String;
+            // Validate returned URL
+            if (_isValidUrl(url)) {
+              debugPrint('Image uploaded successfully via API: $url');
+              return url;
+            } else {
+              throw Exception('Invalid URL returned from server');
+            }
           } else {
             throw Exception(data['error'] ?? 'Upload failed');
           }
         } else {
-          final errorData = jsonDecode(response.body);
-          throw Exception(errorData['error'] ?? 'HTTP ${response.statusCode}');
+          String errorMsg = 'HTTP ${response.statusCode}';
+          try {
+            final errorData = jsonDecode(response.body);
+            errorMsg = errorData['error'] ?? errorMsg;
+          } catch (_) {}
+          throw Exception(errorMsg);
         }
       } catch (e) {
         lastError = e is Exception ? e : Exception(e.toString());
+        final errorStr = e.toString().toLowerCase();
         debugPrint('API upload attempt $attempt failed: $e');
         
-        if (attempt < retryCount) {
-          // Exponential backoff
-          await Future.delayed(Duration(milliseconds: 1000 * attempt));
+        // Check for retryable errors
+        final isRetryableError = errorStr.contains('failed to fetch') ||
+            errorStr.contains('network') ||
+            errorStr.contains('timeout') ||
+            errorStr.contains('connection') ||
+            errorStr.contains('socket') ||
+            errorStr.contains('clientexception') ||
+            errorStr.contains('uri');
+        
+        if (attempt < retryCount && isRetryableError) {
+          // Exponential backoff with jitter
+          final delay = Duration(milliseconds: (1000 * attempt) + (attempt * 200));
+          await Future.delayed(delay);
+          continue;
+        } else if (!isRetryableError) {
+          // Non-retryable error, break immediately
+          break;
         }
       }
     }
@@ -111,10 +140,38 @@ class StorageService {
     debugPrint('Attempting fallback to direct Supabase upload...');
     return await _uploadDirect(
       imageBytes: imageBytes,
-      turfId: turfId,
-      fileName: fileName,
-      retryCount: 2,
+      turfId: sanitizedTurfId,
+      fileName: sanitizedFileName,
+      retryCount: 3,
     );
+  }
+  
+  /// Sanitize string for use in URI paths
+  String _sanitizeForUri(String input) {
+    return input.replaceAll(RegExp(r'[^a-zA-Z0-9\-_]'), '_');
+  }
+  
+  /// Sanitize file name
+  String _sanitizeFileName(String fileName) {
+    // Remove invalid characters and ensure extension
+    String sanitized = fileName.replaceAll(RegExp(r'[^a-zA-Z0-9\-_.\s]'), '_');
+    if (!sanitized.toLowerCase().endsWith('.jpg') && 
+        !sanitized.toLowerCase().endsWith('.jpeg') && 
+        !sanitized.toLowerCase().endsWith('.png')) {
+      sanitized = '$sanitized.jpg';
+    }
+    return sanitized;
+  }
+  
+  /// Validate URL format
+  static bool _isValidUrl(String url) {
+    if (url.isEmpty) return false;
+    try {
+      final uri = Uri.parse(url);
+      return uri.hasScheme && (uri.scheme == 'http' || uri.scheme == 'https');
+    } catch (e) {
+      return false;
+    }
   }
   
   /// Upload directly to Supabase Storage (for mobile or as fallback)
@@ -122,13 +179,17 @@ class StorageService {
     required Uint8List imageBytes,
     required String turfId,
     required String fileName,
-    int retryCount = 3,
+    int retryCount = 5,
   }) async {
     Exception? lastError;
     
+    // Ensure sanitized values
+    final sanitizedTurfId = _sanitizeForUri(turfId);
+    final sanitizedFileName = _sanitizeFileName(fileName);
+    
     for (int attempt = 1; attempt <= retryCount; attempt++) {
       try {
-        final String path = 'turfs/$turfId/images/$fileName';
+        final String path = 'turfs/$sanitizedTurfId/images/$sanitizedFileName';
         
         await _client.storage.from(_turfBucket).uploadBinary(
           path,
@@ -140,14 +201,35 @@ class StorageService {
         );
 
         final url = _client.storage.from(_turfBucket).getPublicUrl(path);
-        debugPrint('Image uploaded successfully via direct: $url');
-        return url;
+        
+        // Validate the URL before returning
+        if (_isValidUrl(url)) {
+          debugPrint('Image uploaded successfully via direct: $url');
+          return url;
+        } else {
+          throw Exception('Invalid URL generated');
+        }
       } catch (e) {
         lastError = e is Exception ? e : Exception(e.toString());
+        final errorStr = e.toString().toLowerCase();
         debugPrint('Direct upload attempt $attempt failed: $e');
         
-        if (attempt < retryCount) {
-          await Future.delayed(Duration(milliseconds: 500 * attempt));
+        // Check for retryable errors
+        final isRetryableError = errorStr.contains('failed to fetch') ||
+            errorStr.contains('network') ||
+            errorStr.contains('timeout') ||
+            errorStr.contains('connection') ||
+            errorStr.contains('socket') ||
+            errorStr.contains('postgres') ||
+            errorStr.contains('uri');
+        
+        if (attempt < retryCount && isRetryableError) {
+          // Exponential backoff with jitter
+          final delay = Duration(milliseconds: (500 * attempt) + (attempt * 100));
+          await Future.delayed(delay);
+          continue;
+        } else if (!isRetryableError) {
+          break;
         }
       }
     }

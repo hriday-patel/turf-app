@@ -4,6 +4,7 @@ import 'package:table_calendar/table_calendar.dart';
 import '../../../config/colors.dart';
 import '../../../core/constants/enums.dart';
 import '../../../data/models/turf_model.dart';
+import '../../../data/models/slot_model.dart';
 import '../../../app/routes.dart';
 import '../providers/turf_provider.dart';
 import '../providers/slot_provider.dart';
@@ -23,11 +24,20 @@ class SlotManagementScreen extends StatefulWidget {
 class _SlotManagementScreenState extends State<SlotManagementScreen> with RouteAware {
   DateTime _selectedDate = DateTime.now();
   CalendarFormat _calendarFormat = CalendarFormat.week;
+  int _selectedNetNumber = 1;
+  
+  // Day closure toggles
+  bool _isDayOpen = true;
+  bool _isMorningOpen = true;
+  bool _isAfternoonOpen = true;
+  bool _isEveningOpen = true;
+  bool _isNightOpen = true;
 
   @override
   void initState() {
     super.initState();
-    _loadSlots();
+    // Always refresh turf data first, then load slots
+    _refreshAndLoadSlots();
   }
   
   @override
@@ -48,10 +58,24 @@ class _SlotManagementScreenState extends State<SlotManagementScreen> with RouteA
   @override
   void didPopNext() {
     debugPrint('SlotManagement: didPopNext - refreshing data');
-    _loadSlots();
+    _refreshAndLoadSlots();
   }
 
-  void _loadSlots() {
+  /// Refresh turf data from database, then load/generate slots
+  Future<void> _refreshAndLoadSlots() async {
+    final turfProvider = Provider.of<TurfProvider>(context, listen: false);
+    final authProvider = Provider.of<AuthProvider>(context, listen: false);
+    
+    // First refresh turf data to get latest settings
+    if (authProvider.currentUserId != null) {
+      await turfProvider.refreshTurfs(authProvider.currentUserId!);
+    }
+    
+    // Then load slots with updated turf data
+    _loadSlots(forceRegenerate: true);
+  }
+
+  void _loadSlots({bool forceRegenerate = false}) {
     final slotProvider = Provider.of<SlotProvider>(context, listen: false);
     final turfProvider = Provider.of<TurfProvider>(context, listen: false);
     final turf = turfProvider.getTurfById(widget.turfId);
@@ -59,16 +83,86 @@ class _SlotManagementScreenState extends State<SlotManagementScreen> with RouteA
     if (turf != null) {
       final dateStr = _selectedDate.toIso8601String().split('T')[0];
       
-      // First generate slots if they don't exist, then load
-      slotProvider.generateSlots(turf: turf, date: dateStr).then((_) {
+      // Check if this is a future date (tomorrow or later)
+      final today = DateTime.now();
+      final tomorrow = DateTime(today.year, today.month, today.day + 1);
+      final isFutureDate = !_selectedDate.isBefore(tomorrow);
+      
+      // For future dates, force regenerate to apply any updated settings
+      // For today, just load existing slots
+      final shouldForceRegenerate = forceRegenerate && isFutureDate;
+      
+      // First generate slots if they don't exist (or regenerate for future dates), then load
+      slotProvider.generateSlots(
+        turf: turf, 
+        date: dateStr,
+        forceRegenerate: shouldForceRegenerate,
+      ).then((_) {
         slotProvider.loadSlots(widget.turfId, dateStr);
+        // Update toggle states after a short delay to allow slots to load
+        Future.delayed(const Duration(milliseconds: 300), () {
+          if (mounted) _updateToggleStatesFromSlots();
+        });
       });
     }
   }
 
+  void _updateToggleStatesFromSlots() {
+    final slotProvider = Provider.of<SlotProvider>(context, listen: false);
+    
+    if (slotProvider.slots.isEmpty) return;
+    
+    // Count available vs blocked slots for each period
+    int morningAvailable = 0, morningBlocked = 0;
+    int afternoonAvailable = 0, afternoonBlocked = 0;
+    int eveningAvailable = 0, eveningBlocked = 0;
+    int nightAvailable = 0, nightBlocked = 0;
+    
+    for (final slot in slotProvider.slots) {
+      final hour = int.tryParse(slot.startTime.split(':')[0]) ?? 0;
+      final isBlocked = slot.status == SlotStatus.blocked;
+      final isAvailable = slot.status == SlotStatus.available;
+      
+      if (hour >= 6 && hour < 12) {
+        if (isBlocked) morningBlocked++;
+        if (isAvailable) morningAvailable++;
+      } else if (hour >= 12 && hour < 18) {
+        if (isBlocked) afternoonBlocked++;
+        if (isAvailable) afternoonAvailable++;
+      } else if (hour >= 18 && hour < 24) {
+        if (isBlocked) eveningBlocked++;
+        if (isAvailable) eveningAvailable++;
+      } else {
+        if (isBlocked) nightBlocked++;
+        if (isAvailable) nightAvailable++;
+      }
+    }
+    
+    setState(() {
+      // A period is considered closed if ALL its slots are blocked
+      // Only mark as closed if there are blocked slots AND no available slots
+      _isMorningOpen = morningBlocked == 0 || morningAvailable > 0;
+      _isAfternoonOpen = afternoonBlocked == 0 || afternoonAvailable > 0;
+      _isEveningOpen = eveningBlocked == 0 || eveningAvailable > 0;
+      _isNightOpen = nightBlocked == 0 || nightAvailable > 0;
+      
+      // Day is open if any period is open
+      _isDayOpen = _isMorningOpen || _isAfternoonOpen || _isEveningOpen || _isNightOpen;
+    });
+  }
+
   void _onDaySelected(DateTime selectedDay, DateTime focusedDay) {
-    setState(() => _selectedDate = selectedDay);
-    _loadSlots();
+    setState(() {
+      _selectedDate = selectedDay;
+      // Reset toggles when changing date
+      _isDayOpen = true;
+      _isMorningOpen = true;
+      _isAfternoonOpen = true;
+      _isEveningOpen = true;
+      _isNightOpen = true;
+    });
+    // When changing date, force regenerate for future dates to apply latest settings
+    _loadSlots(forceRegenerate: true);
   }
 
   @override
@@ -94,6 +188,9 @@ class _SlotManagementScreenState extends State<SlotManagementScreen> with RouteA
             children: [
               // Calendar
               _buildCalendar(),
+              
+              // Day Controls (On/Off toggles)
+              _buildDayControls(),
               
               // Slot Status Legend
               _buildLegend(),
@@ -152,9 +249,273 @@ class _SlotManagementScreenState extends State<SlotManagementScreen> with RouteA
           _buildLegendItem(AppColors.slotReserved, 'Reserved'),
           _buildLegendItem(AppColors.slotBooked, 'Booked'),
           _buildLegendItem(AppColors.slotBlocked, 'Blocked'),
+          _buildLegendItem(Colors.grey.shade400, 'Closed'),
         ],
       ),
     );
+  }
+
+  Widget _buildDayControls() {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      color: Colors.white,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Main Day Toggle
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Row(
+                children: [
+                  Icon(
+                    _isDayOpen ? Icons.wb_sunny : Icons.nights_stay,
+                    color: _isDayOpen ? Colors.orange : Colors.grey,
+                    size: 20,
+                  ),
+                  const SizedBox(width: 8),
+                  const Text(
+                    'Day Status',
+                    style: TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.bold,
+                      color: AppColors.textPrimary,
+                    ),
+                  ),
+                ],
+              ),
+              Row(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: _isDayOpen ? AppColors.success.withOpacity(0.1) : AppColors.error.withOpacity(0.1),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Text(
+                      _isDayOpen ? 'OPEN' : 'CLOSED',
+                      style: TextStyle(
+                        fontSize: 11,
+                        color: _isDayOpen ? AppColors.success : AppColors.error,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ),
+                  Switch(
+                    value: _isDayOpen,
+                    onChanged: (value) => _toggleDay(value),
+                    activeColor: AppColors.success,
+                  ),
+                ],
+              ),
+            ],
+          ),
+          
+          // Time Period Toggles
+          const Divider(height: 1),
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              const Icon(Icons.access_time, size: 16, color: AppColors.textSecondary),
+              const SizedBox(width: 4),
+              const Text(
+                'Time Periods',
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w500,
+                  color: AppColors.textSecondary,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              Expanded(child: _buildPeriodToggle('Morning', '6AM-12PM', _isMorningOpen, (v) => _togglePeriod('morning', v))),
+              const SizedBox(width: 8),
+              Expanded(child: _buildPeriodToggle('Afternoon', '12PM-6PM', _isAfternoonOpen, (v) => _togglePeriod('afternoon', v))),
+            ],
+          ),
+          const SizedBox(height: 6),
+          Row(
+            children: [
+              Expanded(child: _buildPeriodToggle('Evening', '6PM-12AM', _isEveningOpen, (v) => _togglePeriod('evening', v))),
+              const SizedBox(width: 8),
+              Expanded(child: _buildPeriodToggle('Night', '12AM-6AM', _isNightOpen, (v) => _togglePeriod('night', v))),
+            ],
+          ),
+          const SizedBox(height: 4),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildPeriodToggle(String label, String timeRange, bool isOpen, Function(bool) onChanged) {
+    return GestureDetector(
+      onTap: () => onChanged(!isOpen),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+        decoration: BoxDecoration(
+          color: isOpen ? AppColors.success.withOpacity(0.1) : Colors.grey.shade200,
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(
+            color: isOpen ? AppColors.success.withOpacity(0.3) : Colors.grey.shade300,
+          ),
+        ),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    label,
+                    style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                      color: isOpen ? AppColors.textPrimary : Colors.grey.shade600,
+                    ),
+                  ),
+                  Text(
+                    timeRange,
+                    style: TextStyle(
+                      fontSize: 10,
+                      color: isOpen ? AppColors.textSecondary : Colors.grey.shade500,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            Container(
+              width: 36,
+              height: 20,
+              decoration: BoxDecoration(
+                color: isOpen ? AppColors.success : Colors.grey.shade400,
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: Stack(
+                children: [
+                  AnimatedPositioned(
+                    duration: const Duration(milliseconds: 150),
+                    left: isOpen ? 18 : 2,
+                    top: 2,
+                    child: Container(
+                      width: 16,
+                      height: 16,
+                      decoration: const BoxDecoration(
+                        color: Colors.white,
+                        shape: BoxShape.circle,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _toggleDay(bool isOpen) async {
+    setState(() {
+      _isDayOpen = isOpen;
+      if (!isOpen) {
+        // Close all periods when day is closed
+        _isMorningOpen = false;
+        _isAfternoonOpen = false;
+        _isEveningOpen = false;
+        _isNightOpen = false;
+      } else {
+        // Open all periods when day is opened
+        _isMorningOpen = true;
+        _isAfternoonOpen = true;
+        _isEveningOpen = true;
+        _isNightOpen = true;
+      }
+    });
+    await _applyPeriodChanges();
+  }
+
+  void _togglePeriod(String period, bool isOpen) async {
+    setState(() {
+      switch (period) {
+        case 'morning':
+          _isMorningOpen = isOpen;
+          break;
+        case 'afternoon':
+          _isAfternoonOpen = isOpen;
+          break;
+        case 'evening':
+          _isEveningOpen = isOpen;
+          break;
+        case 'night':
+          _isNightOpen = isOpen;
+          break;
+      }
+      // Check if all periods are closed, then close the day
+      if (!_isMorningOpen && !_isAfternoonOpen && !_isEveningOpen && !_isNightOpen) {
+        _isDayOpen = false;
+      } else if (!_isDayOpen) {
+        // If any period is opened, open the day
+        _isDayOpen = true;
+      }
+    });
+    await _applyPeriodChanges();
+  }
+
+  Future<void> _applyPeriodChanges() async {
+    final slotProvider = Provider.of<SlotProvider>(context, listen: false);
+    final authProvider = Provider.of<AuthProvider>(context, listen: false);
+    
+    for (final slot in slotProvider.slots) {
+      final hour = int.tryParse(slot.startTime.split(':')[0]) ?? 0;
+      bool shouldBeBlocked = false;
+      
+      // Determine which period this slot belongs to
+      if (hour >= 6 && hour < 12) {
+        shouldBeBlocked = !_isMorningOpen;
+      } else if (hour >= 12 && hour < 18) {
+        shouldBeBlocked = !_isAfternoonOpen;
+      } else if (hour >= 18 && hour < 24) {
+        shouldBeBlocked = !_isEveningOpen;
+      } else {
+        shouldBeBlocked = !_isNightOpen;
+      }
+      
+      // Only change status for available or blocked slots (don't touch booked/reserved)
+      if (shouldBeBlocked && slot.status == SlotStatus.available) {
+        await slotProvider.blockSlot(
+          slot.slotId,
+          authProvider.currentUserId!,
+          'Period closed by owner',
+        );
+      } else if (!shouldBeBlocked && slot.status == SlotStatus.blocked) {
+        await slotProvider.unblockSlot(slot.slotId);
+      }
+    }
+    
+    // Reload to show updated status
+    _loadSlots();
+  }
+
+  String _getSlotPeriod(SlotModel slot) {
+    final hour = int.tryParse(slot.startTime.split(':')[0]) ?? 0;
+    if (hour >= 6 && hour < 12) return 'morning';
+    if (hour >= 12 && hour < 18) return 'afternoon';
+    if (hour >= 18 && hour < 24) return 'evening';
+    return 'night';
+  }
+
+  bool _isPeriodClosed(String period) {
+    switch (period) {
+      case 'morning': return !_isMorningOpen;
+      case 'afternoon': return !_isAfternoonOpen;
+      case 'evening': return !_isEveningOpen;
+      case 'night': return !_isNightOpen;
+      default: return false;
+    }
   }
 
   Widget _buildLegendItem(Color color, String label) {
@@ -231,36 +592,54 @@ class _SlotManagementScreenState extends State<SlotManagementScreen> with RouteA
   Widget _buildSlotCard(dynamic slot) {
     Color statusColor;
     IconData statusIcon;
+    String statusLabel;
+    
+    // Check if slot's period is closed
+    final slotModel = slot as SlotModel;
+    final period = _getSlotPeriod(slotModel);
+    final isPeriodClosed = _isPeriodClosed(period);
 
-    switch (slot.status) {
-      case SlotStatus.available:
-        statusColor = AppColors.slotAvailable;
-        statusIcon = Icons.check_circle_outline;
-        break;
-      case SlotStatus.reserved:
-        statusColor = AppColors.slotReserved;
-        statusIcon = Icons.schedule;
-        break;
-      case SlotStatus.booked:
-        statusColor = AppColors.slotBooked;
-        statusIcon = Icons.event_available;
-        break;
-      case SlotStatus.blocked:
-        statusColor = AppColors.slotBlocked;
-        statusIcon = Icons.block;
-        break;
-      default:
-        statusColor = AppColors.slotAvailable;
-        statusIcon = Icons.check_circle_outline;
+    // If period is closed, ALWAYS show slot as grey/closed (visual feedback)
+    if (isPeriodClosed) {
+      statusColor = Colors.grey.shade400;
+      statusIcon = Icons.block_outlined;
+      statusLabel = 'Closed';
+    } else {
+      switch (slot.status) {
+        case SlotStatus.available:
+          statusColor = AppColors.slotAvailable;
+          statusIcon = Icons.check_circle_outline;
+          statusLabel = 'Available';
+          break;
+        case SlotStatus.reserved:
+          statusColor = AppColors.slotReserved;
+          statusIcon = Icons.schedule;
+          statusLabel = 'Reserved';
+          break;
+        case SlotStatus.booked:
+          statusColor = AppColors.slotBooked;
+          statusIcon = Icons.event_available;
+          statusLabel = 'Booked';
+          break;
+        case SlotStatus.blocked:
+          statusColor = AppColors.slotBlocked;
+          statusIcon = Icons.block;
+          statusLabel = 'Blocked';
+          break;
+        default:
+          statusColor = AppColors.slotAvailable;
+          statusIcon = Icons.check_circle_outline;
+          statusLabel = 'Available';
+      }
     }
 
     return GestureDetector(
-      onTap: () => _showSlotActions(slot),
+      onTap: isPeriodClosed ? null : () => _showSlotActions(slot),
       child: Container(
         decoration: BoxDecoration(
-          color: statusColor.withOpacity(0.1),
+          color: statusColor.withOpacity(isPeriodClosed ? 0.2 : 0.1),
           borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: statusColor.withOpacity(0.5)),
+          border: Border.all(color: statusColor.withOpacity(isPeriodClosed ? 0.3 : 0.5)),
         ),
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
@@ -275,13 +654,23 @@ class _SlotManagementScreenState extends State<SlotManagementScreen> with RouteA
                 color: statusColor,
               ),
             ),
-            Text(
-              '₹${slot.price.toInt()}',
-              style: TextStyle(
-                fontSize: 11,
-                color: AppColors.textSecondary,
+            if (isPeriodClosed)
+              Text(
+                'Closed',
+                style: TextStyle(
+                  fontSize: 10,
+                  color: Colors.grey.shade600,
+                  fontWeight: FontWeight.w500,
+                ),
+              )
+            else
+              Text(
+                '₹${slot.price.toInt()}',
+                style: TextStyle(
+                  fontSize: 11,
+                  color: AppColors.textSecondary,
+                ),
               ),
-            ),
           ],
         ),
       ),

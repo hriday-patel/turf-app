@@ -11,6 +11,7 @@ class BookingModel {
   final String startTime;
   final String endTime;
   final String turfName;
+  final int netNumber; // Net number for multi-net turfs
 
   // Customer Info
   final String? userId;
@@ -24,6 +25,7 @@ class BookingModel {
   final PaymentMode paymentMode;
   final PaymentStatus paymentStatus;
   final double amount;
+  final double advanceAmount; // Advance payment received
   final String? transactionId;
 
   // Status
@@ -46,6 +48,7 @@ class BookingModel {
     required this.startTime,
     required this.endTime,
     required this.turfName,
+    this.netNumber = 1,
     this.userId,
     required this.customerName,
     required this.customerPhone,
@@ -53,6 +56,7 @@ class BookingModel {
     required this.paymentMode,
     required this.paymentStatus,
     required this.amount,
+    this.advanceAmount = 0,
     this.transactionId,
     this.bookingStatus = BookingStatus.confirmed,
     this.cancelledAt,
@@ -78,6 +82,7 @@ class BookingModel {
       startTime: data['start_time'] ?? data['startTime'] ?? '',
       endTime: data['end_time'] ?? data['endTime'] ?? '',
       turfName: data['turf_name'] ?? data['turfName'] ?? '',
+      netNumber: data['net_number'] ?? data['netNumber'] ?? 1,
       userId: data['user_id'] ?? data['userId'],
       customerName: data['customer_name'] ?? data['customerName'] ?? '',
       customerPhone: data['customer_phone'] ?? data['customerPhone'] ?? '',
@@ -91,6 +96,7 @@ class BookingModel {
         data['payment_status'] ?? data['paymentStatus'] ?? 'PENDING',
       ),
       amount: (data['amount'] ?? 0).toDouble(),
+      advanceAmount: (data['advance_amount'] ?? data['advanceAmount'] ?? 0).toDouble(),
       transactionId: data['transaction_id'] ?? data['transactionId'],
       bookingStatus: BookingStatusExtension.fromString(
         data['booking_status'] ?? data['bookingStatus'] ?? 'CONFIRMED',
@@ -117,6 +123,7 @@ class BookingModel {
       'start_time': startTime,
       'end_time': endTime,
       'turf_name': turfName,
+      'net_number': netNumber,
       'user_id': userId,
       'customer_name': customerName,
       'customer_phone': customerPhone,
@@ -124,6 +131,7 @@ class BookingModel {
       'payment_mode': paymentMode.value,
       'payment_status': paymentStatus.value,
       'amount': amount,
+      'advance_amount': advanceAmount,
       'transaction_id': transactionId,
       'booking_status': bookingStatus.value,
       'cancelled_at': cancelledAt?.toIso8601String(),
@@ -159,11 +167,19 @@ class BookingModel {
   /// Check if payment is completed
   bool get isPaid => paymentStatus == PaymentStatus.paid;
 
-  /// Check if payment is pending (pay at turf)
-  bool get isPendingPayment => paymentStatus == PaymentStatus.payAtTurf;
+  /// Check if payment is pending (pay at turf OR has advance but not confirmed)
+  bool get isPendingPayment => 
+      paymentStatus == PaymentStatus.payAtTurf || 
+      paymentStatus == PaymentStatus.pending;
 
   /// Check if booking is active (not cancelled)
   bool get isActive => bookingStatus == BookingStatus.confirmed;
+
+  /// Check if this is a partial payment booking
+  bool get isPartialPayment => advanceAmount > 0 && advanceAmount < amount;
+
+  /// Get remaining amount to be paid
+  double get remainingAmount => amount - advanceAmount;
 
   /// Copy with modified fields
   BookingModel copyWith({
@@ -190,6 +206,7 @@ class BookingModel {
       paymentMode: paymentMode,
       paymentStatus: paymentStatus ?? this.paymentStatus,
       amount: amount,
+      advanceAmount: advanceAmount,
       transactionId: transactionId ?? this.transactionId,
       bookingStatus: bookingStatus ?? this.bookingStatus,
       cancelledAt: cancelledAt ?? this.cancelledAt,

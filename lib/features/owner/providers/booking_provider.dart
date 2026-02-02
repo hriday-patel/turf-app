@@ -83,10 +83,21 @@ class BookingProvider extends ChangeNotifier {
     required String customerPhone,
     required BookingSource bookingSource,
     required double amount,
+    double advanceAmount = 0,
+    int netNumber = 1,
   }) async {
     try {
       _isLoading = true;
       notifyListeners();
+
+      // Determine payment status based on advance
+      // All bookings start as pending until owner manually marks as paid
+      String paymentStatus;
+      if (advanceAmount > 0) {
+        paymentStatus = 'PENDING'; // Has advance - pending confirmation
+      } else {
+        paymentStatus = 'PAY_AT_TURF'; // No advance - pay at turf
+      }
 
       // Create booking data
       final data = {
@@ -96,13 +107,15 @@ class BookingProvider extends ChangeNotifier {
         'start_time': startTime,
         'end_time': endTime,
         'turf_name': turfName,
+        'net_number': netNumber,
         'user_id': null,
         'customer_name': customerName,
         'customer_phone': customerPhone,
         'booking_source': bookingSource.value,
         'payment_mode': 'OFFLINE',
-        'payment_status': 'PAY_AT_TURF',
+        'payment_status': paymentStatus,
         'amount': amount,
+        'advance_amount': advanceAmount,
         'transaction_id': null,
         'booking_status': 'CONFIRMED',
       };
@@ -221,6 +234,21 @@ class BookingProvider extends ChangeNotifier {
       _errorMessage = 'Failed to update payment status: $e';
       notifyListeners();
       return false;
+    }
+  }
+
+  /// Get booking by slot ID
+  Future<BookingModel?> getBookingBySlotId(String slotId) async {
+    try {
+      final data = await _dbService.getBookingBySlotId(slotId);
+      if (data != null) {
+        return BookingModel.fromMap(data);
+      }
+      return null;
+    } catch (e) {
+      _errorMessage = 'Failed to get booking: $e';
+      notifyListeners();
+      return null;
     }
   }
 
