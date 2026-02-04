@@ -28,12 +28,37 @@ class _SlotBookingScreenState extends State<SlotBookingScreen> with RouteAware {
   DateTime _selectedDate = DateTime.now();
   bool _isLoading = false;
   
-  // Day closure toggles
-  bool _isDayOpen = true;
-  bool _isMorningOpen = true;
-  bool _isAfternoonOpen = true;
-  bool _isEveningOpen = true;
-  bool _isNightOpen = true;
+  // Toggle states stored per turf+net+date combination
+  // Key format: "turfId_netNumber_date"
+  final Map<String, bool> _dayOpenStates = {};
+  final Map<String, bool> _morningOpenStates = {};
+  final Map<String, bool> _afternoonOpenStates = {};
+  final Map<String, bool> _eveningOpenStates = {};
+  final Map<String, bool> _nightOpenStates = {};
+  
+  // Track manually overridden slots (open even when period is closed)
+  // Key format: "turfId_netNumber_slotId"
+  final Set<String> _manuallyOpenedSlots = {};
+  
+  // Helper to generate unique key for current turf+net+date
+  String get _currentStateKey {
+    if (_selectedTurf == null) return '';
+    final dateStr = _selectedDate.toIso8601String().split('T')[0];
+    return '${_selectedTurf!.turfId}_${_selectedNetNumber}_$dateStr';
+  }
+  
+  // Helper to generate slot override key
+  String _getSlotOverrideKey(String slotId) {
+    if (_selectedTurf == null) return '';
+    return '${_selectedTurf!.turfId}_${_selectedNetNumber}_$slotId';
+  }
+  
+  // Getters for current toggle states
+  bool get _isDayOpen => _dayOpenStates[_currentStateKey] ?? true;
+  bool get _isMorningOpen => _morningOpenStates[_currentStateKey] ?? true;
+  bool get _isAfternoonOpen => _afternoonOpenStates[_currentStateKey] ?? true;
+  bool get _isEveningOpen => _eveningOpenStates[_currentStateKey] ?? true;
+  bool get _isNightOpen => _nightOpenStates[_currentStateKey] ?? true;
 
   @override
   void initState() {
@@ -138,62 +163,67 @@ class _SlotBookingScreenState extends State<SlotBookingScreen> with RouteAware {
   void _onNetSelected(int netNumber) {
     setState(() {
       _selectedNetNumber = netNumber;
+      _isLoading = true;
+      // Note: We don't reset toggles - each net has its own state
     });
-    // No need to reload slots, just filter the existing ones
+    // Force reload slots when switching nets
+    _loadSlots();
   }
 
   void _onDateSelected(DateTime date) {
     setState(() {
       _selectedDate = date;
       _isLoading = true;
-      // Reset toggles when changing date
-      _isDayOpen = true;
-      _isMorningOpen = true;
-      _isAfternoonOpen = true;
-      _isEveningOpen = true;
-      _isNightOpen = true;
+      // Note: We don't reset toggles - each date has its own state per turf+net
     });
     _loadSlots();
   }
 
   void _toggleDay(bool isOpen) async {
+    final key = _currentStateKey;
     setState(() {
-      _isDayOpen = isOpen;
+      _dayOpenStates[key] = isOpen;
       if (!isOpen) {
-        _isMorningOpen = false;
-        _isAfternoonOpen = false;
-        _isEveningOpen = false;
-        _isNightOpen = false;
+        _morningOpenStates[key] = false;
+        _afternoonOpenStates[key] = false;
+        _eveningOpenStates[key] = false;
+        _nightOpenStates[key] = false;
       } else {
-        _isMorningOpen = true;
-        _isAfternoonOpen = true;
-        _isEveningOpen = true;
-        _isNightOpen = true;
+        _morningOpenStates[key] = true;
+        _afternoonOpenStates[key] = true;
+        _eveningOpenStates[key] = true;
+        _nightOpenStates[key] = true;
       }
     });
     await _applyPeriodChanges();
   }
 
   void _togglePeriod(String period, bool isOpen) async {
+    final key = _currentStateKey;
     setState(() {
       switch (period) {
         case 'morning':
-          _isMorningOpen = isOpen;
+          _morningOpenStates[key] = isOpen;
           break;
         case 'afternoon':
-          _isAfternoonOpen = isOpen;
+          _afternoonOpenStates[key] = isOpen;
           break;
         case 'evening':
-          _isEveningOpen = isOpen;
+          _eveningOpenStates[key] = isOpen;
           break;
         case 'night':
-          _isNightOpen = isOpen;
+          _nightOpenStates[key] = isOpen;
           break;
       }
-      if (!_isMorningOpen && !_isAfternoonOpen && !_isEveningOpen && !_isNightOpen) {
-        _isDayOpen = false;
-      } else if (!_isDayOpen) {
-        _isDayOpen = true;
+      // Update day toggle based on period states
+      final allClosed = !(_morningOpenStates[key] ?? true) && 
+                        !(_afternoonOpenStates[key] ?? true) && 
+                        !(_eveningOpenStates[key] ?? true) && 
+                        !(_nightOpenStates[key] ?? true);
+      if (allClosed) {
+        _dayOpenStates[key] = false;
+      } else if (!(_dayOpenStates[key] ?? true)) {
+        _dayOpenStates[key] = true;
       }
     });
     await _applyPeriodChanges();
@@ -203,10 +233,18 @@ class _SlotBookingScreenState extends State<SlotBookingScreen> with RouteAware {
     final slotProvider = Provider.of<SlotProvider>(context, listen: false);
     final authProvider = Provider.of<AuthProvider>(context, listen: false);
     
-    for (final slot in slotProvider.slots) {
+    // Only apply changes to slots for the CURRENT net
+    final currentNetSlots = slotProvider.slots.where((s) => s.netNumber == _selectedNetNumber).toList();
+    
+    for (final slot in currentNetSlots) {
       final hour = int.tryParse(slot.startTime.split(':')[0]) ?? 0;
       bool shouldBeBlocked = false;
       
+      // Time period divisions:
+      // Morning: 6 AM - 12 PM (6-11)
+      // Afternoon: 12 PM - 6 PM (12-17)
+      // Evening: 6 PM - 12 AM (18-23)
+      // Night: 12 AM - 6 AM (0-5)
       if (hour >= 6 && hour < 12) {
         shouldBeBlocked = !_isMorningOpen;
       } else if (hour >= 12 && hour < 18) {
@@ -214,6 +252,7 @@ class _SlotBookingScreenState extends State<SlotBookingScreen> with RouteAware {
       } else if (hour >= 18 && hour < 24) {
         shouldBeBlocked = !_isEveningOpen;
       } else {
+        // 0-5 hours (night)
         shouldBeBlocked = !_isNightOpen;
       }
       
@@ -233,6 +272,11 @@ class _SlotBookingScreenState extends State<SlotBookingScreen> with RouteAware {
 
   String _getSlotPeriod(SlotModel slot) {
     final hour = int.tryParse(slot.startTime.split(':')[0]) ?? 0;
+    // Time period divisions:
+    // Morning: 6 AM - 12 PM (hours 6-11)
+    // Afternoon: 12 PM - 6 PM (hours 12-17)
+    // Evening: 6 PM - 12 AM (hours 18-23)
+    // Night: 12 AM - 6 AM (hours 0-5)
     if (hour >= 6 && hour < 12) return 'morning';
     if (hour >= 12 && hour < 18) return 'afternoon';
     if (hour >= 18 && hour < 24) return 'evening';
@@ -274,9 +318,6 @@ class _SlotBookingScreenState extends State<SlotBookingScreen> with RouteAware {
                     children: [
                       // Date Picker
                       _buildDatePicker(),
-                      
-                      // Day Controls (On/Off toggles)
-                      _buildDayControls(),
                       
                       // Slots Grid
                       Expanded(
@@ -476,154 +517,91 @@ class _SlotBookingScreenState extends State<SlotBookingScreen> with RouteAware {
     );
   }
 
-  Widget _buildDayControls() {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-      color: Colors.white,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          // Main Day Toggle
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Row(
-                children: [
-                  Icon(
-                    _isDayOpen ? Icons.wb_sunny : Icons.nights_stay,
-                    color: _isDayOpen ? Colors.orange : Colors.grey,
-                    size: 20,
-                  ),
-                  const SizedBox(width: 8),
-                  const Text(
-                    'Day Status',
-                    style: TextStyle(
-                      fontSize: 14,
-                      fontWeight: FontWeight.bold,
-                      color: AppColors.textPrimary,
-                    ),
-                  ),
-                ],
+  // Inline toggle widget for period headers
+  Widget _buildInlinePeriodToggle(String period, bool isOpen) {
+    return GestureDetector(
+      onTap: () => _togglePeriod(period.toLowerCase(), !isOpen),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+        decoration: BoxDecoration(
+          color: isOpen ? AppColors.success.withOpacity(0.15) : AppColors.error.withOpacity(0.15),
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(
+            color: isOpen ? AppColors.success : AppColors.error,
+            width: 1,
+          ),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              isOpen ? Icons.lock_open : Icons.lock,
+              size: 12,
+              color: isOpen ? AppColors.success : AppColors.error,
+            ),
+            const SizedBox(width: 4),
+            Text(
+              isOpen ? 'OPEN' : 'CLOSED',
+              style: TextStyle(
+                fontSize: 10,
+                fontWeight: FontWeight.bold,
+                color: isOpen ? AppColors.success : AppColors.error,
               ),
-              Row(
-                children: [
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                    decoration: BoxDecoration(
-                      color: _isDayOpen ? AppColors.success.withOpacity(0.1) : AppColors.error.withOpacity(0.1),
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    child: Text(
-                      _isDayOpen ? 'OPEN' : 'CLOSED',
-                      style: TextStyle(
-                        fontSize: 11,
-                        color: _isDayOpen ? AppColors.success : AppColors.error,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                  ),
-                  Switch(
-                    value: _isDayOpen,
-                    onChanged: (value) => _toggleDay(value),
-                    activeColor: AppColors.success,
-                  ),
-                ],
-              ),
-            ],
-          ),
-          
-          // Time Period Toggles
-          const Divider(height: 1),
-          const SizedBox(height: 8),
-          Row(
-            children: [
-              const Icon(Icons.access_time, size: 16, color: AppColors.textSecondary),
-              const SizedBox(width: 4),
-              const Text(
-                'Time Periods',
-                style: TextStyle(
-                  fontSize: 12,
-                  fontWeight: FontWeight.w500,
-                  color: AppColors.textSecondary,
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 8),
-          Row(
-            children: [
-              Expanded(child: _buildPeriodToggle('Morning', '6AM-12PM', _isMorningOpen, (v) => _togglePeriod('morning', v))),
-              const SizedBox(width: 8),
-              Expanded(child: _buildPeriodToggle('Afternoon', '12PM-6PM', _isAfternoonOpen, (v) => _togglePeriod('afternoon', v))),
-            ],
-          ),
-          const SizedBox(height: 6),
-          Row(
-            children: [
-              Expanded(child: _buildPeriodToggle('Evening', '6PM-12AM', _isEveningOpen, (v) => _togglePeriod('evening', v))),
-              const SizedBox(width: 8),
-              Expanded(child: _buildPeriodToggle('Night', '12AM-6AM', _isNightOpen, (v) => _togglePeriod('night', v))),
-            ],
-          ),
-          const SizedBox(height: 4),
-        ],
+            ),
+          ],
+        ),
       ),
     );
   }
 
-  Widget _buildPeriodToggle(String label, String timeRange, bool isOpen, Function(bool) onChanged) {
+  // Day toggle widget for net header
+  Widget _buildDayToggle() {
     return GestureDetector(
-      onTap: () => onChanged(!isOpen),
+      onTap: () => _toggleDay(!_isDayOpen),
       child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
         decoration: BoxDecoration(
-          color: isOpen ? AppColors.success.withOpacity(0.1) : Colors.grey.shade200,
-          borderRadius: BorderRadius.circular(8),
+          color: _isDayOpen ? AppColors.success.withOpacity(0.15) : AppColors.error.withOpacity(0.15),
+          borderRadius: BorderRadius.circular(20),
           border: Border.all(
-            color: isOpen ? AppColors.success.withOpacity(0.3) : Colors.grey.shade300,
+            color: _isDayOpen ? AppColors.success : AppColors.error,
+            width: 1.5,
           ),
         ),
         child: Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          mainAxisSize: MainAxisSize.min,
           children: [
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    label,
-                    style: TextStyle(
-                      fontSize: 12,
-                      fontWeight: FontWeight.w600,
-                      color: isOpen ? AppColors.textPrimary : Colors.grey.shade600,
-                    ),
-                  ),
-                  Text(
-                    timeRange,
-                    style: TextStyle(
-                      fontSize: 10,
-                      color: isOpen ? AppColors.textSecondary : Colors.grey.shade500,
-                    ),
-                  ),
-                ],
+            Icon(
+              _isDayOpen ? Icons.wb_sunny : Icons.nights_stay,
+              size: 16,
+              color: _isDayOpen ? Colors.orange : Colors.grey,
+            ),
+            const SizedBox(width: 6),
+            Text(
+              _isDayOpen ? 'DAY OPEN' : 'DAY CLOSED',
+              style: TextStyle(
+                fontSize: 11,
+                fontWeight: FontWeight.bold,
+                color: _isDayOpen ? AppColors.success : AppColors.error,
               ),
             ),
+            const SizedBox(width: 6),
             Container(
-              width: 36,
-              height: 20,
+              width: 32,
+              height: 18,
               decoration: BoxDecoration(
-                color: isOpen ? AppColors.success : Colors.grey.shade400,
-                borderRadius: BorderRadius.circular(10),
+                color: _isDayOpen ? AppColors.success : Colors.grey.shade400,
+                borderRadius: BorderRadius.circular(9),
               ),
               child: Stack(
                 children: [
                   AnimatedPositioned(
                     duration: const Duration(milliseconds: 150),
-                    left: isOpen ? 18 : 2,
+                    left: _isDayOpen ? 16 : 2,
                     top: 2,
                     child: Container(
-                      width: 16,
-                      height: 16,
+                      width: 14,
+                      height: 14,
                       decoration: const BoxDecoration(
                         color: Colors.white,
                         shape: BoxShape.circle,
@@ -637,6 +615,24 @@ class _SlotBookingScreenState extends State<SlotBookingScreen> with RouteAware {
         ),
       ),
     );
+  }
+
+  // Check if a slot is manually opened
+  bool _isSlotManuallyOpened(String slotId) {
+    final key = _getSlotOverrideKey(slotId);
+    return _manuallyOpenedSlots.contains(key);
+  }
+
+  // Toggle manual override for a slot
+  void _toggleSlotManualOverride(String slotId) {
+    final key = _getSlotOverrideKey(slotId);
+    setState(() {
+      if (_manuallyOpenedSlots.contains(key)) {
+        _manuallyOpenedSlots.remove(key);
+      } else {
+        _manuallyOpenedSlots.add(key);
+      }
+    });
   }
 
   Widget _buildSlotsContent() {
@@ -677,37 +673,79 @@ class _SlotBookingScreenState extends State<SlotBookingScreen> with RouteAware {
         }
 
         // Group slots by time period
-        final lateNight = slots.where((s) => _getTimePeriod(s.startTime) == 'Late Night').toList();
+        // Morning: 6 AM - 12 PM, Afternoon: 12 PM - 6 PM, Evening: 6 PM - 12 AM, Night: 12 AM - 6 AM
+        final night = slots.where((s) => _getTimePeriod(s.startTime) == 'Night').toList();
         final morning = slots.where((s) => _getTimePeriod(s.startTime) == 'Morning').toList();
         final afternoon = slots.where((s) => _getTimePeriod(s.startTime) == 'Afternoon').toList();
-        final night = slots.where((s) => _getTimePeriod(s.startTime) == 'Night').toList();
+        final evening = slots.where((s) => _getTimePeriod(s.startTime) == 'Evening').toList();
 
         return SingleChildScrollView(
           padding: const EdgeInsets.all(16),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // Net indicator for multi-net turfs
+              // Net indicator with Day toggle - for multi-net turfs
               if (_selectedTurf != null && _selectedTurf!.numberOfNets > 1)
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
                   margin: const EdgeInsets.only(bottom: 16),
                   decoration: BoxDecoration(
                     color: AppColors.primary.withOpacity(0.1),
-                    borderRadius: BorderRadius.circular(8),
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: AppColors.primary.withOpacity(0.2)),
                   ),
                   child: Row(
-                    mainAxisSize: MainAxisSize.min,
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
-                      Icon(Icons.sports_cricket, size: 16, color: AppColors.primary),
-                      const SizedBox(width: 8),
-                      Text(
-                        'Slots for Net $_selectedNetNumber',
-                        style: TextStyle(
-                          color: AppColors.primary,
-                          fontWeight: FontWeight.w600,
-                        ),
+                      Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(Icons.sports_cricket, size: 18, color: AppColors.primary),
+                          const SizedBox(width: 8),
+                          Text(
+                            'Slots for Net $_selectedNetNumber',
+                            style: TextStyle(
+                              color: AppColors.primary,
+                              fontWeight: FontWeight.bold,
+                              fontSize: 15,
+                            ),
+                          ),
+                        ],
                       ),
+                      _buildDayToggle(),
+                    ],
+                  ),
+                ),
+              
+              // For single net turfs, show just the day toggle
+              if (_selectedTurf != null && _selectedTurf!.numberOfNets == 1)
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                  margin: const EdgeInsets.only(bottom: 16),
+                  decoration: BoxDecoration(
+                    color: AppColors.primary.withOpacity(0.1),
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: AppColors.primary.withOpacity(0.2)),
+                  ),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(Icons.calendar_today, size: 18, color: AppColors.primary),
+                          const SizedBox(width: 8),
+                          Text(
+                            'Today\'s Slots',
+                            style: TextStyle(
+                              color: AppColors.primary,
+                              fontWeight: FontWeight.bold,
+                              fontSize: 15,
+                            ),
+                          ),
+                        ],
+                      ),
+                      _buildDayToggle(),
                     ],
                   ),
                 ),
@@ -716,11 +754,11 @@ class _SlotBookingScreenState extends State<SlotBookingScreen> with RouteAware {
               _buildLegend(),
               const SizedBox(height: 20),
               
-              // Time Period Sections
-              if (lateNight.isNotEmpty) _buildTimePeriodSection('Late Night', '12 AM - 6 AM', lateNight, Icons.bedtime),
-              if (morning.isNotEmpty) _buildTimePeriodSection('Morning', '6 AM - 12 PM', morning, Icons.wb_sunny),
-              if (afternoon.isNotEmpty) _buildTimePeriodSection('Afternoon', '12 PM - 6 PM', afternoon, Icons.wb_cloudy),
-              if (night.isNotEmpty) _buildTimePeriodSection('Night', '6 PM - 12 AM', night, Icons.nightlight_round),
+              // Time Period Sections with inline toggles (displayed in chronological order)
+              if (night.isNotEmpty) _buildTimePeriodSection('Night', '12 AM - 6 AM', night, Icons.bedtime, 'night', _isNightOpen),
+              if (morning.isNotEmpty) _buildTimePeriodSection('Morning', '6 AM - 12 PM', morning, Icons.wb_sunny, 'morning', _isMorningOpen),
+              if (afternoon.isNotEmpty) _buildTimePeriodSection('Afternoon', '12 PM - 6 PM', afternoon, Icons.wb_cloudy, 'afternoon', _isAfternoonOpen),
+              if (evening.isNotEmpty) _buildTimePeriodSection('Evening', '6 PM - 12 AM', evening, Icons.nightlight_round, 'evening', _isEveningOpen),
             ],
           ),
         );
@@ -730,10 +768,15 @@ class _SlotBookingScreenState extends State<SlotBookingScreen> with RouteAware {
 
   String _getTimePeriod(String startTime) {
     final hour = int.tryParse(startTime.split(':')[0]) ?? 0;
-    if (hour >= 0 && hour < 6) return 'Late Night';
+    // Time period divisions:
+    // Morning: 6 AM - 12 PM (hours 6-11)
+    // Afternoon: 12 PM - 6 PM (hours 12-17)
+    // Evening: 6 PM - 12 AM (hours 18-23)
+    // Night: 12 AM - 6 AM (hours 0-5)
     if (hour >= 6 && hour < 12) return 'Morning';
     if (hour >= 12 && hour < 18) return 'Afternoon';
-    return 'Night';
+    if (hour >= 18 && hour < 24) return 'Evening';
+    return 'Night'; // 0-5 hours
   }
 
   Widget _buildLegend() {
@@ -773,20 +816,51 @@ class _SlotBookingScreenState extends State<SlotBookingScreen> with RouteAware {
     );
   }
 
-  Widget _buildTimePeriodSection(String title, String timeRange, List<SlotModel> slots, IconData icon) {
+  Widget _buildTimePeriodSection(String title, String timeRange, List<SlotModel> slots, IconData icon, String periodKey, bool isOpen) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Row(
-          children: [
-            Icon(icon, size: 20, color: AppColors.primary),
-            const SizedBox(width: 8),
-            Text(title, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
-            const SizedBox(width: 8),
-            Text(timeRange, style: TextStyle(fontSize: 12, color: AppColors.textSecondary)),
-          ],
+        // Header with inline toggle
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          margin: const EdgeInsets.only(bottom: 12),
+          decoration: BoxDecoration(
+            color: isOpen ? Colors.white : Colors.grey.shade100,
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(
+              color: isOpen ? AppColors.primary.withOpacity(0.2) : Colors.grey.shade300,
+            ),
+          ),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Row(
+                children: [
+                  Icon(icon, size: 20, color: isOpen ? AppColors.primary : Colors.grey),
+                  const SizedBox(width: 8),
+                  Text(
+                    title,
+                    style: TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.bold,
+                      color: isOpen ? AppColors.textPrimary : Colors.grey,
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Text(
+                    timeRange,
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: isOpen ? AppColors.textSecondary : Colors.grey,
+                    ),
+                  ),
+                ],
+              ),
+              _buildInlinePeriodToggle(periodKey, isOpen),
+            ],
+          ),
         ),
-        const SizedBox(height: 12),
+        // Slots grid
         Wrap(
           spacing: 12,
           runSpacing: 12,
@@ -807,16 +881,29 @@ class _SlotBookingScreenState extends State<SlotBookingScreen> with RouteAware {
     // Check if slot's period is closed
     final period = _getSlotPeriod(slot);
     final isPeriodClosed = _isPeriodClosed(period);
+    
+    // Check if this slot is manually opened (overriding period closure)
+    final isManuallyOpened = _isSlotManuallyOpened(slot.slotId);
+    
+    // Effective period closed status (can be overridden by manual open)
+    final effectivelyClosed = isPeriodClosed && !isManuallyOpened;
 
     Color bgColor;
     Color textColor;
     String statusLabel;
+    bool showManualOverrideOption = false;
     
-    // If period is closed, show slot as grey/closed (visual feedback)
-    if (isPeriodClosed) {
+    // If period is closed but slot is manually opened, show as available
+    if (isPeriodClosed && isManuallyOpened && slot.status == SlotStatus.available && !isPast) {
+      bgColor = AppColors.success.withOpacity(0.1);
+      textColor = AppColors.success;
+      statusLabel = 'Open';
+      showManualOverrideOption = true;
+    } else if (effectivelyClosed && slot.status == SlotStatus.available) {
       bgColor = Colors.grey.shade300;
       textColor = Colors.grey.shade600;
       statusLabel = 'Closed';
+      showManualOverrideOption = true; // Allow opening this slot manually
     } else if (isPast) {
       bgColor = Colors.grey.shade200;
       textColor = Colors.grey;
@@ -839,15 +926,29 @@ class _SlotBookingScreenState extends State<SlotBookingScreen> with RouteAware {
       statusLabel = 'Available';
     }
 
+    // Determine if slot is tappable
+    final isTappable = !isPast && (
+      !effectivelyClosed || 
+      showManualOverrideOption ||
+      isBooked || 
+      isReserved || 
+      isBlocked
+    );
+
     return GestureDetector(
-      onTap: (isPast || isPeriodClosed) ? null : () => _showSlotActions(slot),
+      onTap: isTappable ? () => _showSlotActions(slot, isPeriodClosed: isPeriodClosed, isManuallyOpened: isManuallyOpened) : null,
       child: Container(
         width: 100,
         padding: const EdgeInsets.all(12),
         decoration: BoxDecoration(
           color: bgColor,
           borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: textColor.withOpacity(0.3)),
+          border: Border.all(
+            color: isManuallyOpened && isPeriodClosed 
+                ? AppColors.success 
+                : textColor.withOpacity(0.3),
+            width: isManuallyOpened && isPeriodClosed ? 2 : 1,
+          ),
         ),
         child: Column(
           children: [
@@ -860,8 +961,10 @@ class _SlotBookingScreenState extends State<SlotBookingScreen> with RouteAware {
               ),
             ),
             const SizedBox(height: 4),
-            if (isPeriodClosed)
-              Icon(Icons.block, size: 14, color: textColor)
+            if (effectivelyClosed)
+              Icon(Icons.lock, size: 14, color: textColor)
+            else if (isManuallyOpened && isPeriodClosed)
+              Icon(Icons.lock_open, size: 14, color: AppColors.success)
             else
               Text(
                 '₹${slot.price.toInt()}',
@@ -910,11 +1013,16 @@ class _SlotBookingScreenState extends State<SlotBookingScreen> with RouteAware {
     return false;
   }
 
-  void _showSlotActions(SlotModel slot) {
+  void _showSlotActions(SlotModel slot, {bool isPeriodClosed = false, bool isManuallyOpened = false}) {
     final isAvailable = slot.status == SlotStatus.available;
     final isBooked = slot.status == SlotStatus.booked;
     final isReserved = slot.status == SlotStatus.reserved; // Pending payment
     final isBlocked = slot.status == SlotStatus.blocked;
+    
+    // Determine if slot is effectively available (period open or manually opened)
+    final effectivelyAvailable = isAvailable && (!isPeriodClosed || isManuallyOpened);
+    final showManualOpenOption = isPeriodClosed && isAvailable && !isManuallyOpened;
+    final showManualCloseOption = isPeriodClosed && isAvailable && isManuallyOpened;
 
     showModalBottomSheet(
       context: context,
@@ -964,11 +1072,72 @@ class _SlotBookingScreenState extends State<SlotBookingScreen> with RouteAware {
                     ),
                   ),
                 ],
+                if (isPeriodClosed && isManuallyOpened) ...[
+                  const SizedBox(width: 12),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: AppColors.success.withOpacity(0.1),
+                      borderRadius: BorderRadius.circular(6),
+                    ),
+                    child: const Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(Icons.lock_open, size: 12, color: AppColors.success),
+                        SizedBox(width: 4),
+                        Text(
+                          'Manually Opened',
+                          style: TextStyle(fontSize: 12, color: AppColors.success, fontWeight: FontWeight.w600),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
               ],
             ),
             const SizedBox(height: 24),
             
-            if (isAvailable) ...[
+            // Show manual open option when period is closed
+            if (showManualOpenOption) ...[
+              _buildActionButton(
+                'Open This Slot',
+                Icons.lock_open,
+                AppColors.success,
+                () {
+                  Navigator.pop(context);
+                  _toggleSlotManualOverride(slot.slotId);
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text('Slot opened - You can now create a booking'),
+                      backgroundColor: AppColors.success,
+                    ),
+                  );
+                },
+              ),
+              const SizedBox(height: 12),
+            ],
+            
+            // Show close option when slot is manually opened
+            if (showManualCloseOption) ...[
+              _buildActionButton(
+                'Close This Slot Again',
+                Icons.lock,
+                Colors.grey,
+                () {
+                  Navigator.pop(context);
+                  _toggleSlotManualOverride(slot.slotId);
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text('Slot closed again'),
+                      backgroundColor: Colors.grey,
+                    ),
+                  );
+                },
+              ),
+              const SizedBox(height: 12),
+            ],
+            
+            if (effectivelyAvailable) ...[
               _buildActionButton(
                 'Create Booking',
                 Icons.add_circle,
@@ -1549,197 +1718,21 @@ class _BookingDialogState extends State<_BookingDialog> {
     final dateStr = '${widget.selectedDate.day}/${widget.selectedDate.month}/${widget.selectedDate.year}';
     final customerName = _nameController.text.trim();
     final customerPhone = _phoneController.text.trim();
-    final ownerName = owner?.name ?? 'Owner';
-    final ownerPhone = owner?.phone ?? '';
     
     showDialog(
       context: context,
       barrierDismissible: false,
-      builder: (context) => Dialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-        child: Container(
-          padding: const EdgeInsets.all(24),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Container(
-                width: 64,
-                height: 64,
-                decoration: BoxDecoration(
-                  color: AppColors.success.withOpacity(0.1),
-                  shape: BoxShape.circle,
-                ),
-                child: const Icon(Icons.check_circle, color: AppColors.success, size: 40),
-              ),
-              const SizedBox(height: 16),
-              const Text(
-                'Booking Created!',
-                style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
-              ),
-              const SizedBox(height: 8),
-              Text(
-                '${widget.turf.turfName}${widget.turf.numberOfNets > 1 ? ' - Net ${widget.selectedNetNumber}' : ''}\n$dateStr | ${widget.slot.displayTimeRange}',
-                textAlign: TextAlign.center,
-                style: TextStyle(color: AppColors.textSecondary),
-              ),
-              if (_advanceAmount > 0) ...[
-                const SizedBox(height: 8),
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                  decoration: BoxDecoration(
-                    color: _advanceAmount >= widget.slot.price 
-                        ? AppColors.success.withOpacity(0.1)
-                        : Colors.orange.withOpacity(0.1),
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: Text(
-                    _advanceAmount >= widget.slot.price 
-                        ? 'Full Advance: ₹${_advanceAmount.toInt()} (Pending Confirmation)'
-                        : 'Advance: ₹${_advanceAmount.toInt()} | Remaining: ₹${(widget.slot.price - _advanceAmount).toInt()}',
-                    style: const TextStyle(
-                      fontSize: 12,
-                      fontWeight: FontWeight.w600,
-                      color: Colors.orange,
-                    ),
-                  ),
-                ),
-              ],
-              const SizedBox(height: 24),
-              
-              // WhatsApp Booking Confirmation
-              SizedBox(
-                width: double.infinity,
-                child: ElevatedButton.icon(
-                  onPressed: () => _sendWhatsAppMessage(
-                    customerPhone,
-                    _buildBookingConfirmationMessage(customerName, dateStr),
-                  ),
-                  icon: const Icon(Icons.message, color: Colors.white),
-                  label: const Text('Send Booking Confirmation'),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xFF25D366), // WhatsApp green
-                    padding: const EdgeInsets.symmetric(vertical: 14),
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                  ),
-                ),
-              ),
-              const SizedBox(height: 16),
-              
-              // Payment Status Section - show info for advance payments
-              // NOTE: Don't ask for payment confirmation immediately - that happens later when customer arrives
-              if (_advanceAmount > 0 && _advanceAmount < _bookingAmount)
-                Container(
-                  width: double.infinity,
-                  padding: const EdgeInsets.all(16),
-                  decoration: BoxDecoration(
-                    color: Colors.blue.withOpacity(0.1),
-                    borderRadius: BorderRadius.circular(12),
-                    border: Border.all(color: Colors.blue.withOpacity(0.3)),
-                  ),
-                  child: Column(
-                    children: [
-                      Row(
-                        children: [
-                          Icon(Icons.info_outline, color: Colors.blue, size: 20),
-                          const SizedBox(width: 8),
-                          const Text(
-                            'Payment Info',
-                            style: TextStyle(fontWeight: FontWeight.bold),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 12),
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        children: [
-                          const Text('Advance Received:', style: TextStyle(fontSize: 13)),
-                          Text('₹${_advanceAmount.toInt()}', 
-                              style: const TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: Colors.green)),
-                        ],
-                      ),
-                      const SizedBox(height: 4),
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        children: [
-                          const Text('Remaining (at arrival):', style: TextStyle(fontSize: 13)),
-                          Text('₹${(_bookingAmount - _advanceAmount).toInt()}', 
-                              style: const TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: Colors.orange)),
-                        ],
-                      ),
-                      const SizedBox(height: 12),
-                      Text(
-                        'Collect remaining amount when customer arrives. Mark as paid from booking history.',
-                        style: TextStyle(fontSize: 11, color: Colors.grey.shade600, fontStyle: FontStyle.italic),
-                        textAlign: TextAlign.center,
-                      ),
-                    ],
-                  ),
-                ),
-              
-              // For full payment, show confirmation option
-              if (_advanceAmount >= _bookingAmount)
-                Container(
-                  width: double.infinity,
-                  padding: const EdgeInsets.all(16),
-                  decoration: BoxDecoration(
-                    color: Colors.green.withOpacity(0.1),
-                    borderRadius: BorderRadius.circular(12),
-                    border: Border.all(color: Colors.green.withOpacity(0.3)),
-                  ),
-                  child: Column(
-                    children: [
-                      Row(
-                        children: [
-                          Icon(Icons.check_circle, color: Colors.green, size: 20),
-                          const SizedBox(width: 8),
-                          const Text(
-                            'Full Payment Received',
-                            style: TextStyle(fontWeight: FontWeight.bold),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 12),
-                      Text(
-                        'Amount: ₹${_bookingAmount.toInt()}',
-                        style: const TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: Colors.green),
-                      ),
-                      const SizedBox(height: 12),
-                      SizedBox(
-                        width: double.infinity,
-                        child: ElevatedButton.icon(
-                          onPressed: () async {
-                            final bookingProvider = Provider.of<BookingProvider>(context, listen: false);
-                            await bookingProvider.markPaymentReceived(bookingId);
-                            if (context.mounted) {
-                              Navigator.pop(context);
-                              // Send payment confirmation via WhatsApp
-                              _sendWhatsAppMessage(
-                                customerPhone,
-                                _buildPaymentConfirmationMessage(customerName, dateStr),
-                              );
-                            }
-                          },
-                          icon: const Icon(Icons.verified, color: Colors.white, size: 18),
-                          label: const Text('Confirm & Send Receipt'),
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: Colors.green,
-                            padding: const EdgeInsets.symmetric(vertical: 12),
-                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              const SizedBox(height: 16),
-              
-              TextButton(
-                onPressed: () => Navigator.pop(context),
-                child: const Text('Close'),
-              ),
-            ],
-          ),
-        ),
+      builder: (context) => _BookingSuccessPopup(
+        bookingId: bookingId,
+        turf: widget.turf,
+        slot: widget.slot,
+        selectedDate: widget.selectedDate,
+        selectedNetNumber: widget.selectedNetNumber,
+        customerName: customerName,
+        customerPhone: customerPhone,
+        bookingAmount: _bookingAmount,
+        advanceAmount: _advanceAmount,
+        dateStr: dateStr,
       ),
     );
   }
@@ -1750,9 +1743,8 @@ class _BookingDialogState extends State<_BookingDialog> {
         ? '\n💵 *Advance Paid:* ₹${_advanceAmount.toInt()}${_advanceAmount < _bookingAmount ? '\n💳 *Remaining:* ₹${(_bookingAmount - _advanceAmount).toInt()}' : ''}'
         : '';
     
-    // Use app branding instead of owner's contact
     const appName = 'TurfBook';
-    const appContact = 'For any queries, contact us through the app.';
+    const appContact = '📞 For customer support, call +91 9773424512';
     
     return '''🎉 *Booking Confirmed!*
 
@@ -1772,29 +1764,7 @@ $appContact
 Thank you for choosing $appName! 🏏''';
   }
 
-  String _buildPaymentConfirmationMessage(String customerName, String dateStr) {
-    final netInfo = widget.turf.numberOfNets > 1 ? '\n🥅 *Net:* Net ${widget.selectedNetNumber}' : '';
-    
-    // Use app branding instead of owner's contact
-    const appName = 'TurfBook';
-    
-    return '''✅ *Payment Received!*
-
-Hi $customerName,
-
-We have received your full payment of ₹${_bookingAmount.toInt()} for:
-
-📍 *Venue:* ${widget.turf.turfName}$netInfo
-📅 *Date:* $dateStr
-⏰ *Time:* ${widget.slot.displayTimeRange}
-
-See you at the turf! 🏏
-
-Thank you for choosing $appName!''';
-  }
-
   Future<void> _sendWhatsAppMessage(String phone, String message) async {
-    // Clean phone number
     String cleanPhone = phone.replaceAll(RegExp(r'[^0-9]'), '');
     if (!cleanPhone.startsWith('91') && cleanPhone.length == 10) {
       cleanPhone = '91$cleanPhone';
@@ -1821,5 +1791,854 @@ Thank you for choosing $appName!''';
         );
       }
     }
+  }
+}
+
+/// Booking Success Popup - Complete Redesign
+/// Features: Auto-send messages via Admin WhatsApp, Receipt generation, Share options
+class _BookingSuccessPopup extends StatefulWidget {
+  final String bookingId;
+  final TurfModel turf;
+  final SlotModel slot;
+  final DateTime selectedDate;
+  final int selectedNetNumber;
+  final String customerName;
+  final String customerPhone;
+  final double bookingAmount;
+  final double advanceAmount;
+  final String dateStr;
+
+  const _BookingSuccessPopup({
+    required this.bookingId,
+    required this.turf,
+    required this.slot,
+    required this.selectedDate,
+    required this.selectedNetNumber,
+    required this.customerName,
+    required this.customerPhone,
+    required this.bookingAmount,
+    required this.advanceAmount,
+    required this.dateStr,
+  });
+
+  @override
+  State<_BookingSuccessPopup> createState() => _BookingSuccessPopupState();
+}
+
+class _BookingSuccessPopupState extends State<_BookingSuccessPopup> with TickerProviderStateMixin {
+  // Admin WhatsApp number for all messages
+  static const String _adminWhatsAppNumber = '919773424512';
+  
+  late AnimationController _bounceController;
+  late AnimationController _slideController;
+  late Animation<double> _bounceAnimation;
+  late Animation<Offset> _slideAnimation;
+  
+  bool _isSendingConfirmation = false;
+  bool _confirmationSent = false;
+  bool _isMarkingPayment = false;
+  int _currentStep = 0; // 0: Initial, 1: Confirmation Sent, 2: Complete
+
+  @override
+  void initState() {
+    super.initState();
+    _bounceController = AnimationController(
+      duration: const Duration(milliseconds: 800),
+      vsync: this,
+    );
+    _slideController = AnimationController(
+      duration: const Duration(milliseconds: 500),
+      vsync: this,
+    );
+    
+    _bounceAnimation = Tween<double>(begin: 0.0, end: 1.0).animate(
+      CurvedAnimation(parent: _bounceController, curve: Curves.elasticOut),
+    );
+    _slideAnimation = Tween<Offset>(begin: const Offset(0, 0.3), end: Offset.zero).animate(
+      CurvedAnimation(parent: _slideController, curve: Curves.easeOutCubic),
+    );
+    
+    _bounceController.forward();
+    _slideController.forward();
+  }
+
+  @override
+  void dispose() {
+    _bounceController.dispose();
+    _slideController.dispose();
+    super.dispose();
+  }
+
+  double get _remainingAmount => widget.bookingAmount - widget.advanceAmount;
+  bool get _isFullPayment => widget.advanceAmount >= widget.bookingAmount;
+  bool get _hasAdvance => widget.advanceAmount > 0;
+
+  @override
+  Widget build(BuildContext context) {
+    return Dialog(
+      backgroundColor: Colors.transparent,
+      insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 20),
+      child: SlideTransition(
+        position: _slideAnimation,
+        child: Container(
+          constraints: const BoxConstraints(maxWidth: 400),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(28),
+            boxShadow: [
+              BoxShadow(
+                color: AppColors.primary.withOpacity(0.2),
+                blurRadius: 40,
+                offset: const Offset(0, 20),
+              ),
+            ],
+          ),
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                // Success Header
+                _buildSuccessHeader(),
+                
+                // Content
+                Padding(
+                  padding: const EdgeInsets.all(20),
+                  child: Column(
+                    children: [
+                      // Receipt Card
+                      _buildReceiptCard(),
+                      const SizedBox(height: 20),
+                      
+                      // Action Buttons
+                      _buildActionButtons(),
+                      const SizedBox(height: 16),
+                      
+                      // Done Button
+                      _buildDoneButton(),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildSuccessHeader() {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(vertical: 32),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          colors: [
+            AppColors.primary,
+            AppColors.primary.withBlue(200),
+          ],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
+      ),
+      child: Column(
+        children: [
+          // Animated Success Icon
+          ScaleTransition(
+            scale: _bounceAnimation,
+            child: Container(
+              width: 80,
+              height: 80,
+              decoration: BoxDecoration(
+                color: Colors.white,
+                shape: BoxShape.circle,
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withOpacity(0.15),
+                    blurRadius: 20,
+                  ),
+                ],
+              ),
+              child: Stack(
+                alignment: Alignment.center,
+                children: [
+                  Icon(
+                    Icons.sports_cricket,
+                    color: AppColors.primary,
+                    size: 36,
+                  ),
+                  Positioned(
+                    right: 8,
+                    bottom: 8,
+                    child: Container(
+                      padding: const EdgeInsets.all(2),
+                      decoration: const BoxDecoration(
+                        color: AppColors.success,
+                        shape: BoxShape.circle,
+                      ),
+                      child: const Icon(
+                        Icons.check,
+                        color: Colors.white,
+                        size: 16,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(height: 16),
+          const Text(
+            'Booking Successful!',
+            style: TextStyle(
+              color: Colors.white,
+              fontSize: 24,
+              fontWeight: FontWeight.bold,
+              letterSpacing: 0.5,
+            ),
+          ),
+          const SizedBox(height: 6),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+            decoration: BoxDecoration(
+              color: Colors.white.withOpacity(0.2),
+              borderRadius: BorderRadius.circular(20),
+            ),
+            child: Text(
+              '#${widget.bookingId.substring(0, 8).toUpperCase()}',
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 13,
+                fontWeight: FontWeight.w600,
+                letterSpacing: 1.5,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildReceiptCard() {
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.grey.shade50,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: Colors.grey.shade200),
+      ),
+      child: Column(
+        children: [
+          // Venue & Net
+          Container(
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: AppColors.primary.withOpacity(0.05),
+              borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
+            ),
+            child: Row(
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(10),
+                  decoration: BoxDecoration(
+                    color: AppColors.primary.withOpacity(0.1),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Icon(Icons.stadium, color: AppColors.primary, size: 24),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        widget.turf.turfName,
+                        style: const TextStyle(
+                          fontWeight: FontWeight.bold,
+                          fontSize: 16,
+                        ),
+                      ),
+                      if (widget.turf.numberOfNets > 1)
+                        Container(
+                          margin: const EdgeInsets.only(top: 4),
+                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                          decoration: BoxDecoration(
+                            color: AppColors.primary,
+                            borderRadius: BorderRadius.circular(10),
+                          ),
+                          child: Text(
+                            'Net ${widget.selectedNetNumber}',
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 11,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+          
+          // Details Grid
+          Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              children: [
+                _buildReceiptRow(Icons.person, 'Customer', widget.customerName),
+                _buildReceiptRow(Icons.calendar_today, 'Date', widget.dateStr),
+                _buildReceiptRow(Icons.schedule, 'Time', widget.slot.displayTimeRange),
+                const Divider(height: 24),
+                
+                // Payment Section
+                _buildPaymentSection(),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildReceiptRow(IconData icon, String label, String value) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 6),
+      child: Row(
+        children: [
+          Icon(icon, size: 18, color: AppColors.textSecondary),
+          const SizedBox(width: 10),
+          Text(
+            '$label:',
+            style: TextStyle(
+              color: AppColors.textSecondary,
+              fontSize: 13,
+            ),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              value,
+              style: const TextStyle(
+                fontWeight: FontWeight.w600,
+                fontSize: 14,
+              ),
+              textAlign: TextAlign.right,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildPaymentSection() {
+    return Column(
+      children: [
+        // Total Amount
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            const Text(
+              'Total Amount',
+              style: TextStyle(
+                fontWeight: FontWeight.w600,
+                fontSize: 15,
+              ),
+            ),
+            Text(
+              '₹${widget.bookingAmount.toInt()}',
+              style: TextStyle(
+                fontWeight: FontWeight.bold,
+                fontSize: 22,
+                color: AppColors.primary,
+              ),
+            ),
+          ],
+        ),
+        
+        if (_hasAdvance) ...[
+          const SizedBox(height: 12),
+          Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: _isFullPayment 
+                  ? AppColors.success.withOpacity(0.1) 
+                  : Colors.orange.withOpacity(0.1),
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: Column(
+              children: [
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Row(
+                      children: [
+                        Icon(
+                          _isFullPayment ? Icons.check_circle : Icons.hourglass_bottom,
+                          size: 16,
+                          color: _isFullPayment ? AppColors.success : Colors.orange,
+                        ),
+                        const SizedBox(width: 6),
+                        Text(
+                          _isFullPayment ? 'Paid' : 'Advance',
+                          style: TextStyle(
+                            color: _isFullPayment ? AppColors.success : Colors.orange,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ],
+                    ),
+                    Text(
+                      '₹${widget.advanceAmount.toInt()}',
+                      style: TextStyle(
+                        fontWeight: FontWeight.bold,
+                        color: _isFullPayment ? AppColors.success : Colors.orange,
+                      ),
+                    ),
+                  ],
+                ),
+                if (!_isFullPayment) ...[
+                  const Divider(height: 16),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      const Text(
+                        'Balance Due',
+                        style: TextStyle(fontWeight: FontWeight.w500),
+                      ),
+                      Text(
+                        '₹${_remainingAmount.toInt()}',
+                        style: const TextStyle(
+                          fontWeight: FontWeight.bold,
+                          color: Colors.orange,
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ] else ...[
+          const SizedBox(height: 8),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            decoration: BoxDecoration(
+              color: Colors.blue.withOpacity(0.1),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(Icons.account_balance_wallet, size: 16, color: Colors.blue.shade700),
+                const SizedBox(width: 6),
+                Text(
+                  'Payment at venue',
+                  style: TextStyle(
+                    color: Colors.blue.shade700,
+                    fontWeight: FontWeight.w600,
+                    fontSize: 13,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ],
+    );
+  }
+
+  Widget _buildActionButtons() {
+    return Column(
+      children: [
+        // Send Confirmation via Admin WhatsApp
+        _buildMainActionButton(
+          icon: _confirmationSent ? Icons.check_circle : Icons.send,
+          label: _confirmationSent ? 'Confirmation Sent!' : 'Send Booking Confirmation',
+          sublabel: _confirmationSent ? null : 'via TurfBook WhatsApp',
+          color: _confirmationSent ? AppColors.success : const Color(0xFF25D366),
+          isLoading: _isSendingConfirmation,
+          onTap: _confirmationSent ? null : _sendBookingConfirmation,
+        ),
+        
+        const SizedBox(height: 12),
+        
+        // Additional Actions Row
+        Row(
+          children: [
+            // Send Receipt (for paid bookings)
+            if (_hasAdvance)
+              Expanded(
+                child: _buildSmallActionButton(
+                  icon: Icons.receipt_long,
+                  label: 'Send Receipt',
+                  color: AppColors.primary,
+                  onTap: _sendPaymentReceipt,
+                ),
+              ),
+            
+            if (_hasAdvance) const SizedBox(width: 10),
+            
+            // Copy Details
+            Expanded(
+              child: _buildSmallActionButton(
+                icon: Icons.copy,
+                label: 'Copy Details',
+                color: Colors.grey.shade700,
+                onTap: _copyBookingDetails,
+              ),
+            ),
+            
+            const SizedBox(width: 10),
+            
+            // Share
+            Expanded(
+              child: _buildSmallActionButton(
+                icon: Icons.share,
+                label: 'Share',
+                color: Colors.blue.shade600,
+                onTap: _shareBookingDetails,
+              ),
+            ),
+          ],
+        ),
+        
+        // Mark Payment Button (for full advance)
+        if (_isFullPayment) ...[
+          const SizedBox(height: 16),
+          SizedBox(
+            width: double.infinity,
+            child: OutlinedButton.icon(
+              onPressed: _isMarkingPayment ? null : _markPaymentConfirmed,
+              icon: _isMarkingPayment 
+                  ? const SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.verified, size: 18),
+              label: Text(_isMarkingPayment ? 'Confirming...' : 'Mark Payment Confirmed'),
+              style: OutlinedButton.styleFrom(
+                foregroundColor: AppColors.success,
+                side: const BorderSide(color: AppColors.success),
+                padding: const EdgeInsets.symmetric(vertical: 12),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+              ),
+            ),
+          ),
+        ],
+      ],
+    );
+  }
+
+  Widget _buildMainActionButton({
+    required IconData icon,
+    required String label,
+    String? sublabel,
+    required Color color,
+    bool isLoading = false,
+    VoidCallback? onTap,
+  }) {
+    return Material(
+      color: color,
+      borderRadius: BorderRadius.circular(14),
+      child: InkWell(
+        onTap: isLoading ? null : onTap,
+        borderRadius: BorderRadius.circular(14),
+        child: Container(
+          width: double.infinity,
+          padding: const EdgeInsets.symmetric(vertical: 16),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              if (isLoading)
+                const SizedBox(
+                  width: 20,
+                  height: 20,
+                  child: CircularProgressIndicator(
+                    color: Colors.white,
+                    strokeWidth: 2,
+                  ),
+                )
+              else
+                Icon(icon, color: Colors.white, size: 22),
+              const SizedBox(width: 10),
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    isLoading ? 'Sending...' : label,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.bold,
+                      fontSize: 15,
+                    ),
+                  ),
+                  if (sublabel != null)
+                    Text(
+                      sublabel,
+                      style: TextStyle(
+                        color: Colors.white.withOpacity(0.8),
+                        fontSize: 11,
+                      ),
+                    ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildSmallActionButton({
+    required IconData icon,
+    required String label,
+    required Color color,
+    required VoidCallback onTap,
+  }) {
+    return Material(
+      color: color.withOpacity(0.1),
+      borderRadius: BorderRadius.circular(10),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(10),
+        child: Container(
+          padding: const EdgeInsets.symmetric(vertical: 12),
+          child: Column(
+            children: [
+              Icon(icon, color: color, size: 20),
+              const SizedBox(height: 4),
+              Text(
+                label,
+                style: TextStyle(
+                  color: color,
+                  fontSize: 10,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildDoneButton() {
+    return TextButton(
+      onPressed: () => Navigator.pop(context),
+      style: TextButton.styleFrom(
+        padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 12),
+      ),
+      child: Text(
+        'Done',
+        style: TextStyle(
+          color: AppColors.textSecondary,
+          fontSize: 16,
+          fontWeight: FontWeight.w600,
+        ),
+      ),
+    );
+  }
+
+  // ========== Action Methods ==========
+
+  /// Build booking confirmation message (without phone number)
+  String _buildConfirmationMessage() {
+    final netInfo = widget.turf.numberOfNets > 1 ? '\n🥅 *Net:* Net ${widget.selectedNetNumber}' : '';
+    final advanceInfo = _hasAdvance 
+        ? '\n💵 *Advance Paid:* ₹${widget.advanceAmount.toInt()}${!_isFullPayment ? '\n💳 *Balance Due:* ₹${_remainingAmount.toInt()}' : ''}'
+        : '\n💳 *Payment:* At venue';
+    
+    return '''🎉 *Booking Confirmed!*
+
+Hi ${widget.customerName},
+
+Your booking at *TurfBook* is confirmed!
+
+📍 *Venue:* ${widget.turf.turfName}$netInfo
+📅 *Date:* ${widget.dateStr}
+⏰ *Time:* ${widget.slot.displayTimeRange}
+💰 *Amount:* ₹${widget.bookingAmount.toInt()}$advanceInfo
+
+🎫 *Booking ID:* #${widget.bookingId.substring(0, 8).toUpperCase()}
+
+Please arrive 10 mins early. See you there! 🏏
+
+📞 For customer support, call +91 9773424512
+
+— *TurfBook*''';
+  }
+
+  /// Build payment receipt message (without phone number)
+  String _buildReceiptMessage() {
+    final netInfo = widget.turf.numberOfNets > 1 ? '\n🥅 *Net:* Net ${widget.selectedNetNumber}' : '';
+    
+    return '''✅ *Payment Receipt*
+
+Hi ${widget.customerName},
+
+Thank you for your payment!
+
+📍 *Venue:* ${widget.turf.turfName}$netInfo
+📅 *Date:* ${widget.dateStr}
+⏰ *Time:* ${widget.slot.displayTimeRange}
+
+💰 *Amount Paid:* ₹${widget.advanceAmount.toInt()}
+${!_isFullPayment ? '💳 *Balance Due:* ₹${_remainingAmount.toInt()}' : ''}
+🎫 *Booking ID:* #${widget.bookingId.substring(0, 8).toUpperCase()}
+
+See you at the turf! 🏏
+
+📞 For customer support, call +91 9773424512
+
+— *TurfBook*''';
+  }
+
+  /// Send booking confirmation via Admin WhatsApp
+  Future<void> _sendBookingConfirmation() async {
+    setState(() => _isSendingConfirmation = true);
+    
+    try {
+      final message = _buildConfirmationMessage();
+      await _sendViaAdminWhatsApp(widget.customerPhone, message);
+      
+      if (mounted) {
+        setState(() {
+          _isSendingConfirmation = false;
+          _confirmationSent = true;
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() => _isSendingConfirmation = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error: $e'), backgroundColor: Colors.red),
+        );
+      }
+    }
+  }
+
+  /// Send payment receipt via Admin WhatsApp
+  Future<void> _sendPaymentReceipt() async {
+    final message = _buildReceiptMessage();
+    await _sendViaAdminWhatsApp(widget.customerPhone, message);
+  }
+
+  /// Send message via Admin WhatsApp (opens WhatsApp with admin number)
+  /// All messages are sent from admin phone: +91 9773424512
+  Future<void> _sendViaAdminWhatsApp(String customerPhone, String message) async {
+    // Clean customer phone number
+    String cleanCustomerPhone = customerPhone.replaceAll(RegExp(r'[^0-9]'), '');
+    if (!cleanCustomerPhone.startsWith('91') && cleanCustomerPhone.length == 10) {
+      cleanCustomerPhone = '91$cleanCustomerPhone';
+    }
+    
+    // Append customer number to message so admin knows where to forward
+    final messageWithRecipient = '$message\n\n📱 *Send to:* +$cleanCustomerPhone';
+    
+    final encodedMessage = Uri.encodeComponent(messageWithRecipient);
+    // Open WhatsApp with admin number - message will be sent FROM admin's phone
+    final whatsappUrl = 'https://wa.me/$_adminWhatsAppNumber?text=$encodedMessage';
+    
+    try {
+      final uri = Uri.parse(whatsappUrl);
+      if (await canLaunchUrl(uri)) {
+        await launchUrl(uri, mode: LaunchMode.externalApplication);
+      } else {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Could not open WhatsApp')),
+          );
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error: $e')),
+        );
+      }
+    }
+  }
+
+  /// Mark payment as confirmed
+  Future<void> _markPaymentConfirmed() async {
+    setState(() => _isMarkingPayment = true);
+    
+    try {
+      final bookingProvider = Provider.of<BookingProvider>(context, listen: false);
+      await bookingProvider.markPaymentReceived(widget.bookingId);
+      
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Payment marked as confirmed!'),
+            backgroundColor: AppColors.success,
+          ),
+        );
+        Navigator.pop(context);
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() => _isMarkingPayment = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error: $e'), backgroundColor: Colors.red),
+        );
+      }
+    }
+  }
+
+  /// Copy booking details to clipboard
+  void _copyBookingDetails() {
+    final netInfo = widget.turf.numberOfNets > 1 ? ' (Net ${widget.selectedNetNumber})' : '';
+    final details = '''
+BOOKING CONFIRMATION
+====================
+Booking ID: #${widget.bookingId.substring(0, 8).toUpperCase()}
+
+Venue: ${widget.turf.turfName}$netInfo
+Date: ${widget.dateStr}
+Time: ${widget.slot.displayTimeRange}
+
+Customer: ${widget.customerName}
+
+Amount: ₹${widget.bookingAmount.toInt()}
+${_hasAdvance ? 'Advance: ₹${widget.advanceAmount.toInt()}' : ''}
+${!_isFullPayment && _hasAdvance ? 'Balance: ₹${_remainingAmount.toInt()}' : ''}
+
+— TurfBook
+    '''.trim();
+    
+    Clipboard.setData(ClipboardData(text: details));
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('Booking details copied!'),
+        duration: Duration(seconds: 2),
+      ),
+    );
+  }
+
+  /// Share booking details
+  Future<void> _shareBookingDetails() async {
+    final netInfo = widget.turf.numberOfNets > 1 ? ' (Net ${widget.selectedNetNumber})' : '';
+    final shareText = '''
+🏏 Booking at ${widget.turf.turfName}$netInfo
+
+📅 ${widget.dateStr}
+⏰ ${widget.slot.displayTimeRange}
+💰 ₹${widget.bookingAmount.toInt()}
+
+#${widget.bookingId.substring(0, 8).toUpperCase()}
+— TurfBook
+    '''.trim();
+    
+    // Use clipboard as fallback for sharing
+    Clipboard.setData(ClipboardData(text: shareText));
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('Booking details copied for sharing!'),
+        duration: Duration(seconds: 2),
+      ),
+    );
   }
 }
