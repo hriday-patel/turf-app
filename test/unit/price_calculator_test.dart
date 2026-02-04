@@ -9,22 +9,30 @@ void main() {
   setUp(() {
     // Create test pricing rules
     pricingRules = PricingRules(
-      weekday: DayPricing(
-        day: PricingRule(start: '06:00', end: '18:00', price: 1000),
-        night: PricingRule(start: '18:00', end: '23:00', price: 1200),
-      ),
-      saturday: DayPricing(
-        day: PricingRule(start: '06:00', end: '18:00', price: 1400),
-        night: PricingRule(start: '18:00', end: '23:00', price: 1600),
-      ),
-      sunday: DayPricing(
-        day: PricingRule(start: '06:00', end: '18:00', price: 1500),
-        night: PricingRule(start: '18:00', end: '23:00', price: 1700),
-      ),
-      holiday: DayPricing(
-        day: PricingRule(start: '06:00', end: '18:00', price: 1800),
-        night: PricingRule(start: '18:00', end: '23:00', price: 2000),
-      ),
+      netPricing: [
+        NetPricing(
+          netNumber: 1,
+          netName: 'Net 1',
+          weekday: DayTypePricing(
+            morning: TimeSlotPricing(label: 'Morning', startTime: '06:00', endTime: '12:00', price: 1000),
+            afternoon: TimeSlotPricing(label: 'Afternoon', startTime: '12:00', endTime: '18:00', price: 1100),
+            evening: TimeSlotPricing(label: 'Evening', startTime: '18:00', endTime: '00:00', price: 1200),
+            night: TimeSlotPricing(label: 'Night', startTime: '00:00', endTime: '06:00', price: 900),
+          ),
+          weekend: DayTypePricing(
+            morning: TimeSlotPricing(label: 'Morning', startTime: '06:00', endTime: '12:00', price: 1400),
+            afternoon: TimeSlotPricing(label: 'Afternoon', startTime: '12:00', endTime: '18:00', price: 1500),
+            evening: TimeSlotPricing(label: 'Evening', startTime: '18:00', endTime: '00:00', price: 1600),
+            night: TimeSlotPricing(label: 'Night', startTime: '00:00', endTime: '06:00', price: 1300),
+          ),
+          holiday: DayTypePricing(
+            morning: TimeSlotPricing(label: 'Morning', startTime: '06:00', endTime: '12:00', price: 1800),
+            afternoon: TimeSlotPricing(label: 'Afternoon', startTime: '12:00', endTime: '18:00', price: 1900),
+            evening: TimeSlotPricing(label: 'Evening', startTime: '18:00', endTime: '00:00', price: 2000),
+            night: TimeSlotPricing(label: 'Night', startTime: '00:00', endTime: '06:00', price: 1700),
+          ),
+        ),
+      ],
     );
   });
 
@@ -42,8 +50,8 @@ void main() {
 
         expect(result['price'], 1000);
         expect(result['dayType'], DayType.weekday);
-        expect(result['timeType'], TimeType.day);
-        expect(result['priceType'], 'WEEKDAY_DAY');
+        expect(result['timeSlot'], 'MORNING');
+        expect(result['priceType'], 'WEEKDAY_MORNING');
       });
 
       test('should apply weekday night price for Tuesday evening', () {
@@ -57,8 +65,8 @@ void main() {
 
         expect(result['price'], 1200);
         expect(result['dayType'], DayType.weekday);
-        expect(result['timeType'], TimeType.night);
-        expect(result['priceType'], 'WEEKDAY_NIGHT');
+        expect(result['timeSlot'], 'EVENING');
+        expect(result['priceType'], 'WEEKDAY_EVENING');
       });
 
       test('should apply weekday price for Friday', () {
@@ -69,13 +77,13 @@ void main() {
           publicHolidays: [],
         );
 
-        expect(result['price'], 1000);
+        expect(result['price'], 1100);
         expect(result['dayType'], DayType.weekday);
       });
     });
 
-    group('Saturday pricing (separate from Sunday)', () {
-      test('should apply Saturday day price', () {
+    group('Weekend pricing', () {
+      test('should apply weekend morning price (Saturday)', () {
         // Saturday, 2026-01-31 12:00
         final result = PriceCalculator.calculateSlotPrice(
           pricingRules: pricingRules,
@@ -84,55 +92,24 @@ void main() {
           publicHolidays: [],
         );
 
-        expect(result['price'], 1400); // Saturday day price
-        expect(result['dayType'], DayType.saturday);
-        expect(result['timeType'], TimeType.day);
-        expect(result['priceType'], 'SATURDAY_DAY');
+        expect(result['price'], 1500); // Weekend afternoon price
+        expect(result['dayType'], DayType.weekend);
+        expect(result['timeSlot'], 'AFTERNOON');
+        expect(result['priceType'], 'WEEKEND_AFTERNOON');
       });
 
-      test('should apply Saturday night price', () {
+      test('should apply weekend evening price (Sunday)', () {
         final result = PriceCalculator.calculateSlotPrice(
           pricingRules: pricingRules,
-          date: '2026-01-31', // Saturday
+          date: '2026-02-01', // Sunday
           startTime: '20:00',
           publicHolidays: [],
         );
 
-        expect(result['price'], 1600); // Saturday night price
-        expect(result['dayType'], DayType.saturday);
-        expect(result['timeType'], TimeType.night);
-        expect(result['priceType'], 'SATURDAY_NIGHT');
-      });
-    });
-
-    group('Sunday pricing (separate from Saturday)', () {
-      test('should apply Sunday day price (different from Saturday)', () {
-        // Sunday, 2026-02-01 10:00
-        final result = PriceCalculator.calculateSlotPrice(
-          pricingRules: pricingRules,
-          date: '2026-02-01', // Sunday
-          startTime: '10:00',
-          publicHolidays: [],
-        );
-
-        expect(result['price'], 1500); // Sunday day price (100 more than Saturday)
-        expect(result['dayType'], DayType.sunday);
-        expect(result['timeType'], TimeType.day);
-        expect(result['priceType'], 'SUNDAY_DAY');
-      });
-
-      test('should apply Sunday night price (different from Saturday)', () {
-        final result = PriceCalculator.calculateSlotPrice(
-          pricingRules: pricingRules,
-          date: '2026-02-01', // Sunday
-          startTime: '19:00',
-          publicHolidays: [],
-        );
-
-        expect(result['price'], 1700); // Sunday night price (100 more than Saturday)
-        expect(result['dayType'], DayType.sunday);
-        expect(result['timeType'], TimeType.night);
-        expect(result['priceType'], 'SUNDAY_NIGHT');
+        expect(result['price'], 1600); // Weekend evening price
+        expect(result['dayType'], DayType.weekend);
+        expect(result['timeSlot'], 'EVENING');
+        expect(result['priceType'], 'WEEKEND_EVENING');
       });
     });
 
@@ -146,10 +123,10 @@ void main() {
           publicHolidays: ['2026-01-28'],
         );
 
-        expect(result['price'], 1800); // Holiday day price
+        expect(result['price'], 1900); // Holiday afternoon price
         expect(result['dayType'], DayType.holiday);
-        expect(result['timeType'], TimeType.day);
-        expect(result['priceType'], 'HOLIDAY_DAY');
+        expect(result['timeSlot'], 'AFTERNOON');
+        expect(result['priceType'], 'HOLIDAY_AFTERNOON');
       });
 
       test('should apply holiday night price for holiday evening', () {
@@ -162,8 +139,8 @@ void main() {
 
         expect(result['price'], 2000); // Holiday night price
         expect(result['dayType'], DayType.holiday);
-        expect(result['timeType'], TimeType.night);
-        expect(result['priceType'], 'HOLIDAY_NIGHT');
+        expect(result['timeSlot'], 'EVENING');
+        expect(result['priceType'], 'HOLIDAY_EVENING');
       });
 
       test('holiday should override weekend pricing', () {
@@ -176,7 +153,7 @@ void main() {
         );
 
         expect(result['dayType'], DayType.holiday);
-        expect(result['price'], 1800); // Holiday price, not Saturday
+        expect(result['price'], 1900); // Holiday afternoon price, not weekend
       });
     });
 
@@ -189,8 +166,8 @@ void main() {
           publicHolidays: [],
         );
 
-        expect(result['timeType'], TimeType.day);
-        expect(result['price'], 1000);
+        expect(result['timeSlot'], 'AFTERNOON');
+        expect(result['price'], 1100);
       });
 
       test('should apply night price at 18:00', () {
@@ -201,7 +178,7 @@ void main() {
           publicHolidays: [],
         );
 
-        expect(result['timeType'], TimeType.night);
+        expect(result['timeSlot'], 'EVENING');
         expect(result['price'], 1200);
       });
     });
@@ -218,16 +195,16 @@ void main() {
   });
 
   group('PriceCalculator.getPriceLabel', () {
-    test('should return correct label for SATURDAY_DAY', () {
-      expect(PriceCalculator.getPriceLabel('SATURDAY_DAY'), 'Saturday (Day)');
+    test('should return correct label for WEEKEND_MORNING', () {
+      expect(PriceCalculator.getPriceLabel('WEEKEND_MORNING'), 'Weekend (Morning)');
     });
 
-    test('should return correct label for SUNDAY_NIGHT', () {
-      expect(PriceCalculator.getPriceLabel('SUNDAY_NIGHT'), 'Sunday (Night)');
+    test('should return correct label for HOLIDAY_NIGHT', () {
+      expect(PriceCalculator.getPriceLabel('HOLIDAY_NIGHT'), 'Holiday (Night)');
     });
 
-    test('should handle backward compatible WEEKEND labels', () {
-      expect(PriceCalculator.getPriceLabel('WEEKEND_DAY'), 'Weekend (Day)');
+    test('should handle unknown labels by returning the raw value', () {
+      expect(PriceCalculator.getPriceLabel('WEEKEND_DAY'), 'WEEKEND_DAY');
     });
   });
 }
