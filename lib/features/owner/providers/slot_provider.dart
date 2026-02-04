@@ -95,6 +95,11 @@ class SlotProvider extends ChangeNotifier {
           final exists = await _dbService.slotsExistForDateAndNet(turf.turfId, date, netNumber);
           if (exists) {
             debugPrint('Slots already exist for Net $netNumber, skipping generation');
+            await _syncSlotPricesForNet(
+              turf: turf,
+              date: date,
+              netNumber: netNumber,
+            );
             totalNetsProcessed++;
             continue; // Slots for this net already exist, skip to next net
           }
@@ -171,6 +176,47 @@ class SlotProvider extends ChangeNotifier {
       debugPrint('Error generating slots: $e');
       notifyListeners();
       return false;
+    }
+  }
+
+  Future<void> _syncSlotPricesForNet({
+    required TurfModel turf,
+    required String date,
+    required int netNumber,
+  }) async {
+    try {
+      final slots = await _dbService.getSlotsForDateAndNet(
+        turf.turfId,
+        date,
+        netNumber,
+      );
+
+      for (final slot in slots) {
+        final status = (slot['status'] as String?) ?? 'AVAILABLE';
+        if (status != 'AVAILABLE' && status != 'BLOCKED') {
+          continue; // Don't change pricing for booked/reserved slots
+        }
+
+        final startTime = slot['start_time'] as String;
+        final priceInfo = PriceCalculator.calculateSlotPrice(
+          pricingRules: turf.pricingRules,
+          date: date,
+          startTime: startTime,
+          publicHolidays: turf.publicHolidays,
+          netNumber: netNumber,
+        );
+
+        final currentPrice = (slot['price'] as num?)?.toDouble() ?? 0;
+        final currentType = slot['price_type'] as String?;
+        final newPrice = (priceInfo['price'] as num).toDouble();
+        final newType = priceInfo['priceType'] as String;
+
+        if (currentPrice != newPrice || currentType != newType) {
+          await _dbService.updateSlotPricing(slot['id'] as String, newPrice, newType);
+        }
+      }
+    } catch (e) {
+      debugPrint('Failed to sync slot prices for Net $netNumber on $date: $e');
     }
   }
 

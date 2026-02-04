@@ -90,13 +90,12 @@ class BookingProvider extends ChangeNotifier {
       _isLoading = true;
       notifyListeners();
 
-      // Determine payment status based on advance
-      // All bookings start as pending until owner manually marks as paid
+      // Determine payment status based on advance vs total
       String paymentStatus;
-      if (advanceAmount > 0) {
-        paymentStatus = 'PENDING'; // Has advance - pending confirmation
+      if (amount > 0 && advanceAmount >= amount) {
+        paymentStatus = 'PAID';
       } else {
-        paymentStatus = 'PAY_AT_TURF'; // No advance - pay at turf
+        paymentStatus = 'PENDING';
       }
 
       // Create booking data

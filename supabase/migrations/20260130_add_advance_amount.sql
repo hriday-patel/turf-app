@@ -29,6 +29,7 @@ DECLARE
   booking_id uuid;
   v_slot_status text;
   v_advance_amount numeric;
+  v_total_amount numeric;
 BEGIN
   SELECT * INTO slot_record FROM slots WHERE id = p_slot_id FOR UPDATE;
   IF NOT FOUND THEN
@@ -40,17 +41,17 @@ BEGIN
   END IF;
 
   -- Determine slot status based on payment
-  -- Any advance amount (partial or full) = RESERVED (Partial/yellow)
-  -- No advance (pay at turf) = BOOKED
-  -- Only when owner manually marks as paid, slot becomes BOOKED
+  -- If advance_amount >= total_amount -> BOOKED (red)
+  -- If advance_amount < total_amount (including 0) -> RESERVED (yellow)
   v_advance_amount := COALESCE((p_booking_data->>'advance_amount')::numeric, 0);
+  v_total_amount := COALESCE((p_booking_data->>'amount')::numeric, 0);
   
-  IF v_advance_amount > 0 THEN
-    -- Has advance payment (any amount) - mark as reserved (Partial)
-    v_slot_status := 'RESERVED';
-  ELSE
-    -- No advance payment (pay at turf) - mark as booked
+  IF v_total_amount > 0 AND v_advance_amount >= v_total_amount THEN
+    -- Full payment received
     v_slot_status := 'BOOKED';
+  ELSE
+    -- Partial or no payment
+    v_slot_status := 'RESERVED';
   END IF;
 
   UPDATE slots

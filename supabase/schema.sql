@@ -144,6 +144,7 @@ create table if not exists slots (
   date date not null,
   start_time text not null,
   end_time text not null,
+  net_number int not null default 1,
   status text not null default 'AVAILABLE',
   reserved_until timestamptz,
   reserved_by uuid,
@@ -156,7 +157,7 @@ create table if not exists slots (
 );
 
 create unique index if not exists slots_unique_time
-  on slots (turf_id, date, start_time);
+  on slots (turf_id, date, start_time, net_number);
 
 -- Bookings table
 create table if not exists bookings (
@@ -168,6 +169,7 @@ create table if not exists bookings (
   start_time text not null,
   end_time text not null,
   turf_name text not null,
+  net_number int not null default 1,
   user_id uuid,
   customer_name text not null,
   customer_phone text not null,
@@ -175,6 +177,7 @@ create table if not exists bookings (
   payment_mode text not null,
   payment_status text not null,
   amount numeric not null,
+  advance_amount numeric not null default 0,
   transaction_id text,
   booking_status text not null default 'CONFIRMED',
   cancelled_at timestamptz,
@@ -450,6 +453,9 @@ as $$
 declare
   slot_record slots%rowtype;
   booking_id uuid;
+  v_slot_status text;
+  v_advance_amount numeric;
+  v_total_amount numeric;
 begin
   select * into slot_record from slots where id = p_slot_id for update;
   if not found then
@@ -460,8 +466,17 @@ begin
     raise exception 'Slot not available';
   end if;
 
+  v_advance_amount := coalesce((p_booking_data->>'advance_amount')::numeric, 0);
+  v_total_amount := coalesce((p_booking_data->>'amount')::numeric, 0);
+
+  if v_total_amount > 0 and v_advance_amount >= v_total_amount then
+    v_slot_status := 'BOOKED';
+  else
+    v_slot_status := 'RESERVED';
+  end if;
+
   update slots
-    set status = 'BOOKED',
+    set status = v_slot_status,
         reserved_until = null,
         reserved_by = null,
         updated_at = now()
@@ -469,8 +484,8 @@ begin
 
   insert into bookings (
     owner_id, turf_id, slot_id, booking_date, start_time, end_time,
-    turf_name, user_id, customer_name, customer_phone, booking_source,
-    payment_mode, payment_status, amount, transaction_id, booking_status, created_at
+    turf_name, net_number, user_id, customer_name, customer_phone, booking_source,
+    payment_mode, payment_status, amount, advance_amount, transaction_id, booking_status, created_at
   ) values (
     (select owner_id from turfs where id = (p_booking_data->>'turf_id')::uuid),
     (p_booking_data->>'turf_id')::uuid,
@@ -479,6 +494,7 @@ begin
     p_booking_data->>'start_time',
     p_booking_data->>'end_time',
     p_booking_data->>'turf_name',
+    coalesce((p_booking_data->>'net_number')::int, 1),
     nullif(p_booking_data->>'user_id', '')::uuid,
     p_booking_data->>'customer_name',
     p_booking_data->>'customer_phone',
@@ -486,6 +502,7 @@ begin
     p_booking_data->>'payment_mode',
     p_booking_data->>'payment_status',
     (p_booking_data->>'amount')::numeric,
+    coalesce((p_booking_data->>'advance_amount')::numeric, 0),
     p_booking_data->>'transaction_id',
     coalesce(p_booking_data->>'booking_status', 'CONFIRMED'),
     now()

@@ -143,6 +143,9 @@ class _SlotBookingScreenState extends State<SlotBookingScreen> with RouteAware {
   }
 
   void _onTurfSelected(TurfModel turf) {
+    if (_selectedTurf?.turfId == turf.turfId) {
+      return;
+    }
     // Verify turf is still approved before selecting
     if (turf.verificationStatus != VerificationStatus.approved) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -163,11 +166,8 @@ class _SlotBookingScreenState extends State<SlotBookingScreen> with RouteAware {
   void _onNetSelected(int netNumber) {
     setState(() {
       _selectedNetNumber = netNumber;
-      _isLoading = true;
       // Note: We don't reset toggles - each net has its own state
     });
-    // Force reload slots when switching nets
-    _loadSlots();
   }
 
   void _onDateSelected(DateTime date) {
@@ -239,6 +239,8 @@ class _SlotBookingScreenState extends State<SlotBookingScreen> with RouteAware {
     for (final slot in currentNetSlots) {
       final hour = int.tryParse(slot.startTime.split(':')[0]) ?? 0;
       bool shouldBeBlocked = false;
+      final isManuallyOpened = _isSlotManuallyOpened(slot.slotId);
+      final isPeriodBlocked = (slot.blockReason ?? '').contains('Period closed');
       
       // Time period divisions:
       // Morning: 6 AM - 12 PM (6-11)
@@ -255,6 +257,14 @@ class _SlotBookingScreenState extends State<SlotBookingScreen> with RouteAware {
         // 0-5 hours (night)
         shouldBeBlocked = !_isNightOpen;
       }
+
+      // Respect manual overrides: keep slot open even if period is closed
+      if (isManuallyOpened && shouldBeBlocked) {
+        if (slot.status == SlotStatus.blocked && isPeriodBlocked) {
+          await slotProvider.unblockSlot(slot.slotId);
+        }
+        continue;
+      }
       
       if (shouldBeBlocked && slot.status == SlotStatus.available) {
         await slotProvider.blockSlot(
@@ -262,7 +272,7 @@ class _SlotBookingScreenState extends State<SlotBookingScreen> with RouteAware {
           authProvider.currentUserId!,
           'Period closed by owner',
         );
-      } else if (!shouldBeBlocked && slot.status == SlotStatus.blocked) {
+      } else if (!shouldBeBlocked && slot.status == SlotStatus.blocked && isPeriodBlocked) {
         await slotProvider.unblockSlot(slot.slotId);
       }
     }
@@ -459,7 +469,7 @@ class _SlotBookingScreenState extends State<SlotBookingScreen> with RouteAware {
                         final netNumber = index + 1;
                         final isSelected = _selectedNetNumber == netNumber;
                         return GestureDetector(
-                          onTap: () => setState(() => _selectedNetNumber = netNumber),
+                          onTap: () => _onNetSelected(netNumber),
                           child: Container(
                             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                             decoration: BoxDecoration(
@@ -754,11 +764,11 @@ class _SlotBookingScreenState extends State<SlotBookingScreen> with RouteAware {
               _buildLegend(),
               const SizedBox(height: 20),
               
-              // Time Period Sections with inline toggles (displayed in chronological order)
-              if (night.isNotEmpty) _buildTimePeriodSection('Night', '12 AM - 6 AM', night, Icons.bedtime, 'night', _isNightOpen),
-              if (morning.isNotEmpty) _buildTimePeriodSection('Morning', '6 AM - 12 PM', morning, Icons.wb_sunny, 'morning', _isMorningOpen),
-              if (afternoon.isNotEmpty) _buildTimePeriodSection('Afternoon', '12 PM - 6 PM', afternoon, Icons.wb_cloudy, 'afternoon', _isAfternoonOpen),
-              if (evening.isNotEmpty) _buildTimePeriodSection('Evening', '6 PM - 12 AM', evening, Icons.nightlight_round, 'evening', _isEveningOpen),
+              // Time Period Sections with inline toggles (always show all 4 divisions)
+              _buildTimePeriodSection('Morning', '6 AM - 12 PM', morning, Icons.wb_sunny, 'morning', _isMorningOpen),
+              _buildTimePeriodSection('Afternoon', '12 PM - 6 PM', afternoon, Icons.wb_cloudy, 'afternoon', _isAfternoonOpen),
+              _buildTimePeriodSection('Evening', '6 PM - 12 AM', evening, Icons.nightlight_round, 'evening', _isEveningOpen),
+              _buildTimePeriodSection('Night', '12 AM - 6 AM', night, Icons.bedtime, 'night', _isNightOpen),
             ],
           ),
         );
@@ -861,11 +871,26 @@ class _SlotBookingScreenState extends State<SlotBookingScreen> with RouteAware {
           ),
         ),
         // Slots grid
-        Wrap(
-          spacing: 12,
-          runSpacing: 12,
-          children: slots.map((slot) => _buildSlotCard(slot)).toList(),
-        ),
+        if (slots.isEmpty)
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: Colors.grey.shade50,
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(color: Colors.grey.shade200),
+            ),
+            child: Text(
+              'No slots in this period',
+              style: TextStyle(fontSize: 12, color: AppColors.textSecondary),
+            ),
+          )
+        else
+          Wrap(
+            spacing: 12,
+            runSpacing: 12,
+            children: slots.map((slot) => _buildSlotCard(slot)).toList(),
+          ),
         const SizedBox(height: 24),
       ],
     );
@@ -877,6 +902,7 @@ class _SlotBookingScreenState extends State<SlotBookingScreen> with RouteAware {
     final isBooked = slot.status == SlotStatus.booked;
     final isReserved = slot.status == SlotStatus.reserved; // Pending payment
     final isBlocked = slot.status == SlotStatus.blocked;
+    final isPeriodBlocked = isBlocked && (slot.blockReason ?? '').contains('Period closed');
     
     // Check if slot's period is closed
     final period = _getSlotPeriod(slot);
@@ -894,12 +920,12 @@ class _SlotBookingScreenState extends State<SlotBookingScreen> with RouteAware {
     bool showManualOverrideOption = false;
     
     // If period is closed but slot is manually opened, show as available
-    if (isPeriodClosed && isManuallyOpened && slot.status == SlotStatus.available && !isPast) {
+    if (isPeriodClosed && isManuallyOpened && (slot.status == SlotStatus.available || isPeriodBlocked) && !isPast) {
       bgColor = AppColors.success.withOpacity(0.1);
       textColor = AppColors.success;
       statusLabel = 'Open';
       showManualOverrideOption = true;
-    } else if (effectivelyClosed && slot.status == SlotStatus.available) {
+    } else if (effectivelyClosed && (slot.status == SlotStatus.available || isPeriodBlocked)) {
       bgColor = Colors.grey.shade300;
       textColor = Colors.grey.shade600;
       statusLabel = 'Closed';
@@ -1018,10 +1044,11 @@ class _SlotBookingScreenState extends State<SlotBookingScreen> with RouteAware {
     final isBooked = slot.status == SlotStatus.booked;
     final isReserved = slot.status == SlotStatus.reserved; // Pending payment
     final isBlocked = slot.status == SlotStatus.blocked;
+    final isPeriodBlocked = isBlocked && (slot.blockReason ?? '').contains('Period closed');
     
     // Determine if slot is effectively available (period open or manually opened)
     final effectivelyAvailable = isAvailable && (!isPeriodClosed || isManuallyOpened);
-    final showManualOpenOption = isPeriodClosed && isAvailable && !isManuallyOpened;
+    final showManualOpenOption = isPeriodClosed && !isManuallyOpened && (isAvailable || isPeriodBlocked);
     final showManualCloseOption = isPeriodClosed && isAvailable && isManuallyOpened;
 
     showModalBottomSheet(
@@ -1106,6 +1133,10 @@ class _SlotBookingScreenState extends State<SlotBookingScreen> with RouteAware {
                 () {
                   Navigator.pop(context);
                   _toggleSlotManualOverride(slot.slotId);
+                  if (isPeriodBlocked) {
+                    final slotProvider = Provider.of<SlotProvider>(context, listen: false);
+                    slotProvider.unblockSlot(slot.slotId);
+                  }
                   ScaffoldMessenger.of(context).showSnackBar(
                     const SnackBar(
                       content: Text('Slot opened - You can now create a booking'),
@@ -1126,6 +1157,7 @@ class _SlotBookingScreenState extends State<SlotBookingScreen> with RouteAware {
                 () {
                   Navigator.pop(context);
                   _toggleSlotManualOverride(slot.slotId);
+                  _applyPeriodChanges();
                   ScaffoldMessenger.of(context).showSnackBar(
                     const SnackBar(
                       content: Text('Slot closed again'),
@@ -1170,19 +1202,7 @@ class _SlotBookingScreenState extends State<SlotBookingScreen> with RouteAware {
                 },
               ),
             
-            if (isBooked || isReserved)
-              _buildActionButton(
-                'View Booking Details',
-                Icons.visibility,
-                AppColors.primary,
-                () async {
-                  Navigator.pop(context);
-                  await _viewBookingDetails(slot);
-                },
-              ),
-            
             if (isReserved) ...[
-              const SizedBox(height: 12),
               _buildActionButton(
                 'Mark Payment Received',
                 Icons.check_circle,
@@ -1190,6 +1210,48 @@ class _SlotBookingScreenState extends State<SlotBookingScreen> with RouteAware {
                 () async {
                   Navigator.pop(context);
                   await _markPaymentAndUpdateSlot(slot);
+                },
+              ),
+              const SizedBox(height: 12),
+              _buildActionButton(
+                'Cancel Booking',
+                Icons.cancel,
+                AppColors.error,
+                () async {
+                  Navigator.pop(context);
+                  await _cancelBookingForSlot(slot);
+                },
+              ),
+              const SizedBox(height: 12),
+              _buildActionButton(
+                'View Payment Details',
+                Icons.payments,
+                AppColors.primary,
+                () async {
+                  Navigator.pop(context);
+                  await _showPaymentDetails(slot);
+                },
+              ),
+            ],
+
+            if (isBooked) ...[
+              _buildActionButton(
+                'Cancel Booking',
+                Icons.cancel,
+                AppColors.error,
+                () async {
+                  Navigator.pop(context);
+                  await _cancelBookingForSlot(slot);
+                },
+              ),
+              const SizedBox(height: 12),
+              _buildActionButton(
+                'View Payment Details',
+                Icons.payments,
+                AppColors.primary,
+                () async {
+                  Navigator.pop(context);
+                  await _showPaymentDetails(slot);
                 },
               ),
             ],
@@ -1201,20 +1263,104 @@ class _SlotBookingScreenState extends State<SlotBookingScreen> with RouteAware {
     );
   }
 
-  Future<void> _viewBookingDetails(SlotModel slot) async {
+  Future<void> _showPaymentDetails(SlotModel slot) async {
     final bookingProvider = Provider.of<BookingProvider>(context, listen: false);
     final booking = await bookingProvider.getBookingBySlotId(slot.slotId);
-    
-    if (booking != null && mounted) {
-      Navigator.pushNamed(
-        context,
-        AppRoutes.bookingDetail,
-        arguments: {'bookingId': booking.bookingId},
-      );
-    } else if (mounted) {
+
+    if (booking == null || !mounted) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Payment details not found')),
+        );
+      }
+      return;
+    }
+
+    final isPaid = booking.paymentStatus == PaymentStatus.paid;
+    final remaining = (booking.amount - booking.advanceAmount).clamp(0, booking.amount);
+
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (context) => Container(
+        padding: const EdgeInsets.all(20),
+        decoration: const BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Center(
+              child: Container(
+                width: 40,
+                height: 4,
+                margin: const EdgeInsets.only(bottom: 16),
+                decoration: BoxDecoration(
+                  color: Colors.grey.shade300,
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+            ),
+            const Text(
+              'Payment Details',
+              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 12),
+            _buildPaymentRow('Status', isPaid ? 'Paid' : 'Pending', isPaid ? AppColors.success : Colors.orange),
+            const SizedBox(height: 8),
+            _buildPaymentRow('Total Amount', '₹${booking.amount.toInt()}', AppColors.textPrimary),
+            const SizedBox(height: 8),
+            _buildPaymentRow('Advance Paid', '₹${booking.advanceAmount.toInt()}', AppColors.textPrimary),
+            const SizedBox(height: 8),
+            _buildPaymentRow('Balance Due', '₹${remaining.toInt()}', remaining > 0 ? Colors.orange : AppColors.success),
+            const SizedBox(height: 16),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildPaymentRow(String label, String value, Color valueColor) {
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+      children: [
+        Text(label, style: TextStyle(color: AppColors.textSecondary)),
+        Text(
+          value,
+          style: TextStyle(fontWeight: FontWeight.w600, color: valueColor),
+        ),
+      ],
+    );
+  }
+
+  Future<void> _cancelBookingForSlot(SlotModel slot) async {
+    final bookingProvider = Provider.of<BookingProvider>(context, listen: false);
+    final authProvider = Provider.of<AuthProvider>(context, listen: false);
+    final booking = await bookingProvider.getBookingBySlotId(slot.slotId);
+
+    if (booking == null) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Booking not found')),
+        );
+      }
+      return;
+    }
+
+    final success = await bookingProvider.cancelBooking(
+      booking.bookingId,
+      slot.slotId,
+      authProvider.currentUserId ?? 'owner',
+      'Cancelled by owner',
+    );
+
+    if (success && mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Booking details not found')),
+        const SnackBar(content: Text('Booking cancelled'), backgroundColor: Colors.green),
       );
+      _loadSlots();
     }
   }
 
@@ -1342,10 +1488,9 @@ class _BookingDialogState extends State<_BookingDialog> {
   }
 
   PaymentStatus get _paymentStatus {
-    // All bookings start as pending until owner manually marks as paid
-    // Even if full advance is entered, it's still pending confirmation
-    if (_advanceAmount > 0) return PaymentStatus.pending; // Has advance - pending confirmation
-    return PaymentStatus.payAtTurf; // No advance - pay at turf
+    if (_bookingAmount <= 0) return PaymentStatus.pending;
+    if (_advanceAmount >= _bookingAmount) return PaymentStatus.paid;
+    return PaymentStatus.pending;
   }
 
   @override
@@ -1744,7 +1889,7 @@ class _BookingDialogState extends State<_BookingDialog> {
         : '';
     
     const appName = 'TurfBook';
-    const appContact = '📞 For customer support, call +91 9773424512';
+    const appContact = '📞 For customer support, call +91 9929615076';
     
     return '''🎉 *Booking Confirmed!*
 
@@ -1827,7 +1972,7 @@ class _BookingSuccessPopup extends StatefulWidget {
 
 class _BookingSuccessPopupState extends State<_BookingSuccessPopup> with TickerProviderStateMixin {
   // Admin WhatsApp number for all messages
-  static const String _adminWhatsAppNumber = '919773424512';
+  static const String _adminWhatsAppNumber = '919929615076';
   
   late AnimationController _bounceController;
   late AnimationController _slideController;
@@ -2465,7 +2610,7 @@ Your booking at *TurfBook* is confirmed!
 
 Please arrive 10 mins early. See you there! 🏏
 
-📞 For customer support, call +91 9773424512
+📞 For customer support, call +91 9929615076
 
 — *TurfBook*''';
   }
@@ -2490,7 +2635,7 @@ ${!_isFullPayment ? '💳 *Balance Due:* ₹${_remainingAmount.toInt()}' : ''}
 
 See you at the turf! 🏏
 
-📞 For customer support, call +91 9773424512
+📞 For customer support, call +91 9929615076
 
 — *TurfBook*''';
   }
@@ -2526,7 +2671,7 @@ See you at the turf! 🏏
   }
 
   /// Send message via Admin WhatsApp (opens WhatsApp with admin number)
-  /// All messages are sent from admin phone: +91 9773424512
+  /// All messages are sent from admin phone: +91 9929615076
   Future<void> _sendViaAdminWhatsApp(String customerPhone, String message) async {
     // Clean customer phone number
     String cleanCustomerPhone = customerPhone.replaceAll(RegExp(r'[^0-9]'), '');

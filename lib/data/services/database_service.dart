@@ -403,6 +403,34 @@ class DatabaseService {
     return result.map<String>((row) => row['start_time'] as String).toSet();
   }
 
+  /// Get slots for a date and net (for price sync)
+  Future<List<Map<String, dynamic>>> getSlotsForDateAndNet(
+    String turfId,
+    String date,
+    int netNumber,
+  ) async {
+    return await _client
+        .from('slots')
+        .select('id, start_time, status, price, price_type, block_reason')
+        .eq('turf_id', turfId)
+        .eq('date', date)
+        .eq('net_number', netNumber)
+        .order('start_time', ascending: true);
+  }
+
+  /// Update slot pricing (price and price_type)
+  Future<void> updateSlotPricing(
+    String slotId,
+    double price,
+    String priceType,
+  ) async {
+    await _client.from('slots').update({
+      'price': price,
+      'price_type': priceType,
+      'updated_at': DateTime.now().toIso8601String(),
+    }).eq('id', slotId);
+  }
+
   /// Batch create slots
   Future<void> batchCreateSlots(List<Map<String, dynamic>> slotsData) async {
     await _client.from('slots').insert(slotsData);
