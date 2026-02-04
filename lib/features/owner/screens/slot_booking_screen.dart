@@ -796,13 +796,14 @@ class _SlotBookingScreenState extends State<SlotBookingScreen> with RouteAware {
         color: Colors.white,
         borderRadius: BorderRadius.circular(12),
       ),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceAround,
+      child: Wrap(
+        spacing: 16,
+        runSpacing: 8,
+        alignment: WrapAlignment.center,
         children: [
           _buildLegendItem('Available', AppColors.success),
-          _buildLegendItem('Pending Payment', Colors.orange),
+          _buildLegendItem('Pending', Colors.orange),
           _buildLegendItem('Booked', AppColors.error),
-          _buildLegendItem('Blocked', Colors.grey),
           _buildLegendItem('Closed', Colors.grey.shade400),
         ],
       ),
@@ -901,36 +902,25 @@ class _SlotBookingScreenState extends State<SlotBookingScreen> with RouteAware {
     final isAvailable = slot.status == SlotStatus.available && !isPast;
     final isBooked = slot.status == SlotStatus.booked;
     final isReserved = slot.status == SlotStatus.reserved; // Pending payment
-    final isBlocked = slot.status == SlotStatus.blocked;
-    final isPeriodBlocked = isBlocked && (slot.blockReason ?? '').contains('Period closed');
+    final isBlocked = slot.status == SlotStatus.blocked; // Shows as "Closed"
     
-    // Check if slot's period is closed
+    // Check if slot's period is closed by toggle
     final period = _getSlotPeriod(slot);
     final isPeriodClosed = _isPeriodClosed(period);
     
-    // Check if this slot is manually opened (overriding period closure)
+    // Check if this slot is manually opened (overriding closure)
     final isManuallyOpened = _isSlotManuallyOpened(slot.slotId);
     
-    // Effective period closed status (can be overridden by manual open)
-    final effectivelyClosed = isPeriodClosed && !isManuallyOpened;
+    // Slot is effectively closed if: blocked OR period closed (unless manually opened)
+    final effectivelyClosed = (isBlocked || isPeriodClosed) && !isManuallyOpened;
 
     Color bgColor;
     Color textColor;
     String statusLabel;
     bool showManualOverrideOption = false;
     
-    // If period is closed but slot is manually opened, show as available
-    if (isPeriodClosed && isManuallyOpened && (slot.status == SlotStatus.available || isPeriodBlocked) && !isPast) {
-      bgColor = AppColors.success.withOpacity(0.1);
-      textColor = AppColors.success;
-      statusLabel = 'Open';
-      showManualOverrideOption = true;
-    } else if (effectivelyClosed && (slot.status == SlotStatus.available || isPeriodBlocked)) {
-      bgColor = Colors.grey.shade300;
-      textColor = Colors.grey.shade600;
-      statusLabel = 'Closed';
-      showManualOverrideOption = true; // Allow opening this slot manually
-    } else if (isPast) {
+    // Determine slot display based on status
+    if (isPast) {
       bgColor = Colors.grey.shade200;
       textColor = Colors.grey;
       statusLabel = 'Past';
@@ -941,25 +931,27 @@ class _SlotBookingScreenState extends State<SlotBookingScreen> with RouteAware {
     } else if (isReserved) {
       bgColor = Colors.orange.withOpacity(0.1);
       textColor = Colors.orange;
-      statusLabel = 'Pending Payment';
-    } else if (isBlocked) {
+      statusLabel = 'Pending';
+    } else if (effectivelyClosed) {
+      // Slot is closed (blocked or period closed) but can be manually opened
       bgColor = Colors.grey.shade300;
-      textColor = Colors.grey.shade700;
-      statusLabel = 'Blocked';
+      textColor = Colors.grey.shade600;
+      statusLabel = 'Closed';
+      showManualOverrideOption = true;
+    } else if (isManuallyOpened && (isBlocked || isPeriodClosed)) {
+      // Slot was closed but manually opened by owner
+      bgColor = AppColors.success.withOpacity(0.1);
+      textColor = AppColors.success;
+      statusLabel = 'Open';
+      showManualOverrideOption = true;
     } else {
       bgColor = AppColors.success.withOpacity(0.1);
       textColor = AppColors.success;
       statusLabel = 'Available';
     }
 
-    // Determine if slot is tappable
-    final isTappable = !isPast && (
-      !effectivelyClosed || 
-      showManualOverrideOption ||
-      isBooked || 
-      isReserved || 
-      isBlocked
-    );
+    // Determine if slot is tappable (all non-past slots are tappable)
+    final isTappable = !isPast;
 
     return GestureDetector(
       onTap: isTappable ? () => _showSlotActions(slot, isPeriodClosed: isPeriodClosed, isManuallyOpened: isManuallyOpened) : null,
@@ -989,7 +981,7 @@ class _SlotBookingScreenState extends State<SlotBookingScreen> with RouteAware {
             const SizedBox(height: 4),
             if (effectivelyClosed)
               Icon(Icons.lock, size: 14, color: textColor)
-            else if (isManuallyOpened && isPeriodClosed)
+            else if (isManuallyOpened && (isBlocked || isPeriodClosed))
               Icon(Icons.lock_open, size: 14, color: AppColors.success)
             else
               Text(
@@ -1043,13 +1035,19 @@ class _SlotBookingScreenState extends State<SlotBookingScreen> with RouteAware {
     final isAvailable = slot.status == SlotStatus.available;
     final isBooked = slot.status == SlotStatus.booked;
     final isReserved = slot.status == SlotStatus.reserved; // Pending payment
-    final isBlocked = slot.status == SlotStatus.blocked;
-    final isPeriodBlocked = isBlocked && (slot.blockReason ?? '').contains('Period closed');
+    final isBlocked = slot.status == SlotStatus.blocked; // Shows as "Closed"
     
-    // Determine if slot is effectively available (period open or manually opened)
-    final effectivelyAvailable = isAvailable && (!isPeriodClosed || isManuallyOpened);
-    final showManualOpenOption = isPeriodClosed && !isManuallyOpened && (isAvailable || isPeriodBlocked);
-    final showManualCloseOption = isPeriodClosed && isAvailable && isManuallyOpened;
+    // Slot is effectively closed if blocked or period closed
+    final effectivelyClosed = (isBlocked || isPeriodClosed) && !isManuallyOpened;
+    
+    // Slot is effectively available if it's available or manually opened
+    final effectivelyAvailable = (isAvailable && !isPeriodClosed) || isManuallyOpened;
+    
+    // Show open option for closed slots that haven't been manually opened
+    final showManualOpenOption = effectivelyClosed;
+    
+    // Show close option for manually opened slots
+    final showManualCloseOption = isManuallyOpened && (isBlocked || isPeriodClosed);
 
     showModalBottomSheet(
       context: context,
@@ -1099,7 +1097,7 @@ class _SlotBookingScreenState extends State<SlotBookingScreen> with RouteAware {
                     ),
                   ),
                 ],
-                if (isPeriodClosed && isManuallyOpened) ...[
+                if (isManuallyOpened) ...[
                   const SizedBox(width: 12),
                   Container(
                     padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
@@ -1120,6 +1118,27 @@ class _SlotBookingScreenState extends State<SlotBookingScreen> with RouteAware {
                     ),
                   ),
                 ],
+                if (effectivelyClosed) ...[
+                  const SizedBox(width: 12),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: Colors.grey.withOpacity(0.2),
+                      borderRadius: BorderRadius.circular(6),
+                    ),
+                    child: const Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(Icons.lock, size: 12, color: Colors.grey),
+                        SizedBox(width: 4),
+                        Text(
+                          'Closed',
+                          style: TextStyle(fontSize: 12, color: Colors.grey, fontWeight: FontWeight.w600),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
               ],
             ),
             const SizedBox(height: 24),
@@ -1133,7 +1152,8 @@ class _SlotBookingScreenState extends State<SlotBookingScreen> with RouteAware {
                 () {
                   Navigator.pop(context);
                   _toggleSlotManualOverride(slot.slotId);
-                  if (isPeriodBlocked) {
+                  // Unblock the slot in database if it was blocked
+                  if (isBlocked) {
                     final slotProvider = Provider.of<SlotProvider>(context, listen: false);
                     slotProvider.unblockSlot(slot.slotId);
                   }
@@ -1151,16 +1171,23 @@ class _SlotBookingScreenState extends State<SlotBookingScreen> with RouteAware {
             // Show close option when slot is manually opened
             if (showManualCloseOption) ...[
               _buildActionButton(
-                'Close This Slot Again',
+                'Close This Slot',
                 Icons.lock,
                 Colors.grey,
                 () {
                   Navigator.pop(context);
                   _toggleSlotManualOverride(slot.slotId);
-                  _applyPeriodChanges();
+                  // Re-block the slot in database
+                  final slotProvider = Provider.of<SlotProvider>(context, listen: false);
+                  final authProvider = Provider.of<AuthProvider>(context, listen: false);
+                  slotProvider.blockSlot(
+                    slot.slotId,
+                    authProvider.currentUserId ?? '',
+                    'Closed by owner',
+                  );
                   ScaffoldMessenger.of(context).showSnackBar(
                     const SnackBar(
-                      content: Text('Slot closed again'),
+                      content: Text('Slot closed'),
                       backgroundColor: Colors.grey,
                     ),
                   );
@@ -1181,8 +1208,8 @@ class _SlotBookingScreenState extends State<SlotBookingScreen> with RouteAware {
               ),
               const SizedBox(height: 12),
               _buildActionButton(
-                'Block Slot',
-                Icons.block,
+                'Close Slot',
+                Icons.lock,
                 Colors.grey,
                 () {
                   Navigator.pop(context);
@@ -1190,17 +1217,6 @@ class _SlotBookingScreenState extends State<SlotBookingScreen> with RouteAware {
                 },
               ),
             ],
-            
-            if (isBlocked)
-              _buildActionButton(
-                'Unblock Slot',
-                Icons.check_circle,
-                AppColors.success,
-                () {
-                  Navigator.pop(context);
-                  _unblockSlot(slot);
-                },
-              ),
             
             if (isReserved) ...[
               _buildActionButton(

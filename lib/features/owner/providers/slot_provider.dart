@@ -49,8 +49,8 @@ class SlotProvider extends ChangeNotifier {
   }
 
   /// Generate slots for a turf on a specific date
-  /// If forceRegenerate is true, delete existing AVAILABLE slots and regenerate
-  /// Ensures all nets have slots generated properly
+  /// Slots are generated from opening time to closing time
+  /// Slots that extend past closing time are marked as CLOSED
   Future<bool> generateSlots({
     required TurfModel turf,
     required String date,
@@ -66,69 +66,80 @@ class SlotProvider extends ChangeNotifier {
       final tomorrow = DateTime(today.year, today.month, today.day + 1);
       final isFutureDate = !slotDate.isBefore(tomorrow);
 
-      // Parse times
+      // Parse operating hours (e.g., "06:00" -> 360 minutes, "23:00" -> 1380 minutes)
       final openHour = int.parse(turf.openTime.split(':')[0]);
       final openMinute = int.parse(turf.openTime.split(':')[1]);
       final closeHour = int.parse(turf.closeTime.split(':')[0]);
       final closeMinute = int.parse(turf.closeTime.split(':')[1]);
 
       final openMinutes = openHour * 60 + openMinute;
-      final closeMinutes = closeHour * 60 + closeMinute;
+      // Handle midnight as 1440 (end of day)
+      final closeMinutesRaw = closeHour * 60 + closeMinute;
+      final closeMinutes = closeMinutesRaw == 0 ? 1440 : closeMinutesRaw;
       final slotDuration = turf.slotDurationMinutes;
 
       final List<Map<String, dynamic>> slotsData = [];
       int totalNetsProcessed = 0;
       int totalSlotsCreated = 0;
 
-      // Generate slots for each net - ensure all nets are processed
+      // Generate slots for each net
       for (int netNumber = 1; netNumber <= turf.numberOfNets; netNumber++) {
         debugPrint('Processing Net $netNumber of ${turf.numberOfNets} for date $date');
         
-        // For force regeneration of future dates:
-        // 1. Delete ALL available slots for this net first
-        // 2. Then regenerate with new settings (duration, pricing)
+        // For force regeneration: delete existing AVAILABLE/BLOCKED slots first
         if (forceRegenerate && isFutureDate) {
           await _dbService.deleteAvailableSlotsForDateAndNet(turf.turfId, date, netNumber);
           debugPrint('Deleted AVAILABLE slots for $date Net $netNumber');
-        } else {
-          // For regular generation (today or non-force), check if any slots exist
-          final exists = await _dbService.slotsExistForDateAndNet(turf.turfId, date, netNumber);
-          if (exists) {
-            debugPrint('Slots already exist for Net $netNumber, skipping generation');
-            await _syncSlotPricesForNet(
-              turf: turf,
-              date: date,
-              netNumber: netNumber,
-            );
-            totalNetsProcessed++;
-            continue; // Slots for this net already exist, skip to next net
-          }
         }
+
+        // Sync prices for existing slots
+        await _syncSlotPricesForNet(turf: turf, date: date, netNumber: netNumber);
         
-        // Get existing slot times for this net (to avoid duplicates with booked/reserved slots)
+        // Sync operating hours for existing slots
+        await _syncOperatingHoursForNet(turf: turf, date: date, netNumber: netNumber);
+
+        // Get existing slot times to avoid duplicates
         final existingSlotTimes = await _dbService.getExistingSlotTimes(turf.turfId, date, netNumber);
         int netSlotsCreated = 0;
         
-        for (int startMinute = openMinutes;
-             startMinute + slotDuration <= closeMinutes;
-             startMinute += slotDuration) {
+        // ============================================================
+        // SLOT GENERATION RULES (per user requirements):
+        // 1. Generate slots starting exactly from opening time
+        // 2. Do NOT stop when a slot becomes unavailable or exceeds closing
+        // 3. Continue until: slotStartTime >= closingTime + duration
+        // 4. All slots must exist in data model (even if outside operating hours)
+        // 5. AVAILABLE: slotStart >= open AND slotEnd <= close
+        // 6. CLOSED: slotEnd > close (marked as BLOCKED in DB)
+        // 7. CLOSED slots remain visible and support manual override
+        // ============================================================
+        
+        // Continue until slotStart >= closeMinutes + slotDuration
+        // This generates one extra slot that starts at closing time
+        for (int slotStart = openMinutes; slotStart < closeMinutes + slotDuration; slotStart += slotDuration) {
+          final slotEnd = slotStart + slotDuration;
           
-          final startHour = startMinute ~/ 60;
-          final startMin = startMinute % 60;
-          final endMinute = startMinute + slotDuration;
-          final endHour = endMinute ~/ 60;
-          final endMin = endMinute % 60;
+          // Stop if slot would extend past midnight (24:00 = 1440 minutes)
+          if (slotEnd > 1440) break;
+          
+          // Format times as HH:MM
+          final startHour = slotStart ~/ 60;
+          final startMin = slotStart % 60;
+          final endHour = (slotEnd ~/ 60) % 24; // Handle 24:00 as 00:00
+          final endMin = slotEnd % 60;
 
           final startTime = '${startHour.toString().padLeft(2, '0')}:${startMin.toString().padLeft(2, '0')}';
           final endTime = '${endHour.toString().padLeft(2, '0')}:${endMin.toString().padLeft(2, '0')}';
 
-          // Skip if this time slot already exists (e.g., booked/reserved slot)
+          // Skip if slot already exists (booked/reserved)
           if (existingSlotTimes.contains(startTime)) {
             debugPrint('Skipping existing slot at $startTime for Net $netNumber');
             continue;
           }
 
-          // Calculate price for this slot with correct net number
+          // Determine availability: AVAILABLE only if slot ends within closing time
+          final isAvailable = slotEnd <= closeMinutes;
+
+          // Calculate price for this slot
           final priceInfo = PriceCalculator.calculateSlotPrice(
             pricingRules: turf.pricingRules,
             date: date,
@@ -143,13 +154,13 @@ class SlotProvider extends ChangeNotifier {
             'start_time': startTime,
             'end_time': endTime,
             'net_number': netNumber,
-            'status': 'AVAILABLE',
+            'status': isAvailable ? 'AVAILABLE' : 'BLOCKED',
             'price': priceInfo['price'],
             'price_type': priceInfo['priceType'],
             'reserved_until': null,
             'reserved_by': null,
-            'blocked_by': null,
-            'block_reason': null,
+            'blocked_by': isAvailable ? null : turf.ownerId,
+            'block_reason': isAvailable ? null : 'Closed',
           });
           netSlotsCreated++;
         }
@@ -159,12 +170,12 @@ class SlotProvider extends ChangeNotifier {
         totalNetsProcessed++;
       }
 
-      // Batch create slots (only if there are new slots to create)
+      // Batch create all new slots
       if (slotsData.isNotEmpty) {
         await _dbService.batchCreateSlots(slotsData);
-        debugPrint('Created $totalSlotsCreated new slots across $totalNetsProcessed nets for $date with ${turf.slotDurationMinutes}min duration');
+        debugPrint('Created $totalSlotsCreated slots across $totalNetsProcessed nets for $date');
       } else {
-        debugPrint('No new slots to create for $date - all ${turf.numberOfNets} nets already have slots');
+        debugPrint('No new slots to create for $date');
       }
 
       _isLoading = false;
@@ -176,6 +187,60 @@ class SlotProvider extends ChangeNotifier {
       debugPrint('Error generating slots: $e');
       notifyListeners();
       return false;
+    }
+  }
+
+  Future<void> _syncOperatingHoursForNet({
+    required TurfModel turf,
+    required String date,
+    required int netNumber,
+  }) async {
+    try {
+      final slots = await _dbService.getSlotsForDateAndNet(
+        turf.turfId,
+        date,
+        netNumber,
+      );
+
+      final openHour = int.parse(turf.openTime.split(':')[0]);
+      final openMinute = int.parse(turf.openTime.split(':')[1]);
+      final closeHour = int.parse(turf.closeTime.split(':')[0]);
+      final closeMinute = int.parse(turf.closeTime.split(':')[1]);
+
+      final openMinutes = openHour * 60 + openMinute;
+      final closeMinutesRaw = closeHour * 60 + closeMinute;
+      final closeMinutes = closeMinutesRaw == 0 ? 1440 : closeMinutesRaw;
+
+      for (final slot in slots) {
+        final status = (slot['status'] as String?) ?? 'AVAILABLE';
+        if (status != 'AVAILABLE' && status != 'BLOCKED') {
+          continue;
+        }
+
+        final startTime = slot['start_time'] as String;
+        final endTime = (slot['end_time'] as String?) ?? startTime;
+
+        final startParts = startTime.split(':');
+        final endParts = endTime.split(':');
+        final startMinute = (int.parse(startParts[0]) * 60) + int.parse(startParts[1]);
+        final endMinuteRaw = (int.parse(endParts[0]) * 60) + int.parse(endParts[1]);
+        final endMinute = endMinuteRaw == 0 ? 1440 : endMinuteRaw;
+
+        // Slot is available only if: start >= open AND end <= close
+        final isAvailable = startMinute >= openMinutes && endMinute <= closeMinutes;
+
+        // Check if slot was auto-blocked due to being closed
+        final blockReason = slot['block_reason'] as String?;
+        final isAutoBlocked = blockReason == 'Closed' || blockReason == 'Outside operating hours';
+
+        if (!isAvailable && status == 'AVAILABLE') {
+          await _dbService.blockSlot(slot['id'] as String, turf.ownerId, 'Closed');
+        } else if (isAvailable && status == 'BLOCKED' && isAutoBlocked) {
+          await _dbService.unblockSlot(slot['id'] as String);
+        }
+      }
+    } catch (e) {
+      debugPrint('Failed to sync operating hours for Net $netNumber on $date: $e');
     }
   }
 

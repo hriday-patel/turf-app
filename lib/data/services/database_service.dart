@@ -411,7 +411,7 @@ class DatabaseService {
   ) async {
     return await _client
         .from('slots')
-        .select('id, start_time, status, price, price_type, block_reason')
+        .select('id, start_time, end_time, status, price, price_type, block_reason')
         .eq('turf_id', turfId)
         .eq('date', date)
         .eq('net_number', netNumber)
