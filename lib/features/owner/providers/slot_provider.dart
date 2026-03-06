@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import '../../../data/models/slot_model.dart';
 import '../../../data/models/turf_model.dart';
@@ -14,6 +15,7 @@ class SlotProvider extends ChangeNotifier {
   String? _selectedDate;
   bool _isLoading = false;
   String? _errorMessage;
+  StreamSubscription? _slotsSubscription;
 
   // Getters
   List<SlotModel> get slots => _slots;
@@ -28,13 +30,21 @@ class SlotProvider extends ChangeNotifier {
   List<SlotModel> get blockedSlots => 
       _slots.where((s) => s.status == SlotStatus.blocked).toList();
 
+  @override
+  void dispose() {
+    _slotsSubscription?.cancel();
+    super.dispose();
+  }
+
   /// Load slots for a turf on a specific date
   void loadSlots(String turfId, String date) {
     _selectedDate = date;
     _isLoading = true;
     notifyListeners();
 
-    _dbService.streamTurfSlots(turfId, date).listen(
+    // Cancel previous subscription to prevent memory leaks
+    _slotsSubscription?.cancel();
+    _slotsSubscription = _dbService.streamTurfSlots(turfId, date).listen(
       (rows) {
         _slots = rows.map((row) => SlotModel.fromMap(row)).toList();
         _isLoading = false;
@@ -49,8 +59,9 @@ class SlotProvider extends ChangeNotifier {
   }
 
   /// Generate slots for a turf on a specific date
-  /// Slots are generated from opening time to closing time
-  /// Slots that extend past closing time are marked as CLOSED
+  /// ALL 24 hours are generated. Slots within operating hours are AVAILABLE,
+  /// slots outside operating hours are BLOCKED with reason 'Closed'.
+  /// Owner can manually open closed slots.
   Future<bool> generateSlots({
     required TurfModel turf,
     required String date,
@@ -66,16 +77,22 @@ class SlotProvider extends ChangeNotifier {
       final tomorrow = DateTime(today.year, today.month, today.day + 1);
       final isFutureDate = !slotDate.isBefore(tomorrow);
 
-      // Parse operating hours (e.g., "06:00" -> 360 minutes, "23:00" -> 1380 minutes)
+      // Parse operating hours
       final openHour = int.parse(turf.openTime.split(':')[0]);
       final openMinute = int.parse(turf.openTime.split(':')[1]);
       final closeHour = int.parse(turf.closeTime.split(':')[0]);
       final closeMinute = int.parse(turf.closeTime.split(':')[1]);
 
       final openMinutes = openHour * 60 + openMinute;
-      // Handle midnight as 1440 (end of day)
       final closeMinutesRaw = closeHour * 60 + closeMinute;
-      final closeMinutes = closeMinutesRaw == 0 ? 1440 : closeMinutesRaw;
+      int closeMinutes;
+      if (closeMinutesRaw == 0) {
+        closeMinutes = 1440; // Midnight = end of day
+      } else if (closeMinutesRaw <= openMinutes) {
+        closeMinutes = closeMinutesRaw + 1440; // Overnight wrap
+      } else {
+        closeMinutes = closeMinutesRaw;
+      }
       final slotDuration = turf.slotDurationMinutes;
 
       final List<Map<String, dynamic>> slotsData = [];
@@ -98,46 +115,48 @@ class SlotProvider extends ChangeNotifier {
         // Sync operating hours for existing slots
         await _syncOperatingHoursForNet(turf: turf, date: date, netNumber: netNumber);
 
-        // Get existing slot times to avoid duplicates
-        final existingSlotTimes = await _dbService.getExistingSlotTimes(turf.turfId, date, netNumber);
         int netSlotsCreated = 0;
         
         // ============================================================
-        // SLOT GENERATION RULES (per user requirements):
-        // 1. Generate slots starting exactly from opening time
-        // 2. Do NOT stop when a slot becomes unavailable or exceeds closing
-        // 3. Continue until: slotStartTime >= closingTime + duration
-        // 4. All slots must exist in data model (even if outside operating hours)
-        // 5. AVAILABLE: slotStart >= open AND slotEnd <= close
-        // 6. CLOSED: slotEnd > close (marked as BLOCKED in DB)
-        // 7. CLOSED slots remain visible and support manual override
+        // FULL 24-HOUR SLOT GENERATION:
+        // 1. Generate slots for ALL 24 hours (0:00 to 23:59)
+        // 2. AVAILABLE if slot is within operating hours
+        //    (slotStart >= openTime AND slotEnd <= closeTime)
+        // 3. BLOCKED with reason 'Closed' if outside operating hours
+        // 4. Owner can manually open any closed slot
+        // 5. Uses upsert (ignore duplicates) so existing slots are preserved
         // ============================================================
         
-        // Continue until slotStart >= closeMinutes + slotDuration
-        // This generates one extra slot that starts at closing time
-        for (int slotStart = openMinutes; slotStart < closeMinutes + slotDuration; slotStart += slotDuration) {
+        for (int slotStart = 0; slotStart < 1440; slotStart += slotDuration) {
           final slotEnd = slotStart + slotDuration;
           
-          // Stop if slot would extend past midnight (24:00 = 1440 minutes)
+          // Don't generate partial slots past midnight
           if (slotEnd > 1440) break;
           
-          // Format times as HH:MM
           final startHour = slotStart ~/ 60;
           final startMin = slotStart % 60;
-          final endHour = (slotEnd ~/ 60) % 24; // Handle 24:00 as 00:00
+          final endHour = (slotEnd ~/ 60) % 24; // 24 → 0 for midnight
           final endMin = slotEnd % 60;
 
           final startTime = '${startHour.toString().padLeft(2, '0')}:${startMin.toString().padLeft(2, '0')}';
           final endTime = '${endHour.toString().padLeft(2, '0')}:${endMin.toString().padLeft(2, '0')}';
 
-          // Skip if slot already exists (booked/reserved)
-          if (existingSlotTimes.contains(startTime)) {
-            debugPrint('Skipping existing slot at $startTime for Net $netNumber');
-            continue;
+          // Determine if slot is within operating hours
+          // For overnight turfs (closeMinutes > 1440), a slot is available if:
+          //   slotStart >= openMinutes (in day portion) OR
+          //   slotStart + 1440 < closeMinutes (in overnight portion)
+          bool isWithinOperatingHours;
+          if (closeMinutes <= 1440) {
+            // Normal hours (e.g., 06:00-23:00)
+            isWithinOperatingHours = slotStart >= openMinutes && slotEnd <= closeMinutes;
+          } else {
+            // Overnight hours (e.g., 06:00-02:00 = open 360, close 1560)
+            // Day portion: slotStart >= openMinutes
+            // Night portion: slot is before close (slotStart + 1440 < closeMinutes)
+            final inDayPortion = slotStart >= openMinutes;
+            final inNightPortion = (slotStart + 1440) >= openMinutes && (slotEnd + 1440) <= closeMinutes;
+            isWithinOperatingHours = inDayPortion || inNightPortion;
           }
-
-          // Determine availability: AVAILABLE only if slot ends within closing time
-          final isAvailable = slotEnd <= closeMinutes;
 
           // Calculate price for this slot
           final priceInfo = PriceCalculator.calculateSlotPrice(
@@ -154,13 +173,13 @@ class SlotProvider extends ChangeNotifier {
             'start_time': startTime,
             'end_time': endTime,
             'net_number': netNumber,
-            'status': isAvailable ? 'AVAILABLE' : 'BLOCKED',
+            'status': isWithinOperatingHours ? 'AVAILABLE' : 'BLOCKED',
             'price': priceInfo['price'],
             'price_type': priceInfo['priceType'],
             'reserved_until': null,
             'reserved_by': null,
-            'blocked_by': isAvailable ? null : turf.ownerId,
-            'block_reason': isAvailable ? null : 'Closed',
+            'blocked_by': isWithinOperatingHours ? null : turf.ownerId,
+            'block_reason': isWithinOperatingHours ? null : 'Closed',
           });
           netSlotsCreated++;
         }
@@ -209,7 +228,14 @@ class SlotProvider extends ChangeNotifier {
 
       final openMinutes = openHour * 60 + openMinute;
       final closeMinutesRaw = closeHour * 60 + closeMinute;
-      final closeMinutes = closeMinutesRaw == 0 ? 1440 : closeMinutesRaw;
+      int closeMinutes;
+      if (closeMinutesRaw == 0) {
+        closeMinutes = 1440;
+      } else if (closeMinutesRaw <= openMinutes) {
+        closeMinutes = closeMinutesRaw + 1440;
+      } else {
+        closeMinutes = closeMinutesRaw;
+      }
 
       for (final slot in slots) {
         final status = (slot['status'] as String?) ?? 'AVAILABLE';
@@ -222,12 +248,19 @@ class SlotProvider extends ChangeNotifier {
 
         final startParts = startTime.split(':');
         final endParts = endTime.split(':');
-        final startMinute = (int.parse(startParts[0]) * 60) + int.parse(startParts[1]);
-        final endMinuteRaw = (int.parse(endParts[0]) * 60) + int.parse(endParts[1]);
-        final endMinute = endMinuteRaw == 0 ? 1440 : endMinuteRaw;
+        final slotStartMin = (int.parse(startParts[0]) * 60) + int.parse(startParts[1]);
+        final slotEndMin = (int.parse(endParts[0]) * 60) + int.parse(endParts[1]);
+        final slotEndAdj = slotEndMin == 0 ? 1440 : slotEndMin;
 
-        // Slot is available only if: start >= open AND end <= close
-        final isAvailable = startMinute >= openMinutes && endMinute <= closeMinutes;
+        // Determine if slot is within operating hours (same logic as generation)
+        bool isAvailable;
+        if (closeMinutes <= 1440) {
+          isAvailable = slotStartMin >= openMinutes && slotEndAdj <= closeMinutes;
+        } else {
+          final inDayPortion = slotStartMin >= openMinutes;
+          final inNightPortion = (slotStartMin + 1440) >= openMinutes && (slotEndAdj + 1440) <= closeMinutes;
+          isAvailable = inDayPortion || inNightPortion;
+        }
 
         // Check if slot was auto-blocked due to being closed
         final blockReason = slot['block_reason'] as String?;

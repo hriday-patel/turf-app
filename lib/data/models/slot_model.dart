@@ -122,8 +122,9 @@ class SlotModel {
 
   String _formatTime(String time24) {
     final parts = time24.split(':');
-    final hour = int.parse(parts[0]);
+    int hour = int.parse(parts[0]);
     final minute = parts[1];
+    if (hour >= 24) hour = 0; // Normalize 24:00 to midnight
     final period = hour >= 12 ? 'PM' : 'AM';
     final displayHour = hour > 12 ? hour - 12 : (hour == 0 ? 12 : hour);
     return '$displayHour:$minute $period';

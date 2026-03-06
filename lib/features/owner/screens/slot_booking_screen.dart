@@ -98,6 +98,7 @@ class _SlotBookingScreenState extends State<SlotBookingScreen> with RouteAware {
       await turfProvider.refreshTurfs(authProvider.currentUserId!);
     }
     
+    if (!mounted) return;
     // Re-initialize with only approved turfs
     _initializeData();
   }
@@ -137,8 +138,10 @@ class _SlotBookingScreenState extends State<SlotBookingScreen> with RouteAware {
     final slotProvider = Provider.of<SlotProvider>(context, listen: false);
     final dateStr = _selectedDate.toIso8601String().split('T')[0];
     
+    final turfId = _selectedTurf!.turfId;
     slotProvider.generateSlots(turf: _selectedTurf!, date: dateStr).then((_) {
-      slotProvider.loadSlots(_selectedTurf!.turfId, dateStr);
+      if (!mounted) return;
+      slotProvider.loadSlots(turfId, dateStr);
     });
   }
 
@@ -1155,6 +1158,7 @@ class _SlotBookingScreenState extends State<SlotBookingScreen> with RouteAware {
                   // Unblock the slot in database if it was blocked
                   if (isBlocked) {
                     final slotProvider = Provider.of<SlotProvider>(context, listen: false);
+                    final authProvider = Provider.of<AuthProvider>(context, listen: false);
                     slotProvider.unblockSlot(slot.slotId);
                   }
                   ScaffoldMessenger.of(context).showSnackBar(
@@ -1440,6 +1444,7 @@ class _SlotBookingScreenState extends State<SlotBookingScreen> with RouteAware {
 
   Future<void> _unblockSlot(SlotModel slot) async {
     final slotProvider = Provider.of<SlotProvider>(context, listen: false);
+    final authProvider = Provider.of<AuthProvider>(context, listen: false);
     await slotProvider.unblockSlot(slot.slotId);
     _loadSlots();
   }

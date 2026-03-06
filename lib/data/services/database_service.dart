@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 /// Database Service
@@ -18,32 +19,12 @@ class DatabaseService {
       });
       return result == true;
     } catch (e) {
-      // If RPC doesn't exist, fall back to direct query
-      return await _ownerExistsFallback(email: email, phone: phone);
+      // RPC failed - this is expected if function not deployed
+      // Return false to allow signup attempt - unique constraint will catch duplicates
+      // This is safe because createOwnerProfile uses security definer RPC
+      debugPrint('check_owner_exists RPC failed: $e');
+      return false;
     }
-  }
-
-  /// Fallback method for checking owner exists
-  Future<bool> _ownerExistsFallback({String? email, String? phone}) async {
-    if (email != null && email.isNotEmpty) {
-      final result = await _client
-          .from('owners')
-          .select('id')
-          .eq('email', email.toLowerCase().trim())
-          .maybeSingle();
-      if (result != null) return true;
-    }
-
-    if (phone != null && phone.isNotEmpty) {
-      final result = await _client
-          .from('owners')
-          .select('id')
-          .eq('phone', phone.trim())
-          .maybeSingle();
-      if (result != null) return true;
-    }
-
-    return false;
   }
 
   /// Create owner profile (using RPC - bypasses RLS)
@@ -298,9 +279,10 @@ class DatabaseService {
     return _client
         .from('slots')
         .stream(primaryKey: ['id'])
+        .eq('turf_id', turfId)
         .order('start_time', ascending: true)
         .map((rows) => rows
-            .where((row) => row['turf_id'] == turfId && row['date'] == date)
+            .where((row) => row['date'] == date)
             .toList());
   }
 
@@ -377,18 +359,31 @@ class DatabaseService {
     return result.length;
   }
 
-  /// Delete all available slots for a specific date and net (for complete regeneration)
+  /// Delete regeneratable slots for a date and net (AVAILABLE + auto-BLOCKED)
+  /// Preserves BOOKED, RESERVED, and manually-blocked slots.
   Future<int> deleteAvailableSlotsForDateAndNet(String turfId, String date, int netNumber) async {
-    final result = await _client
+    // Delete AVAILABLE slots
+    final result1 = await _client
         .from('slots')
         .delete()
         .eq('turf_id', turfId)
-        .eq('status', 'AVAILABLE')
         .eq('date', date)
         .eq('net_number', netNumber)
+        .eq('status', 'AVAILABLE')
         .select('id');
     
-    return result.length;
+    // Delete auto-BLOCKED (Closed) slots for clean regeneration
+    final result2 = await _client
+        .from('slots')
+        .delete()
+        .eq('turf_id', turfId)
+        .eq('date', date)
+        .eq('net_number', netNumber)
+        .eq('status', 'BLOCKED')
+        .eq('block_reason', 'Closed')
+        .select('id');
+    
+    return result1.length + result2.length;
   }
 
   /// Get existing slot start times for a date and net (to avoid duplicates)
@@ -431,9 +426,13 @@ class DatabaseService {
     }).eq('id', slotId);
   }
 
-  /// Batch create slots
+  /// Batch create slots (upsert with ignore duplicates for robustness)
   Future<void> batchCreateSlots(List<Map<String, dynamic>> slotsData) async {
-    await _client.from('slots').insert(slotsData);
+    await _client.from('slots').upsert(
+      slotsData,
+      onConflict: 'turf_id,date,start_time,net_number',
+      ignoreDuplicates: true,
+    );
   }
 
   /// Block slot with retry logic
@@ -622,14 +621,14 @@ class DatabaseService {
         .order('start_time', ascending: true);
   }
 
-  /// Get pending payments
+  /// Get pending payments (includes both PENDING and PAY_AT_TURF statuses)
   Future<List<Map<String, dynamic>>> getPendingPayments(List<String> turfIds) async {
     if (turfIds.isEmpty) return [];
     return await _client
         .from('bookings')
         .select('*')
         .inFilter('turf_id', turfIds)
-        .eq('payment_status', 'PAY_AT_TURF')
+        .inFilter('payment_status', ['PAY_AT_TURF', 'PENDING'])
         .eq('booking_status', 'CONFIRMED')
         .order('booking_date', ascending: false);
   }

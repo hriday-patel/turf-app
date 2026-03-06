@@ -84,4 +84,24 @@ class AuthService {
   Future<void> refreshSession() async {
     await _client.auth.refreshSession();
   }
+
+  /// Update user email
+  Future<void> updateEmail(String newEmail) async {
+    await _client.auth.updateUser(
+      UserAttributes(email: newEmail.trim().toLowerCase()),
+    );
+  }
+
+  /// Update user password
+  Future<void> updatePassword(String newPassword) async {
+    await _client.auth.updateUser(
+      UserAttributes(password: newPassword),
+    );
+  }
+
+  /// Get current user email
+  String? get currentUserEmail => _client.auth.currentUser?.email;
+
+  /// Get current user phone
+  String? get currentUserPhone => _client.auth.currentUser?.phone;
 }

@@ -10,6 +10,7 @@ import '../providers/turf_provider.dart';
 import '../providers/slot_provider.dart';
 import '../providers/booking_provider.dart';
 import '../../auth/providers/auth_provider.dart';
+import '../../../core/services/whatsapp_service.dart';
 
 /// Manual Booking Screen
 /// Allows owner to create phone/walk-in bookings
@@ -25,6 +26,8 @@ class _ManualBookingScreenState extends State<ManualBookingScreen> with RouteAwa
   final _formKey = GlobalKey<FormState>();
   final _nameController = TextEditingController();
   final _phoneController = TextEditingController();
+  final _priceController = TextEditingController();
+  final _advanceController = TextEditingController();
   
   DateTime _selectedDate = DateTime.now();
   String? _selectedSlotId;
@@ -53,6 +56,8 @@ class _ManualBookingScreenState extends State<ManualBookingScreen> with RouteAwa
     AppRoutes.routeObserver.unsubscribe(this);
     _nameController.dispose();
     _phoneController.dispose();
+    _priceController.dispose();
+    _advanceController.dispose();
     super.dispose();
   }
   
@@ -89,6 +94,9 @@ class _ManualBookingScreenState extends State<ManualBookingScreen> with RouteAwa
     final bookingProvider = Provider.of<BookingProvider>(context, listen: false);
     final turf = turfProvider.getTurfById(widget.turfId);
 
+    final editedPrice = double.tryParse(_priceController.text) ?? _selectedPrice;
+    final advanceAmount = double.tryParse(_advanceController.text) ?? 0;
+
     final timeParts = _selectedTimeRange.split(' - ');
     final bookingId = await bookingProvider.createManualBooking(
       turfId: widget.turfId,
@@ -100,15 +108,33 @@ class _ManualBookingScreenState extends State<ManualBookingScreen> with RouteAwa
       customerName: _nameController.text.trim(),
       customerPhone: _phoneController.text.trim(),
       bookingSource: _bookingSource,
-      amount: _selectedPrice,
+      amount: editedPrice,
+      advanceAmount: advanceAmount,
     );
 
+    if (!mounted) return;
     setState(() => _isLoading = false);
 
-    if (bookingId != null && mounted) {
+    if (bookingId != null) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Booking created successfully!'), backgroundColor: AppColors.success),
       );
+      
+      // Send WhatsApp confirmation
+      if (_phoneController.text.trim().isNotEmpty) {
+        WhatsAppService.sendBookingConfirmation(
+          customerPhone: _phoneController.text.trim(),
+          bookingId: bookingId,
+          turfName: turf?.turfName ?? '',
+          netNumber: 1,
+          date: _selectedDate.toIso8601String().split('T')[0],
+          startTime: timeParts[0],
+          endTime: timeParts[1],
+          amount: editedPrice,
+          advanceAmount: advanceAmount,
+        );
+      }
+      
       Navigator.pop(context);
     }
   }
@@ -143,6 +169,17 @@ class _ManualBookingScreenState extends State<ManualBookingScreen> with RouteAwa
               _buildTextField(_nameController, 'Customer Name', Icons.person),
               const SizedBox(height: 12),
               _buildTextField(_phoneController, 'Phone Number', Icons.phone, isPhone: true),
+              const SizedBox(height: 24),
+              
+              // Pricing
+              _buildSectionTitle('Payment Details'),
+              _buildPriceField(),
+              const SizedBox(height: 12),
+              _buildAdvanceField(),
+              if (_selectedSlotId != null) ...[
+                const SizedBox(height: 8),
+                _buildBalanceDisplay(),
+              ],
               const SizedBox(height: 24),
               
               // Booking Source
@@ -220,6 +257,7 @@ class _ManualBookingScreenState extends State<ManualBookingScreen> with RouteAwa
               onTap: () => setState(() {
                 _selectedSlotId = slot.slotId;
                 _selectedPrice = slot.price;
+                _priceController.text = slot.price.toInt().toString();
                 _selectedTimeRange = '${slot.startTime} - ${slot.endTime}';
               }),
               child: Container(
@@ -290,6 +328,72 @@ class _ManualBookingScreenState extends State<ManualBookingScreen> with RouteAwa
             ],
           ),
         ),
+      ),
+    );
+  }
+
+  Widget _buildPriceField() {
+    return TextFormField(
+      controller: _priceController,
+      keyboardType: TextInputType.number,
+      inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+      validator: (v) {
+        if (v == null || v.isEmpty) return 'Required';
+        if (double.tryParse(v) == null || double.parse(v) <= 0) return 'Enter valid amount';
+        return null;
+      },
+      decoration: InputDecoration(
+        labelText: 'Slot Price (₹)',
+        prefixIcon: const Icon(Icons.currency_rupee),
+        filled: true,
+        fillColor: Colors.white,
+        border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
+      ),
+    );
+  }
+
+  Widget _buildAdvanceField() {
+    return TextFormField(
+      controller: _advanceController,
+      keyboardType: TextInputType.number,
+      inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+      decoration: InputDecoration(
+        labelText: 'Advance Amount (₹)',
+        hintText: '0',
+        prefixIcon: const Icon(Icons.account_balance_wallet),
+        filled: true,
+        fillColor: Colors.white,
+        border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
+      ),
+      onChanged: (_) => setState(() {}),
+    );
+  }
+
+  Widget _buildBalanceDisplay() {
+    final total = double.tryParse(_priceController.text) ?? _selectedPrice;
+    final advance = double.tryParse(_advanceController.text) ?? 0;
+    final balance = (total - advance).clamp(0, double.infinity);
+    
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      decoration: BoxDecoration(
+        color: balance > 0 ? AppColors.warning.withOpacity(0.1) : AppColors.success.withOpacity(0.1),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: balance > 0 ? AppColors.warning.withOpacity(0.3) : AppColors.success.withOpacity(0.3)),
+      ),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Text('Balance Due', style: TextStyle(fontWeight: FontWeight.w600, color: AppColors.textPrimary)),
+          Text(
+            '₹${balance.toInt()}',
+            style: TextStyle(
+              fontWeight: FontWeight.bold,
+              fontSize: 16,
+              color: balance > 0 ? AppColors.warning : AppColors.success,
+            ),
+          ),
+        ],
       ),
     );
   }

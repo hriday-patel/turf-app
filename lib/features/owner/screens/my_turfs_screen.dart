@@ -498,6 +498,7 @@ class _MyTurfsScreenState extends State<MyTurfsScreen>
         builder: (context) => AddTurfScreen(editTurf: turf),
       ),
     ).then((result) {
+      if (!mounted) return;
       if (result == true) {
         // Refresh turfs after editing
         final authProvider =

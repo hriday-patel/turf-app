@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import '../../../data/models/turf_model.dart';
 import '../../../data/services/database_service.dart';
@@ -12,6 +13,7 @@ class TurfProvider extends ChangeNotifier {
   TurfModel? _selectedTurf;
   bool _isLoading = false;
   String? _errorMessage;
+  StreamSubscription? _turfsSubscription;
 
   // Getters
   List<TurfModel> get turfs => _turfs;
@@ -28,7 +30,9 @@ class TurfProvider extends ChangeNotifier {
 
   /// Load turfs for an owner
   void loadOwnerTurfs(String ownerId) {
-    _dbService.streamOwnerTurfs(ownerId).listen(
+    // Cancel previous subscription to prevent memory leaks
+    _turfsSubscription?.cancel();
+    _turfsSubscription = _dbService.streamOwnerTurfs(ownerId).listen(
       (rows) {
         _turfs = rows.map((row) => TurfModel.fromMap(row)).toList();
         notifyListeners();
@@ -261,5 +265,11 @@ class TurfProvider extends ChangeNotifier {
   void clearError() {
     _errorMessage = null;
     notifyListeners();
+  }
+
+  @override
+  void dispose() {
+    _turfsSubscription?.cancel();
+    super.dispose();
   }
 }

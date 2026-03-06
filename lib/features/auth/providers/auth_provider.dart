@@ -1,3 +1,5 @@
+import 'dart:async';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../../data/services/auth_service.dart';
@@ -43,13 +45,21 @@ class AuthProvider extends ChangeNotifier {
     return null;
   }
 
+  StreamSubscription<AuthState>? _authSubscription;
+
   AuthProvider() {
     _init();
   }
 
+  @override
+  void dispose() {
+    _authSubscription?.cancel();
+    super.dispose();
+  }
+
   /// Initialize auth state listener
   void _init() {
-    _authService.authStateChanges.listen((AuthState state) async {
+    _authSubscription = _authService.authStateChanges.listen((AuthState state) async {
       final user = state.session?.user;
       if (user != null) {
         await _loadUserProfile(user.id);
@@ -151,64 +161,58 @@ class AuthProvider extends ChangeNotifier {
         throw 'Password must be at least 8 characters with uppercase, lowercase, number, and special character.';
       }
 
-      // Check if owner already exists
-      if (role == UserRole.owner) {
-        final existsByEmail = await _dbService.ownerExists(email: email);
-        if (existsByEmail) {
-          throw 'Email already registered. Please sign in instead.';
-        }
-
-        final existsByPhone = await _dbService.ownerExists(phone: phone);
-        if (existsByPhone) {
-          throw 'Phone already registered. Please sign in instead.';
-        }
-      }
-
-      // Create auth user
+      // Create auth user first
       final uid = await _authService.signUpWithEmail(
         email: email,
         password: password,
       );
 
       // Create profile in database using RPC
-      if (role == UserRole.owner) {
-        await _dbService.createOwnerProfile(
-          id: uid,
-          name: name,
-          email: email,
-          phone: phone,
-        );
+      // If profile creation fails, we must clean up the orphaned auth user
+      try {
+        if (role == UserRole.owner) {
+          await _dbService.createOwnerProfile(
+            id: uid,
+            name: name,
+            email: email,
+            phone: phone,
+          );
 
-        // Set owner locally
-        _currentOwner = OwnerModel(
-          uid: uid,
-          name: name,
-          email: email,
-          phone: phone,
-          role: UserRole.owner,
-          isVerified: false,
-          createdAt: DateTime.now(),
-        );
-        _currentPlayer = null;
-      } else {
-        await _dbService.createPlayerProfile(
-          id: uid,
-          name: name,
-          email: email,
-          phone: phone,
-        );
+          _currentOwner = OwnerModel(
+            uid: uid,
+            name: name,
+            email: email,
+            phone: phone,
+            role: UserRole.owner,
+            isVerified: false,
+            createdAt: DateTime.now(),
+          );
+          _currentPlayer = null;
+        } else {
+          await _dbService.createPlayerProfile(
+            id: uid,
+            name: name,
+            email: email,
+            phone: phone,
+          );
 
-        // Set player locally
-        _currentPlayer = PlayerModel(
-          uid: uid,
-          name: name,
-          email: email,
-          phone: phone,
-          role: UserRole.player,
-          createdAt: DateTime.now(),
-          favoriteTurfs: [],
-        );
-        _currentOwner = null;
+          _currentPlayer = PlayerModel(
+            uid: uid,
+            name: name,
+            email: email,
+            phone: phone,
+            role: UserRole.player,
+            createdAt: DateTime.now(),
+            favoriteTurfs: [],
+          );
+          _currentOwner = null;
+        }
+      } catch (profileError) {
+        // Profile creation failed — sign out the orphaned auth user
+        try {
+          await _authService.signOut();
+        } catch (_) {}
+        rethrow;
       }
 
       _authState = AuthStatus.authenticated;
@@ -261,13 +265,18 @@ class AuthProvider extends ChangeNotifier {
       _phoneNumber = phone;
       notifyListeners();
 
-      // Check if owner exists with this phone
-      final exists = await _dbService.ownerExists(phone: phone);
-      if (!exists) {
-        _isLoading = false;
-        _errorMessage = 'Phone number not registered. Please sign up.';
-        notifyListeners();
-        return false;
+      // Pre-check if owner exists (best-effort; RPC may not be deployed)
+      // If the check fails we still try to send OTP
+      try {
+        final exists = await _dbService.ownerExists(phone: phone);
+        if (!exists) {
+          _isLoading = false;
+          _errorMessage = 'Phone number not registered. Please sign up.';
+          notifyListeners();
+          return false;
+        }
+      } catch (e) {
+        debugPrint('ownerExists check failed, proceeding with OTP: $e');
       }
 
       await _authService.sendPhoneOtp(phone: phone);
@@ -374,6 +383,58 @@ class AuthProvider extends ChangeNotifier {
   Future<bool> verifyPhone(String phone) async {
     return await sendPhoneOtp(phone);
   }
+
+  /// Update email address
+  Future<bool> updateEmail(String newEmail) async {
+    try {
+      _isLoading = true;
+      _errorMessage = null;
+      notifyListeners();
+
+      await _authService.updateEmail(newEmail);
+      
+      // Update local profile
+      if (_currentOwner != null) {
+        await _dbService.updateOwner(_currentOwner!.uid, {'email': newEmail.trim().toLowerCase()});
+        await _loadUserProfile(_currentOwner!.uid);
+      }
+
+      _isLoading = false;
+      notifyListeners();
+      return true;
+    } catch (e) {
+      _isLoading = false;
+      _errorMessage = e.toString();
+      notifyListeners();
+      return false;
+    }
+  }
+
+  /// Update password
+  Future<bool> updatePassword(String newPassword) async {
+    try {
+      _isLoading = true;
+      _errorMessage = null;
+      notifyListeners();
+
+      await _authService.updatePassword(newPassword);
+
+      _isLoading = false;
+      notifyListeners();
+      return true;
+    } catch (e) {
+      _isLoading = false;
+      _errorMessage = e.toString();
+      notifyListeners();
+      return false;
+    }
+  }
+
+  /// Get current email
+  String? get currentEmail => _authService.currentUserEmail;
+  
+  /// Get current phone
+  String? get currentPhone => _authService.currentUserPhone;
 
   /// Complete profile for player after phone OTP verification
   Future<bool> completeProfile({

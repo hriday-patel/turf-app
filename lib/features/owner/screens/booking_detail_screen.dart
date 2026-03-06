@@ -56,6 +56,7 @@ class _BookingDetailScreenState extends State<BookingDetailScreen> with RouteAwa
   Future<void> _loadBooking() async {
     try {
       final data = await _dbService.getBooking(widget.bookingId);
+      if (!mounted) return;
       if (data != null) {
         setState(() {
           _booking = BookingModel.fromMap(data);
@@ -68,6 +69,7 @@ class _BookingDetailScreenState extends State<BookingDetailScreen> with RouteAwa
         });
       }
     } catch (e) {
+      if (!mounted) return;
       setState(() {
         _errorMessage = 'Failed to load booking: $e';
         _isLoading = false;
@@ -105,16 +107,22 @@ class _BookingDetailScreenState extends State<BookingDetailScreen> with RouteAwa
     final authProvider = Provider.of<AuthProvider>(context, listen: false);
     final bookingProvider = Provider.of<BookingProvider>(context, listen: false);
 
+    if (authProvider.currentUserId == null) {
+      if (mounted) setState(() => _isProcessing = false);
+      return;
+    }
+
     final success = await bookingProvider.cancelBooking(
       _booking!.bookingId,
       _booking!.slotId,
-      authProvider.currentUserId ?? 'owner',
+      authProvider.currentUserId!,
       'Cancelled by owner',
     );
 
+    if (!mounted) return;
     setState(() => _isProcessing = false);
 
-    if (success && mounted) {
+    if (success) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text('Booking cancelled successfully'),
@@ -122,7 +130,7 @@ class _BookingDetailScreenState extends State<BookingDetailScreen> with RouteAwa
         ),
       );
       Navigator.pop(context, true);
-    } else if (mounted) {
+    } else {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(bookingProvider.errorMessage ?? 'Failed to cancel booking'),
@@ -152,7 +160,7 @@ class _BookingDetailScreenState extends State<BookingDetailScreen> with RouteAwa
       }
     }
 
-    setState(() => _isProcessing = false);
+    if (mounted) setState(() => _isProcessing = false);
   }
 
   @override

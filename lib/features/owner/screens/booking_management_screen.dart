@@ -56,6 +56,7 @@ class _BookingManagementScreenState extends State<BookingManagementScreen>
     if (authProvider.currentUserId != null) {
       await turfProvider.refreshTurfs(authProvider.currentUserId!);
       
+      if (!mounted) return;
       // Only load bookings for approved turfs
       final approvedTurfIds = turfProvider.approvedTurfs.map((t) => t.turfId).toList();
       if (approvedTurfIds.isNotEmpty) {

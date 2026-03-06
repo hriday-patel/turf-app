@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import '../../../data/models/booking_model.dart';
 import '../../../data/services/database_service.dart';
@@ -13,6 +14,7 @@ class BookingProvider extends ChangeNotifier {
   List<BookingModel> _pendingPayments = [];
   bool _isLoading = false;
   String? _errorMessage;
+  StreamSubscription? _bookingsSubscription;
 
   // Getters
   List<BookingModel> get bookings => _bookings;
@@ -29,7 +31,9 @@ class BookingProvider extends ChangeNotifier {
   void loadOwnerBookings(String ownerId, List<String> turfIds) {
     if (turfIds.isEmpty) return;
 
-    _dbService.streamBookingsByTurfs(turfIds).listen(
+    // Cancel previous subscription to prevent memory leaks
+    _bookingsSubscription?.cancel();
+    _bookingsSubscription = _dbService.streamBookingsByTurfs(turfIds).listen(
       (rows) {
         _bookings = rows.map((row) => BookingModel.fromMap(row)).toList();
         notifyListeners();
@@ -255,5 +259,11 @@ class BookingProvider extends ChangeNotifier {
   void clearError() {
     _errorMessage = null;
     notifyListeners();
+  }
+
+  @override
+  void dispose() {
+    _bookingsSubscription?.cancel();
+    super.dispose();
   }
 }

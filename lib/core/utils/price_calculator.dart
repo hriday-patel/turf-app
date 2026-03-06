@@ -61,10 +61,11 @@ class PriceCalculator {
     } else if (hour >= 12 && hour < 18) {
       timeSlot = 'AFTERNOON';
       price = dayTypePricing.afternoon.price;
-    } else if (hour >= 18 || hour < 0) {
+    } else if (hour >= 18 && hour < 24) {
       timeSlot = 'EVENING';
       price = dayTypePricing.evening.price;
     } else {
+      // 0:00 - 5:59
       timeSlot = 'NIGHT';
       price = dayTypePricing.night.price;
     }

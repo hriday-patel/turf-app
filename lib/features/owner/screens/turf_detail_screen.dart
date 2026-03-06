@@ -53,6 +53,7 @@ class _TurfDetailScreenState extends State<TurfDetailScreen> with RouteAware {
     if (authProvider.currentUserId != null) {
       // Force refresh from database to get latest data
       await turfProvider.refreshTurfs(authProvider.currentUserId!);
+      if (!mounted) return;
     }
   }
 

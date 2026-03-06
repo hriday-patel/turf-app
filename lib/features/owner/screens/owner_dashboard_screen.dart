@@ -105,10 +105,7 @@ class _OwnerDashboardScreenState extends State<OwnerDashboardScreen>
       backgroundColor: AppColors.background,
       body: SafeArea(
         child: RefreshIndicator(
-          onRefresh: () async {
-            _loadData();
-            await Future.delayed(const Duration(milliseconds: 500));
-          },
+          onRefresh: _forceRefreshData,
           child: CustomScrollView(
             slivers: [
               // Header
@@ -222,7 +219,9 @@ class _OwnerDashboardScreenState extends State<OwnerDashboardScreen>
                           ),
                         ),
                         onSelected: (value) async {
-                          if (value == 'logout') {
+                          if (value == 'settings') {
+                            Navigator.pushNamed(context, AppRoutes.settings);
+                          } else if (value == 'logout') {
                             await authProvider.signOut();
                             if (mounted) {
                               Navigator.pushReplacementNamed(
@@ -309,12 +308,14 @@ class _OwnerDashboardScreenState extends State<OwnerDashboardScreen>
     );
   }
 
+  bool _bookingsInitialized = false;
+
   Widget _buildQuickStats() {
     return Consumer2<TurfProvider, BookingProvider>(
       builder: (context, turfProvider, bookingProvider, _) {
-        // Refresh bookings when turfs are loaded
-        if (turfProvider.turfIds.isNotEmpty && 
-            bookingProvider.todaysBookings.isEmpty) {
+        // Initialize bookings once when turfs become available
+        if (turfProvider.turfIds.isNotEmpty && !_bookingsInitialized) {
+          _bookingsInitialized = true;
           WidgetsBinding.instance.addPostFrameCallback((_) {
             _refreshBookings();
           });
@@ -494,6 +495,14 @@ class _OwnerDashboardScreenState extends State<OwnerDashboardScreen>
             icon: Icons.access_time_outlined,
             color: AppColors.success,
             onTap: () => Navigator.pushNamed(context, AppRoutes.slotBooking),
+          ),
+          const SizedBox(height: 12),
+          _buildFullWidthActionCard(
+            title: 'Analytics',
+            subtitle: 'Revenue trends, peak hours, and utilization metrics',
+            icon: Icons.analytics_outlined,
+            color: AppColors.info,
+            onTap: () => Navigator.pushNamed(context, AppRoutes.analytics),
           ),
         ],
       ),

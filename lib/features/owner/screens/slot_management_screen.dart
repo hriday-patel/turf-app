@@ -71,6 +71,7 @@ class _SlotManagementScreenState extends State<SlotManagementScreen> with RouteA
       await turfProvider.refreshTurfs(authProvider.currentUserId!);
     }
     
+    if (!mounted) return;
     // Then load slots with updated turf data
     _loadSlots(forceRegenerate: true);
   }
@@ -98,6 +99,7 @@ class _SlotManagementScreenState extends State<SlotManagementScreen> with RouteA
         date: dateStr,
         forceRegenerate: shouldForceRegenerate,
       ).then((_) {
+        if (!mounted) return;
         slotProvider.loadSlots(widget.turfId, dateStr);
         // Update toggle states after a short delay to allow slots to load
         Future.delayed(const Duration(milliseconds: 300), () {
@@ -139,12 +141,17 @@ class _SlotManagementScreenState extends State<SlotManagementScreen> with RouteA
     }
     
     setState(() {
-      // A period is considered closed if ALL its slots are blocked
-      // Only mark as closed if there are blocked slots AND no available slots
-      _isMorningOpen = morningBlocked == 0 || morningAvailable > 0;
-      _isAfternoonOpen = afternoonBlocked == 0 || afternoonAvailable > 0;
-      _isEveningOpen = eveningBlocked == 0 || eveningAvailable > 0;
-      _isNightOpen = nightBlocked == 0 || nightAvailable > 0;
+      // A period is considered open if it has any available slots
+      _isMorningOpen = morningAvailable > 0;
+      _isAfternoonOpen = afternoonAvailable > 0;
+      _isEveningOpen = eveningAvailable > 0;
+      _isNightOpen = nightAvailable > 0;
+      
+      // If a period has no slots at all (both 0), default to open
+      if (morningAvailable == 0 && morningBlocked == 0) _isMorningOpen = true;
+      if (afternoonAvailable == 0 && afternoonBlocked == 0) _isAfternoonOpen = true;
+      if (eveningAvailable == 0 && eveningBlocked == 0) _isEveningOpen = true;
+      if (nightAvailable == 0 && nightBlocked == 0) _isNightOpen = true;
       
       // Day is open if any period is open
       _isDayOpen = _isMorningOpen || _isAfternoonOpen || _isEveningOpen || _isNightOpen;
@@ -492,7 +499,11 @@ class _SlotManagementScreenState extends State<SlotManagementScreen> with RouteA
           'Period closed by owner',
         );
       } else if (!shouldBeBlocked && slot.status == SlotStatus.blocked) {
-        await slotProvider.unblockSlot(slot.slotId);
+        // Only unblock period-closed slots, not auto-closed (operating hours) or manually blocked
+        final reason = slot.blockReason ?? '';
+        if (reason.contains('Period closed')) {
+          await slotProvider.unblockSlot(slot.slotId);
+        }
       }
     }
     

@@ -13,6 +13,8 @@ import '../features/owner/screens/booking_management_screen.dart';
 import '../features/owner/screens/booking_detail_screen.dart';
 import '../features/owner/screens/manual_booking_screen.dart';
 import '../features/owner/screens/verification_pending_screen.dart';
+import '../features/owner/screens/settings_screen.dart';
+import '../features/owner/screens/analytics_screen.dart';
 
 class AppRoutes {
   // Route observer for tracking navigation
@@ -33,6 +35,8 @@ class AppRoutes {
   static const String manualBooking = '/manual-booking';
   static const String verificationPending = '/verification-pending';
   static const String playerAuth = '/player-auth';
+  static const String settings = '/settings';
+  static const String analytics = '/analytics';
   
   // Routes map
   static Map<String, WidgetBuilder> routes = {
@@ -46,6 +50,8 @@ class AppRoutes {
     verificationPending: (context) => const VerificationPendingScreen(),
     bookingManagement: (context) => const BookingManagementScreen(),
     slotBooking: (context) => const SlotBookingScreen(),
+    settings: (context) => const SettingsScreen(),
+    analytics: (context) => const AnalyticsScreen(),
   };
   
   // For screens requiring arguments
