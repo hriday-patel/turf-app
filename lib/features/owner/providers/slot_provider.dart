@@ -71,12 +71,6 @@ class SlotProvider extends ChangeNotifier {
       _isLoading = true;
       notifyListeners();
 
-      // Check if this is a future date (tomorrow or later)
-      final today = DateTime.now();
-      final slotDate = DateTime.parse(date);
-      final tomorrow = DateTime(today.year, today.month, today.day + 1);
-      final isFutureDate = !slotDate.isBefore(tomorrow);
-
       // Parse operating hours
       final openHour = int.parse(turf.openTime.split(':')[0]);
       final openMinute = int.parse(turf.openTime.split(':')[1]);
@@ -103,17 +97,10 @@ class SlotProvider extends ChangeNotifier {
       for (int netNumber = 1; netNumber <= turf.numberOfNets; netNumber++) {
         debugPrint('Processing Net $netNumber of ${turf.numberOfNets} for date $date');
         
-        // For force regeneration: delete existing AVAILABLE/BLOCKED slots first
-        if (forceRegenerate && isFutureDate) {
-          await _dbService.deleteAvailableSlotsForDateAndNet(turf.turfId, date, netNumber);
-          debugPrint('Deleted AVAILABLE slots for $date Net $netNumber');
-        }
-
-        // Sync prices for existing slots
-        await _syncSlotPricesForNet(turf: turf, date: date, netNumber: netNumber);
-        
-        // Sync operating hours for existing slots
-        await _syncOperatingHoursForNet(turf: turf, date: date, netNumber: netNumber);
+        // ALWAYS delete regeneratable slots (AVAILABLE + auto-BLOCKED "Closed")
+        // to ensure a clean 24-hour set. BOOKED, RESERVED, and manually-blocked
+        // slots are preserved by deleteAvailableSlotsForDateAndNet.
+        await _dbService.deleteAvailableSlotsForDateAndNet(turf.turfId, date, netNumber);
 
         int netSlotsCreated = 0;
         
@@ -206,74 +193,6 @@ class SlotProvider extends ChangeNotifier {
       debugPrint('Error generating slots: $e');
       notifyListeners();
       return false;
-    }
-  }
-
-  Future<void> _syncOperatingHoursForNet({
-    required TurfModel turf,
-    required String date,
-    required int netNumber,
-  }) async {
-    try {
-      final slots = await _dbService.getSlotsForDateAndNet(
-        turf.turfId,
-        date,
-        netNumber,
-      );
-
-      final openHour = int.parse(turf.openTime.split(':')[0]);
-      final openMinute = int.parse(turf.openTime.split(':')[1]);
-      final closeHour = int.parse(turf.closeTime.split(':')[0]);
-      final closeMinute = int.parse(turf.closeTime.split(':')[1]);
-
-      final openMinutes = openHour * 60 + openMinute;
-      final closeMinutesRaw = closeHour * 60 + closeMinute;
-      int closeMinutes;
-      if (closeMinutesRaw == 0) {
-        closeMinutes = 1440;
-      } else if (closeMinutesRaw <= openMinutes) {
-        closeMinutes = closeMinutesRaw + 1440;
-      } else {
-        closeMinutes = closeMinutesRaw;
-      }
-
-      for (final slot in slots) {
-        final status = (slot['status'] as String?) ?? 'AVAILABLE';
-        if (status != 'AVAILABLE' && status != 'BLOCKED') {
-          continue;
-        }
-
-        final startTime = slot['start_time'] as String;
-        final endTime = (slot['end_time'] as String?) ?? startTime;
-
-        final startParts = startTime.split(':');
-        final endParts = endTime.split(':');
-        final slotStartMin = (int.parse(startParts[0]) * 60) + int.parse(startParts[1]);
-        final slotEndMin = (int.parse(endParts[0]) * 60) + int.parse(endParts[1]);
-        final slotEndAdj = slotEndMin == 0 ? 1440 : slotEndMin;
-
-        // Determine if slot is within operating hours (same logic as generation)
-        bool isAvailable;
-        if (closeMinutes <= 1440) {
-          isAvailable = slotStartMin >= openMinutes && slotEndAdj <= closeMinutes;
-        } else {
-          final inDayPortion = slotStartMin >= openMinutes;
-          final inNightPortion = (slotStartMin + 1440) >= openMinutes && (slotEndAdj + 1440) <= closeMinutes;
-          isAvailable = inDayPortion || inNightPortion;
-        }
-
-        // Check if slot was auto-blocked due to being closed
-        final blockReason = slot['block_reason'] as String?;
-        final isAutoBlocked = blockReason == 'Closed' || blockReason == 'Outside operating hours';
-
-        if (!isAvailable && status == 'AVAILABLE') {
-          await _dbService.blockSlot(slot['id'] as String, turf.ownerId, 'Closed');
-        } else if (isAvailable && status == 'BLOCKED' && isAutoBlocked) {
-          await _dbService.unblockSlot(slot['id'] as String);
-        }
-      }
-    } catch (e) {
-      debugPrint('Failed to sync operating hours for Net $netNumber on $date: $e');
     }
   }
 

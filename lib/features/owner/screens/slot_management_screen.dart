@@ -84,20 +84,11 @@ class _SlotManagementScreenState extends State<SlotManagementScreen> with RouteA
     if (turf != null) {
       final dateStr = _selectedDate.toIso8601String().split('T')[0];
       
-      // Check if this is a future date (tomorrow or later)
-      final today = DateTime.now();
-      final tomorrow = DateTime(today.year, today.month, today.day + 1);
-      final isFutureDate = !_selectedDate.isBefore(tomorrow);
-      
-      // For future dates, force regenerate to apply any updated settings
-      // For today, just load existing slots
-      final shouldForceRegenerate = forceRegenerate && isFutureDate;
-      
-      // First generate slots if they don't exist (or regenerate for future dates), then load
+      // Generate slots (force regenerate deletes + recreates for a clean 24-hour set)
       slotProvider.generateSlots(
         turf: turf, 
         date: dateStr,
-        forceRegenerate: shouldForceRegenerate,
+        forceRegenerate: forceRegenerate,
       ).then((_) {
         if (!mounted) return;
         slotProvider.loadSlots(widget.turfId, dateStr);
@@ -109,10 +100,30 @@ class _SlotManagementScreenState extends State<SlotManagementScreen> with RouteA
     }
   }
 
+  /// Check if a slot's date+time has already passed
+  bool _isSlotInPast(SlotModel slot) {
+    final now = DateTime.now();
+    final slotDate = DateTime.parse(slot.date);
+    final parts = slot.startTime.split(':');
+    final slotDateTime = DateTime(
+      slotDate.year, slotDate.month, slotDate.day,
+      int.parse(parts[0]), int.parse(parts[1]),
+    );
+    return now.isAfter(slotDateTime);
+  }
+
+  /// Get slots filtered by the currently selected net number
+  List<SlotModel> _getSlotsForSelectedNet(List<SlotModel> allSlots) {
+    return allSlots.where((s) => s.netNumber == _selectedNetNumber).toList();
+  }
+
   void _updateToggleStatesFromSlots() {
     final slotProvider = Provider.of<SlotProvider>(context, listen: false);
     
     if (slotProvider.slots.isEmpty) return;
+    
+    final netSlots = _getSlotsForSelectedNet(slotProvider.slots);
+    if (netSlots.isEmpty) return;
     
     // Count available vs blocked slots for each period
     int morningAvailable = 0, morningBlocked = 0;
@@ -120,7 +131,7 @@ class _SlotManagementScreenState extends State<SlotManagementScreen> with RouteA
     int eveningAvailable = 0, eveningBlocked = 0;
     int nightAvailable = 0, nightBlocked = 0;
     
-    for (final slot in slotProvider.slots) {
+    for (final slot in netSlots) {
       final hour = int.tryParse(slot.startTime.split(':')[0]) ?? 0;
       final isBlocked = slot.status == SlotStatus.blocked;
       final isAvailable = slot.status == SlotStatus.available;
@@ -196,13 +207,17 @@ class _SlotManagementScreenState extends State<SlotManagementScreen> with RouteA
               // Calendar
               _buildCalendar(),
               
+              // Net Selector (only for multi-net turfs)
+              if (turf.numberOfNets > 1)
+                _buildNetSelector(turf.numberOfNets),
+              
               // Day Controls (On/Off toggles)
               _buildDayControls(),
               
               // Slot Status Legend
               _buildLegend(),
               
-              // Slots Grid
+              // Slots Grid — grouped by period, filtered by net
               Expanded(
                 child: _buildSlotsGrid(),
               ),
@@ -241,6 +256,51 @@ class _SlotManagementScreenState extends State<SlotManagementScreen> with RouteA
           formatButtonVisible: true,
           titleCentered: true,
         ),
+      ),
+    );
+  }
+
+  Widget _buildNetSelector(int numberOfNets) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      color: Colors.white,
+      child: Row(
+        children: [
+          const Icon(Icons.grid_view, size: 16, color: AppColors.textSecondary),
+          const SizedBox(width: 8),
+          const Text(
+            'Net',
+            style: TextStyle(
+              fontSize: 13,
+              fontWeight: FontWeight.w600,
+              color: AppColors.textSecondary,
+            ),
+          ),
+          const SizedBox(width: 12),
+          ...List.generate(numberOfNets, (i) {
+            final net = i + 1;
+            final isSelected = _selectedNetNumber == net;
+            return Padding(
+              padding: const EdgeInsets.only(right: 8),
+              child: ChoiceChip(
+                label: Text('Net $net'),
+                selected: isSelected,
+                onSelected: (_) {
+                  setState(() => _selectedNetNumber = net);
+                  _updateToggleStatesFromSlots();
+                },
+                selectedColor: AppColors.primary,
+                labelStyle: TextStyle(
+                  color: isSelected ? Colors.white : AppColors.textPrimary,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                ),
+                padding: const EdgeInsets.symmetric(horizontal: 4),
+                visualDensity: VisualDensity.compact,
+              ),
+            );
+          }),
+        ],
       ),
     );
   }
@@ -476,7 +536,13 @@ class _SlotManagementScreenState extends State<SlotManagementScreen> with RouteA
     final slotProvider = Provider.of<SlotProvider>(context, listen: false);
     final authProvider = Provider.of<AuthProvider>(context, listen: false);
     
-    for (final slot in slotProvider.slots) {
+    // Only apply to slots for the selected net
+    final netSlots = _getSlotsForSelectedNet(slotProvider.slots);
+    
+    for (final slot in netSlots) {
+      // Skip past slots — cannot toggle slots whose time has passed
+      if (_isSlotInPast(slot)) continue;
+      
       final hour = int.tryParse(slot.startTime.split(':')[0]) ?? 0;
       bool shouldBeBlocked = false;
       
@@ -559,7 +625,10 @@ class _SlotManagementScreenState extends State<SlotManagementScreen> with RouteA
           return const Center(child: CircularProgressIndicator());
         }
 
-        if (slotProvider.slots.isEmpty) {
+        // Filter slots by selected net
+        final netSlots = _getSlotsForSelectedNet(slotProvider.slots);
+
+        if (netSlots.isEmpty) {
           return Center(
             child: Column(
               mainAxisAlignment: MainAxisAlignment.center,
@@ -582,36 +651,122 @@ class _SlotManagementScreenState extends State<SlotManagementScreen> with RouteA
           );
         }
 
-        return GridView.builder(
+        // Group slots by period
+        final morningSlots = netSlots.where((s) {
+          final h = int.tryParse(s.startTime.split(':')[0]) ?? 0;
+          return h >= 6 && h < 12;
+        }).toList();
+        final afternoonSlots = netSlots.where((s) {
+          final h = int.tryParse(s.startTime.split(':')[0]) ?? 0;
+          return h >= 12 && h < 18;
+        }).toList();
+        final eveningSlots = netSlots.where((s) {
+          final h = int.tryParse(s.startTime.split(':')[0]) ?? 0;
+          return h >= 18 && h < 24;
+        }).toList();
+        final nightSlots = netSlots.where((s) {
+          final h = int.tryParse(s.startTime.split(':')[0]) ?? 0;
+          return h >= 0 && h < 6;
+        }).toList();
+
+        return ListView(
           padding: const EdgeInsets.all(16),
-          gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-            crossAxisCount: 3,
-            childAspectRatio: 1.2,
-            crossAxisSpacing: 12,
-            mainAxisSpacing: 12,
-          ),
-          itemCount: slotProvider.slots.length,
-          itemBuilder: (context, index) {
-            final slot = slotProvider.slots[index];
-            return _buildSlotCard(slot);
-          },
+          children: [
+            _buildPeriodSection('Morning', '6 AM - 12 PM', Icons.wb_sunny_outlined, morningSlots),
+            const SizedBox(height: 16),
+            _buildPeriodSection('Afternoon', '12 PM - 6 PM', Icons.wb_cloudy_outlined, afternoonSlots),
+            const SizedBox(height: 16),
+            _buildPeriodSection('Evening', '6 PM - 12 AM', Icons.nights_stay_outlined, eveningSlots),
+            const SizedBox(height: 16),
+            _buildPeriodSection('Night', '12 AM - 6 AM', Icons.dark_mode_outlined, nightSlots),
+          ],
         );
       },
     );
   }
 
-  Widget _buildSlotCard(dynamic slot) {
+  Widget _buildPeriodSection(String title, String timeRange, IconData icon, List<SlotModel> slots) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // Period header
+        Row(
+          children: [
+            Icon(icon, size: 18, color: AppColors.primary),
+            const SizedBox(width: 8),
+            Text(
+              title,
+              style: const TextStyle(
+                fontSize: 14,
+                fontWeight: FontWeight.bold,
+                color: AppColors.textPrimary,
+              ),
+            ),
+            const SizedBox(width: 6),
+            Text(
+              timeRange,
+              style: TextStyle(
+                fontSize: 12,
+                color: AppColors.textSecondary,
+              ),
+            ),
+            const Spacer(),
+            Text(
+              '${slots.where((s) => s.status == SlotStatus.available).length}/${slots.length} open',
+              style: TextStyle(fontSize: 11, color: AppColors.textSecondary),
+            ),
+          ],
+        ),
+        const SizedBox(height: 8),
+        if (slots.isEmpty)
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.symmetric(vertical: 16),
+            decoration: BoxDecoration(
+              color: Colors.grey.shade100,
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Center(
+              child: Text(
+                'No slots in this period',
+                style: TextStyle(fontSize: 12, color: AppColors.textSecondary),
+              ),
+            ),
+          )
+        else
+          GridView.builder(
+            shrinkWrap: true,
+            physics: const NeverScrollableScrollPhysics(),
+            gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+              crossAxisCount: 3,
+              childAspectRatio: 1.2,
+              crossAxisSpacing: 10,
+              mainAxisSpacing: 10,
+            ),
+            itemCount: slots.length,
+            itemBuilder: (context, index) {
+              return _buildSlotCard(slots[index]);
+            },
+          ),
+      ],
+    );
+  }
+
+  Widget _buildSlotCard(SlotModel slot) {
     Color statusColor;
     IconData statusIcon;
     String statusLabel;
     
-    // Check if slot's period is closed
-    final slotModel = slot as SlotModel;
-    final period = _getSlotPeriod(slotModel);
+    final period = _getSlotPeriod(slot);
     final isPeriodClosed = _isPeriodClosed(period);
+    final isPast = _isSlotInPast(slot);
 
-    // If period is closed, ALWAYS show slot as grey/closed (visual feedback)
-    if (isPeriodClosed) {
+    // Past slots are always dimmed and non-interactive
+    if (isPast) {
+      statusColor = Colors.grey.shade400;
+      statusIcon = Icons.history;
+      statusLabel = 'Past';
+    } else if (isPeriodClosed) {
       statusColor = Colors.grey.shade400;
       statusIcon = Icons.block_outlined;
       statusLabel = 'Closed';
@@ -644,51 +799,68 @@ class _SlotManagementScreenState extends State<SlotManagementScreen> with RouteA
       }
     }
 
+    final isInteractive = !isPast && !isPeriodClosed;
+
     return GestureDetector(
-      onTap: isPeriodClosed ? null : () => _showSlotActions(slot),
-      child: Container(
-        decoration: BoxDecoration(
-          color: statusColor.withOpacity(isPeriodClosed ? 0.2 : 0.1),
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: statusColor.withOpacity(isPeriodClosed ? 0.3 : 0.5)),
-        ),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(statusIcon, color: statusColor, size: 24),
-            const SizedBox(height: 6),
-            Text(
-              slot.displayTimeRange.split(' - ')[0],
-              style: TextStyle(
-                fontSize: 12,
-                fontWeight: FontWeight.w600,
-                color: statusColor,
-              ),
-            ),
-            if (isPeriodClosed)
+      onTap: isInteractive ? () => _showSlotActions(slot) : null,
+      child: Opacity(
+        opacity: isPast ? 0.5 : 1.0,
+        child: Container(
+          decoration: BoxDecoration(
+            color: statusColor.withOpacity(isInteractive ? 0.1 : 0.15),
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: statusColor.withOpacity(isInteractive ? 0.5 : 0.3)),
+          ),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(statusIcon, color: statusColor, size: 24),
+              const SizedBox(height: 6),
               Text(
-                'Closed',
+                slot.displayTimeRange.split(' - ')[0],
                 style: TextStyle(
-                  fontSize: 10,
-                  color: Colors.grey.shade600,
-                  fontWeight: FontWeight.w500,
-                ),
-              )
-            else
-              Text(
-                '₹${slot.price.toInt()}',
-                style: TextStyle(
-                  fontSize: 11,
-                  color: AppColors.textSecondary,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                  color: statusColor,
                 ),
               ),
-          ],
+              if (isPast)
+                Text(
+                  'Past',
+                  style: TextStyle(
+                    fontSize: 10,
+                    color: Colors.grey.shade600,
+                    fontWeight: FontWeight.w500,
+                  ),
+                )
+              else if (isPeriodClosed)
+                Text(
+                  'Closed',
+                  style: TextStyle(
+                    fontSize: 10,
+                    color: Colors.grey.shade600,
+                    fontWeight: FontWeight.w500,
+                  ),
+                )
+              else
+                Text(
+                  '₹${slot.price.toInt()}',
+                  style: TextStyle(
+                    fontSize: 11,
+                    color: AppColors.textSecondary,
+                  ),
+                ),
+            ],
+          ),
         ),
       ),
     );
   }
 
-  void _showSlotActions(dynamic slot) {
+  void _showSlotActions(SlotModel slot) {
+    // Past slots cannot be toggled
+    if (_isSlotInPast(slot)) return;
+    
     final authProvider = Provider.of<AuthProvider>(context, listen: false);
     final slotProvider = Provider.of<SlotProvider>(context, listen: false);
 
