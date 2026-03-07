@@ -439,6 +439,14 @@ class DatabaseService {
     }).eq('id', slotId);
   }
 
+  /// Update only the slot price (e.g., after a booking with custom amount)
+  Future<void> updateSlotPrice(String slotId, double price) async {
+    await _client.from('slots').update({
+      'price': price,
+      'updated_at': DateTime.now().toIso8601String(),
+    }).eq('id', slotId);
+  }
+
   /// Batch create slots (upsert with ignore duplicates for robustness)
   Future<void> batchCreateSlots(List<Map<String, dynamic>> slotsData) async {
     await _client.from('slots').upsert(
@@ -482,8 +490,11 @@ class DatabaseService {
     throw lastError ?? Exception('Failed to block slot after $retryCount attempts');
   }
 
-  /// Unblock slot with retry logic
-  Future<void> unblockSlot(String slotId, {int retryCount = 3}) async {
+  /// Unblock slot with retry logic.
+  /// [overrideMarker] — if provided, stores a marker in block_reason on the
+  /// now-AVAILABLE slot so that sync can distinguish manual overrides from
+  /// normal available slots (e.g. 'Day opened by owner').
+  Future<void> unblockSlot(String slotId, {int retryCount = 3, String? overrideMarker}) async {
     Exception? lastError;
     
     for (int attempt = 1; attempt <= retryCount; attempt++) {
@@ -491,7 +502,7 @@ class DatabaseService {
         await _client.from('slots').update({
           'status': 'AVAILABLE',
           'blocked_by': null,
-          'block_reason': null,
+          'block_reason': overrideMarker,
           'updated_at': DateTime.now().toIso8601String(),
         }).eq('id', slotId);
         return; // Success

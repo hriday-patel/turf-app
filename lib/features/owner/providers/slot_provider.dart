@@ -71,6 +71,12 @@ class SlotProvider extends ChangeNotifier {
       _isLoading = true;
       notifyListeners();
 
+      // Check if this date's day-of-week is in daysOpen
+      final parsedDate = DateTime.parse(date);
+      const dayNames = ['MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT', 'SUN'];
+      final dayOfWeek = dayNames[parsedDate.weekday - 1]; // weekday: 1=Mon..7=Sun
+      final isDayOpen = turf.daysOpen.contains(dayOfWeek);
+
       // Parse operating hours
       final openHour = int.parse(turf.openTime.split(':')[0]);
       final openMinute = int.parse(turf.openTime.split(':')[1]);
@@ -137,11 +143,11 @@ class SlotProvider extends ChangeNotifier {
           final endTime = '${endHour.toString().padLeft(2, '0')}:${endMin.toString().padLeft(2, '0')}';
 
           // Determine if slot is within operating hours
-          // For overnight turfs (closeMinutes > 1440), a slot is available if:
-          //   slotStart >= openMinutes (in day portion) OR
-          //   slotStart + 1440 < closeMinutes (in overnight portion)
+          // If the day is not in daysOpen, all slots are closed regardless of operating hours
           bool isWithinOperatingHours;
-          if (closeMinutes <= 1440) {
+          if (!isDayOpen) {
+            isWithinOperatingHours = false;
+          } else if (closeMinutes <= 1440) {
             // Normal hours (e.g., 06:00-23:00)
             isWithinOperatingHours = slotStart >= openMinutes && slotEnd <= closeMinutes;
           } else {
@@ -216,6 +222,12 @@ class SlotProvider extends ChangeNotifier {
         netNumber,
       );
 
+      // Check if this date's day-of-week is in daysOpen
+      final parsedDate = DateTime.parse(date);
+      const dayNames = ['MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT', 'SUN'];
+      final dayOfWeek = dayNames[parsedDate.weekday - 1];
+      final isDayOpen = turf.daysOpen.contains(dayOfWeek);
+
       final openHour = int.parse(turf.openTime.split(':')[0]);
       final openMinute = int.parse(turf.openTime.split(':')[1]);
       final closeHour = int.parse(turf.closeTime.split(':')[0]);
@@ -240,6 +252,7 @@ class SlotProvider extends ChangeNotifier {
 
         final startTime = slot['start_time'] as String;
         final endTime = (slot['end_time'] as String?) ?? startTime;
+        final blockReason = slot['block_reason'] as String?;
 
         final startParts = startTime.split(':');
         final endParts = endTime.split(':');
@@ -247,24 +260,42 @@ class SlotProvider extends ChangeNotifier {
         final slotEndMin = (int.parse(endParts[0]) * 60) + int.parse(endParts[1]);
         final slotEndAdj = slotEndMin == 0 ? 1440 : slotEndMin;
 
-        // Determine if slot is within operating hours (same logic as generation)
-        bool isAvailable;
+        bool isWithinOperatingHours;
         if (closeMinutes <= 1440) {
-          isAvailable = slotStartMin >= openMinutes && slotEndAdj <= closeMinutes;
+          isWithinOperatingHours = slotStartMin >= openMinutes && slotEndAdj <= closeMinutes;
         } else {
           final inDayPortion = slotStartMin >= openMinutes;
           final inNightPortion = (slotStartMin + 1440) >= openMinutes && (slotEndAdj + 1440) <= closeMinutes;
-          isAvailable = inDayPortion || inNightPortion;
+          isWithinOperatingHours = inDayPortion || inNightPortion;
         }
 
-        // Check if slot was auto-blocked due to being closed
-        final blockReason = slot['block_reason'] as String?;
-        final isAutoBlocked = blockReason == 'Closed' || blockReason == 'Outside operating hours';
+        final isManualOverride = blockReason == 'Day opened by owner';
+        final isAutoClosed = blockReason == 'Closed' || blockReason == 'Outside operating hours';
 
-        if (!isAvailable && status == 'AVAILABLE') {
-          await _dbService.blockSlot(slot['id'] as String, turf.ownerId, 'Closed');
-        } else if (isAvailable && status == 'BLOCKED' && isAutoBlocked) {
+        // === daysOpen enforcement ===
+        if (!isDayOpen) {
+          // Day is CLOSED in config.
+          if (status == 'AVAILABLE' && !isManualOverride) {
+            // Block non-overridden AVAILABLE slots on closed days
+            await _dbService.blockSlot(slot['id'] as String, turf.ownerId, 'Closed');
+          }
+          // Skip operating-hours check — day is closed, slots are already handled
+          continue;
+        }
+
+        // Day is OPEN in config from here on.
+        // Cleanup: clear override marker since day is officially open now
+        if (status == 'AVAILABLE' && isManualOverride) {
+          await _dbService.unblockSlot(slot['id'] as String); // clears marker, stays AVAILABLE
+        }
+        // Unblock auto-closed slots that are now within operating hours
+        if (status == 'BLOCKED' && isAutoClosed && isWithinOperatingHours) {
           await _dbService.unblockSlot(slot['id'] as String);
+        }
+
+        // === Operating hours enforcement (open days only) ===
+        if (!isWithinOperatingHours && status == 'AVAILABLE') {
+          await _dbService.blockSlot(slot['id'] as String, turf.ownerId, 'Closed');
         }
       }
     } catch (e) {
@@ -350,8 +381,10 @@ class SlotProvider extends ChangeNotifier {
     }
   }
 
-  /// Unblock a slot with retry and immediate UI feedback
-  Future<bool> unblockSlot(String slotId) async {
+  /// Unblock a slot with retry and immediate UI feedback.
+  /// [overrideMarker] — if provided, stored as block_reason on the AVAILABLE
+  /// slot to mark it as a manual override (e.g. 'Day opened by owner').
+  Future<bool> unblockSlot(String slotId, {String? overrideMarker}) async {
     try {
       // Optimistically update local state for instant feedback
       final index = _slots.indexWhere((s) => s.slotId == slotId);
@@ -368,13 +401,13 @@ class SlotProvider extends ChangeNotifier {
           price: oldSlot.price,
           priceType: oldSlot.priceType,
           blockedBy: null,
-          blockReason: null,
+          blockReason: overrideMarker,
           createdAt: oldSlot.createdAt,
         );
         notifyListeners();
       }
       
-      await _dbService.unblockSlot(slotId);
+      await _dbService.unblockSlot(slotId, overrideMarker: overrideMarker);
       return true;
     } catch (e) {
       _errorMessage = 'Failed to unblock slot: $e';

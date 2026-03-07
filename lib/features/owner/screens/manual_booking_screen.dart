@@ -10,6 +10,7 @@ import '../providers/turf_provider.dart';
 import '../providers/slot_provider.dart';
 import '../providers/booking_provider.dart';
 import '../../auth/providers/auth_provider.dart';
+import '../../../data/services/database_service.dart';
 import '../../../core/services/whatsapp_service.dart';
 
 /// Manual Booking Screen
@@ -116,6 +117,12 @@ class _ManualBookingScreenState extends State<ManualBookingScreen> with RouteAwa
     setState(() => _isLoading = false);
 
     if (bookingId != null) {
+      // Update slot price if owner changed the booking amount
+      if (_selectedSlotId != null && editedPrice != _selectedPrice) {
+        final dbService = DatabaseService();
+        await dbService.updateSlotPrice(_selectedSlotId!, editedPrice);
+      }
+
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Booking created successfully!'), backgroundColor: AppColors.success),
       );
