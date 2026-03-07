@@ -274,7 +274,8 @@ class DatabaseService {
   // SLOT OPERATIONS
   // =====================================================
 
-  /// Stream turf slots for a date
+  /// Stream turf slots for a date using the single-filter stream with client-side date filter.
+  /// Also provides a direct query method to avoid stream row limit issues.
   Stream<List<Map<String, dynamic>>> streamTurfSlots(String turfId, String date) {
     return _client
         .from('slots')
@@ -284,6 +285,17 @@ class DatabaseService {
         .map((rows) => rows
             .where((row) => row['date'] == date)
             .toList());
+  }
+
+  /// Fetch all slots for a specific turf and date (no row limit issues).
+  /// Use this instead of streamTurfSlots for reliable full 24-hour slot loading.
+  Future<List<Map<String, dynamic>>> fetchTurfSlotsForDate(String turfId, String date) async {
+    return await _client
+        .from('slots')
+        .select()
+        .eq('turf_id', turfId)
+        .eq('date', date)
+        .order('start_time', ascending: true);
   }
 
   /// Check if slots exist for a date
@@ -359,8 +371,9 @@ class DatabaseService {
     return result.length;
   }
 
-  /// Delete regeneratable slots for a date and net (AVAILABLE + auto-BLOCKED)
-  /// Preserves BOOKED, RESERVED, and manually-blocked slots.
+  /// Delete regeneratable slots for a date and net.
+  /// Deletes AVAILABLE + ALL BLOCKED slots for a clean 24-hour regeneration.
+  /// Only preserves BOOKED and RESERVED slots.
   Future<int> deleteAvailableSlotsForDateAndNet(String turfId, String date, int netNumber) async {
     // Delete AVAILABLE slots
     final result1 = await _client
@@ -372,7 +385,8 @@ class DatabaseService {
         .eq('status', 'AVAILABLE')
         .select('id');
     
-    // Delete auto-BLOCKED (Closed) slots for clean regeneration
+    // Delete ALL BLOCKED slots (auto-closed, period-closed, manually blocked)
+    // This ensures a clean 24-hour set based on current operating hours
     final result2 = await _client
         .from('slots')
         .delete()
@@ -380,7 +394,6 @@ class DatabaseService {
         .eq('date', date)
         .eq('net_number', netNumber)
         .eq('status', 'BLOCKED')
-        .eq('block_reason', 'Closed')
         .select('id');
     
     return result1.length + result2.length;

@@ -957,7 +957,7 @@ class _AddTurfScreenState extends State<AddTurfScreen> with RouteAware {
             const SizedBox(height: 8),
             Wrap(
               spacing: 12,
-              children: [30, 60].map((duration) {
+              children: [60].map((duration) {
                 final isSelected = _slotDuration == duration;
                 return ChoiceChip(
                   label: Text('$duration min'),

@@ -139,9 +139,57 @@ class _SlotBookingScreenState extends State<SlotBookingScreen> with RouteAware {
     final dateStr = _selectedDate.toIso8601String().split('T')[0];
     
     final turfId = _selectedTurf!.turfId;
-    slotProvider.generateSlots(turf: _selectedTurf!, date: dateStr).then((_) {
+    slotProvider.generateSlots(turf: _selectedTurf!, date: dateStr).then((_) async {
       if (!mounted) return;
-      slotProvider.loadSlots(turfId, dateStr);
+      await slotProvider.loadSlots(turfId, dateStr);
+      if (mounted) _updateToggleStatesFromSlots();
+    });
+  }
+
+  /// Sync toggle states from loaded slot data.
+  /// Only sets a period toggle to CLOSED if there are explicitly
+  /// period-closed slots (not auto-blocked outside operating hours).
+  void _updateToggleStatesFromSlots() {
+    final slotProvider = Provider.of<SlotProvider>(context, listen: false);
+    if (slotProvider.slots.isEmpty || _selectedTurf == null) return;
+    
+    final key = _currentStateKey;
+    // Don't overwrite if the user already interacted with toggles for this key
+    if (_dayOpenStates.containsKey(key)) return;
+    
+    final netSlots = slotProvider.slots.where((s) => s.netNumber == _selectedNetNumber).toList();
+    if (netSlots.isEmpty) return;
+    
+    int morningPeriodClosed = 0;
+    int afternoonPeriodClosed = 0;
+    int eveningPeriodClosed = 0;
+    int nightPeriodClosed = 0;
+    
+    for (final slot in netSlots) {
+      final hour = int.tryParse(slot.startTime.split(':')[0]) ?? 0;
+      final isPeriodClosed = slot.status == SlotStatus.blocked &&
+          (slot.blockReason ?? '').contains('Period closed');
+      
+      if (hour >= 6 && hour < 12) {
+        if (isPeriodClosed) morningPeriodClosed++;
+      } else if (hour >= 12 && hour < 18) {
+        if (isPeriodClosed) afternoonPeriodClosed++;
+      } else if (hour >= 18 && hour < 24) {
+        if (isPeriodClosed) eveningPeriodClosed++;
+      } else {
+        if (isPeriodClosed) nightPeriodClosed++;
+      }
+    }
+    
+    setState(() {
+      _morningOpenStates[key] = morningPeriodClosed == 0;
+      _afternoonOpenStates[key] = afternoonPeriodClosed == 0;
+      _eveningOpenStates[key] = eveningPeriodClosed == 0;
+      _nightOpenStates[key] = nightPeriodClosed == 0;
+      _dayOpenStates[key] = (_morningOpenStates[key] ?? true) ||
+          (_afternoonOpenStates[key] ?? true) ||
+          (_eveningOpenStates[key] ?? true) ||
+          (_nightOpenStates[key] ?? true);
     });
   }
 
@@ -768,10 +816,10 @@ class _SlotBookingScreenState extends State<SlotBookingScreen> with RouteAware {
               const SizedBox(height: 20),
               
               // Time Period Sections with inline toggles (always show all 4 divisions)
+              _buildTimePeriodSection('Night', '12 AM - 6 AM', night, Icons.bedtime, 'night', _isNightOpen),
               _buildTimePeriodSection('Morning', '6 AM - 12 PM', morning, Icons.wb_sunny, 'morning', _isMorningOpen),
               _buildTimePeriodSection('Afternoon', '12 PM - 6 PM', afternoon, Icons.wb_cloudy, 'afternoon', _isAfternoonOpen),
               _buildTimePeriodSection('Evening', '6 PM - 12 AM', evening, Icons.nightlight_round, 'evening', _isEveningOpen),
-              _buildTimePeriodSection('Night', '12 AM - 6 AM', night, Icons.bedtime, 'night', _isNightOpen),
             ],
           ),
         );
@@ -1438,6 +1486,9 @@ class _SlotBookingScreenState extends State<SlotBookingScreen> with RouteAware {
     final slotProvider = Provider.of<SlotProvider>(context, listen: false);
     final authProvider = Provider.of<AuthProvider>(context, listen: false);
     final ownerId = authProvider.currentUserId ?? '';
+    // Clear manual override so the slot renders as closed
+    final key = _getSlotOverrideKey(slot.slotId);
+    _manuallyOpenedSlots.remove(key);
     await slotProvider.blockSlot(slot.slotId, ownerId, 'Blocked by owner');
     _loadSlots();
   }

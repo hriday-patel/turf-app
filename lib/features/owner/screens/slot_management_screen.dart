@@ -89,13 +89,10 @@ class _SlotManagementScreenState extends State<SlotManagementScreen> with RouteA
         turf: turf, 
         date: dateStr,
         forceRegenerate: forceRegenerate,
-      ).then((_) {
+      ).then((_) async {
         if (!mounted) return;
-        slotProvider.loadSlots(widget.turfId, dateStr);
-        // Update toggle states after a short delay to allow slots to load
-        Future.delayed(const Duration(milliseconds: 300), () {
-          if (mounted) _updateToggleStatesFromSlots();
-        });
+        await slotProvider.loadSlots(widget.turfId, dateStr);
+        if (mounted) _updateToggleStatesFromSlots();
       });
     }
   }
@@ -125,44 +122,37 @@ class _SlotManagementScreenState extends State<SlotManagementScreen> with RouteA
     final netSlots = _getSlotsForSelectedNet(slotProvider.slots);
     if (netSlots.isEmpty) return;
     
-    // Count available vs blocked slots for each period
-    int morningAvailable = 0, morningBlocked = 0;
-    int afternoonAvailable = 0, afternoonBlocked = 0;
-    int eveningAvailable = 0, eveningBlocked = 0;
-    int nightAvailable = 0, nightBlocked = 0;
+    // Count period-closed slots (explicitly closed by owner toggle)
+    // Auto-blocked "Closed" slots (outside operating hours) should NOT
+    // affect toggle state — those are naturally closed by schedule.
+    int morningPeriodClosed = 0;
+    int afternoonPeriodClosed = 0;
+    int eveningPeriodClosed = 0;
+    int nightPeriodClosed = 0;
     
     for (final slot in netSlots) {
       final hour = int.tryParse(slot.startTime.split(':')[0]) ?? 0;
-      final isBlocked = slot.status == SlotStatus.blocked;
-      final isAvailable = slot.status == SlotStatus.available;
+      final isPeriodClosed = slot.status == SlotStatus.blocked &&
+          (slot.blockReason ?? '').contains('Period closed');
       
       if (hour >= 6 && hour < 12) {
-        if (isBlocked) morningBlocked++;
-        if (isAvailable) morningAvailable++;
+        if (isPeriodClosed) morningPeriodClosed++;
       } else if (hour >= 12 && hour < 18) {
-        if (isBlocked) afternoonBlocked++;
-        if (isAvailable) afternoonAvailable++;
+        if (isPeriodClosed) afternoonPeriodClosed++;
       } else if (hour >= 18 && hour < 24) {
-        if (isBlocked) eveningBlocked++;
-        if (isAvailable) eveningAvailable++;
+        if (isPeriodClosed) eveningPeriodClosed++;
       } else {
-        if (isBlocked) nightBlocked++;
-        if (isAvailable) nightAvailable++;
+        if (isPeriodClosed) nightPeriodClosed++;
       }
     }
     
     setState(() {
-      // A period is considered open if it has any available slots
-      _isMorningOpen = morningAvailable > 0;
-      _isAfternoonOpen = afternoonAvailable > 0;
-      _isEveningOpen = eveningAvailable > 0;
-      _isNightOpen = nightAvailable > 0;
-      
-      // If a period has no slots at all (both 0), default to open
-      if (morningAvailable == 0 && morningBlocked == 0) _isMorningOpen = true;
-      if (afternoonAvailable == 0 && afternoonBlocked == 0) _isAfternoonOpen = true;
-      if (eveningAvailable == 0 && eveningBlocked == 0) _isEveningOpen = true;
-      if (nightAvailable == 0 && nightBlocked == 0) _isNightOpen = true;
+      // Period toggle is OPEN unless owner explicitly period-closed slots in it.
+      // Slots outside operating hours (block_reason="Closed") don't affect toggles.
+      _isMorningOpen = morningPeriodClosed == 0;
+      _isAfternoonOpen = afternoonPeriodClosed == 0;
+      _isEveningOpen = eveningPeriodClosed == 0;
+      _isNightOpen = nightPeriodClosed == 0;
       
       // Day is open if any period is open
       _isDayOpen = _isMorningOpen || _isAfternoonOpen || _isEveningOpen || _isNightOpen;
@@ -761,12 +751,16 @@ class _SlotManagementScreenState extends State<SlotManagementScreen> with RouteA
     final isPeriodClosed = _isPeriodClosed(period);
     final isPast = _isSlotInPast(slot);
 
+    // Check if slot is auto-blocked (outside operating hours)
+    final isAutoBlocked = slot.status == SlotStatus.blocked &&
+        (slot.blockReason == 'Closed' || (slot.blockReason ?? '').contains('Period closed'));
+
     // Past slots are always dimmed and non-interactive
     if (isPast) {
       statusColor = Colors.grey.shade400;
       statusIcon = Icons.history;
       statusLabel = 'Past';
-    } else if (isPeriodClosed) {
+    } else if (isPeriodClosed || isAutoBlocked) {
       statusColor = Colors.grey.shade400;
       statusIcon = Icons.block_outlined;
       statusLabel = 'Closed';
@@ -799,7 +793,7 @@ class _SlotManagementScreenState extends State<SlotManagementScreen> with RouteA
       }
     }
 
-    final isInteractive = !isPast && !isPeriodClosed;
+    final isInteractive = !isPast && !isPeriodClosed && !isAutoBlocked;
 
     return GestureDetector(
       onTap: isInteractive ? () => _showSlotActions(slot) : null,

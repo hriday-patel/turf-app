@@ -74,8 +74,8 @@ class _ManualBookingScreenState extends State<ManualBookingScreen> with RouteAwa
 
     if (turf != null) {
       final dateStr = _selectedDate.toIso8601String().split('T')[0];
-      slotProvider.generateSlots(turf: turf, date: dateStr).then((_) {
-        slotProvider.loadSlots(widget.turfId, dateStr);
+      slotProvider.generateSlots(turf: turf, date: dateStr).then((_) async {
+        await slotProvider.loadSlots(widget.turfId, dateStr);
       });
     }
   }
