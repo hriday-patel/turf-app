@@ -17,6 +17,11 @@ class SlotProvider extends ChangeNotifier {
   String? _errorMessage;
   StreamSubscription? _slotsSubscription;
 
+  // Guards concurrent block/unblock to prevent optimistic-update race conditions
+  final Set<String> _pendingSlotOps = {};
+  // Guards concurrent generateSlots calls per turf+date
+  final Set<String> _pendingGenerateOps = {};
+
   // Getters
   List<SlotModel> get slots => _slots;
   String? get selectedDate => _selectedDate;
@@ -67,9 +72,25 @@ class SlotProvider extends ChangeNotifier {
     required String date,
     bool forceRegenerate = false,
   }) async {
+    // Prevent concurrent generation for the same turf+date
+    final genKey = '${turf.turfId}_$date';
+    if (_pendingGenerateOps.contains(genKey)) return true;
+    _pendingGenerateOps.add(genKey);
     try {
       _isLoading = true;
       notifyListeners();
+
+      // Validate turf configuration
+      if (turf.numberOfNets <= 0) {
+        debugPrint('Cannot generate slots: turf has ${turf.numberOfNets} nets');
+        _isLoading = false;
+        _errorMessage = 'Turf has no nets configured';
+        notifyListeners();
+        return false;
+      }
+      if (turf.daysOpen.isEmpty) {
+        debugPrint('Warning: turf has no daysOpen configured — all slots will be blocked');
+      }
 
       // Check if this date's day-of-week is in daysOpen
       final parsedDate = DateTime.parse(date);
@@ -88,7 +109,10 @@ class SlotProvider extends ChangeNotifier {
       int closeMinutes;
       if (closeMinutesRaw == 0) {
         closeMinutes = 1440; // Midnight = end of day
-      } else if (closeMinutesRaw <= openMinutes) {
+      } else if (closeMinutesRaw == openMinutes) {
+        // openTime == closeTime is invalid — treat as fully closed
+        closeMinutes = openMinutes;
+      } else if (closeMinutesRaw < openMinutes) {
         closeMinutes = closeMinutesRaw + 1440; // Overnight wrap
       } else {
         closeMinutes = closeMinutesRaw;
@@ -144,18 +168,19 @@ class SlotProvider extends ChangeNotifier {
 
           // Determine if slot is within operating hours
           // If the day is not in daysOpen, all slots are closed regardless of operating hours
+          // If openTime == closeTime, all slots are closed (invalid config)
           bool isWithinOperatingHours;
-          if (!isDayOpen) {
+          if (!isDayOpen || closeMinutes == openMinutes) {
             isWithinOperatingHours = false;
           } else if (closeMinutes <= 1440) {
             // Normal hours (e.g., 06:00-23:00)
             isWithinOperatingHours = slotStart >= openMinutes && slotEnd <= closeMinutes;
           } else {
-            // Overnight hours (e.g., 06:00-02:00 = open 360, close 1560)
-            // Day portion: slotStart >= openMinutes
-            // Night portion: slot is before close (slotStart + 1440 < closeMinutes)
-            final inDayPortion = slotStart >= openMinutes;
-            final inNightPortion = (slotStart + 1440) >= openMinutes && (slotEnd + 1440) <= closeMinutes;
+            // Overnight hours (e.g., 18:00-02:00 = open 1080, close 2520)
+            // Day portion: slot starts at or after open AND ends by midnight
+            final inDayPortion = slotStart >= openMinutes && slotEnd <= 1440;
+            // Night portion: slot is entirely before the close time (after midnight)
+            final inNightPortion = slotStart < (closeMinutes - 1440) && slotEnd <= (closeMinutes - 1440);
             isWithinOperatingHours = inDayPortion || inNightPortion;
           }
 
@@ -192,8 +217,22 @@ class SlotProvider extends ChangeNotifier {
 
       // Batch create all new slots
       if (slotsData.isNotEmpty) {
-        await _dbService.batchCreateSlots(slotsData);
-        debugPrint('Created $totalSlotsCreated slots across $totalNetsProcessed nets for $date');
+        try {
+          await _dbService.batchCreateSlots(slotsData);
+          debugPrint('Created $totalSlotsCreated slots across $totalNetsProcessed nets for $date');
+        } catch (e) {
+          debugPrint('Batch slot creation failed: $e. Retrying...');
+          // Retry once on failure
+          try {
+            await _dbService.batchCreateSlots(slotsData);
+            debugPrint('Retry succeeded for $date');
+          } catch (retryError) {
+            _isLoading = false;
+            _errorMessage = 'Failed to create slots: $retryError';
+            notifyListeners();
+            return false;
+          }
+        }
       } else {
         debugPrint('No new slots to create for $date');
       }
@@ -207,6 +246,8 @@ class SlotProvider extends ChangeNotifier {
       debugPrint('Error generating slots: $e');
       notifyListeners();
       return false;
+    } finally {
+      _pendingGenerateOps.remove(genKey);
     }
   }
 
@@ -238,7 +279,9 @@ class SlotProvider extends ChangeNotifier {
       int closeMinutes;
       if (closeMinutesRaw == 0) {
         closeMinutes = 1440;
-      } else if (closeMinutesRaw <= openMinutes) {
+      } else if (closeMinutesRaw == openMinutes) {
+        closeMinutes = openMinutes; // Invalid config — treat as fully closed
+      } else if (closeMinutesRaw < openMinutes) {
         closeMinutes = closeMinutesRaw + 1440;
       } else {
         closeMinutes = closeMinutesRaw;
@@ -261,11 +304,13 @@ class SlotProvider extends ChangeNotifier {
         final slotEndAdj = slotEndMin == 0 ? 1440 : slotEndMin;
 
         bool isWithinOperatingHours;
-        if (closeMinutes <= 1440) {
+        if (closeMinutes == openMinutes) {
+          isWithinOperatingHours = false;
+        } else if (closeMinutes <= 1440) {
           isWithinOperatingHours = slotStartMin >= openMinutes && slotEndAdj <= closeMinutes;
         } else {
-          final inDayPortion = slotStartMin >= openMinutes;
-          final inNightPortion = (slotStartMin + 1440) >= openMinutes && (slotEndAdj + 1440) <= closeMinutes;
+          final inDayPortion = slotStartMin >= openMinutes && slotEndAdj <= 1440;
+          final inNightPortion = slotStartMin < (closeMinutes - 1440) && slotEndAdj <= (closeMinutes - 1440);
           isWithinOperatingHours = inDayPortion || inNightPortion;
         }
 
@@ -346,6 +391,9 @@ class SlotProvider extends ChangeNotifier {
 
   /// Block a slot (owner action) with retry and immediate UI feedback
   Future<bool> blockSlot(String slotId, String ownerId, String? reason) async {
+    // Prevent concurrent operations on the same slot
+    if (_pendingSlotOps.contains(slotId)) return false;
+    _pendingSlotOps.add(slotId);
     try {
       // Optimistically update local state for instant feedback
       final index = _slots.indexWhere((s) => s.slotId == slotId);
@@ -378,6 +426,8 @@ class SlotProvider extends ChangeNotifier {
       }
       notifyListeners();
       return false;
+    } finally {
+      _pendingSlotOps.remove(slotId);
     }
   }
 
@@ -385,6 +435,9 @@ class SlotProvider extends ChangeNotifier {
   /// [overrideMarker] — if provided, stored as block_reason on the AVAILABLE
   /// slot to mark it as a manual override (e.g. 'Day opened by owner').
   Future<bool> unblockSlot(String slotId, {String? overrideMarker}) async {
+    // Prevent concurrent operations on the same slot
+    if (_pendingSlotOps.contains(slotId)) return false;
+    _pendingSlotOps.add(slotId);
     try {
       // Optimistically update local state for instant feedback
       final index = _slots.indexWhere((s) => s.slotId == slotId);
@@ -417,6 +470,8 @@ class SlotProvider extends ChangeNotifier {
       }
       notifyListeners();
       return false;
+    } finally {
+      _pendingSlotOps.remove(slotId);
     }
   }
 

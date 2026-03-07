@@ -29,6 +29,7 @@ class _SlotBookingScreenState extends State<SlotBookingScreen> with RouteAware {
   DateTime _selectedDate = DateTime.now();
   bool _isLoading = false;
   bool _isSidebarVisible = false;
+  int _loadSlotsGeneration = 0;
   
   // Toggle states stored per turf+net+date combination
   // Key format: "turfId_netNumber_date"
@@ -102,7 +103,8 @@ class _SlotBookingScreenState extends State<SlotBookingScreen> with RouteAware {
     _afternoonOpenStates.clear();
     _eveningOpenStates.clear();
     _nightOpenStates.clear();
-    _manuallyOpenedSlots.clear();
+    // Note: _manuallyOpenedSlots is NOT cleared here — it is rebuilt
+    // from DB override markers in _updateToggleStatesFromSlots()
 
     // Force refresh turfs first to get latest verification status
     if (authProvider.currentUserId != null) {
@@ -150,10 +152,13 @@ class _SlotBookingScreenState extends State<SlotBookingScreen> with RouteAware {
     final dateStr = _selectedDate.toIso8601String().split('T')[0];
     
     final turfId = _selectedTurf!.turfId;
+    final generation = ++_loadSlotsGeneration;
     slotProvider.generateSlots(turf: _selectedTurf!, date: dateStr).then((_) async {
-      if (!mounted) return;
+      if (!mounted || generation != _loadSlotsGeneration) return;
       await slotProvider.loadSlots(turfId, dateStr);
-      if (mounted) _updateToggleStatesFromSlots();
+      if (mounted && generation == _loadSlotsGeneration) {
+        _updateToggleStatesFromSlots();
+      }
     });
   }
 
@@ -165,12 +170,23 @@ class _SlotBookingScreenState extends State<SlotBookingScreen> with RouteAware {
     final slotProvider = Provider.of<SlotProvider>(context, listen: false);
     if (slotProvider.slots.isEmpty || _selectedTurf == null) return;
     
-    final key = _currentStateKey;
-    // Don't overwrite if the user already interacted with toggles for this key
-    if (_dayOpenStates.containsKey(key)) return;
-    
     final netSlots = slotProvider.slots.where((s) => s.netNumber == _selectedNetNumber).toList();
     if (netSlots.isEmpty) return;
+    
+    // Always rebuild _manuallyOpenedSlots from DB override markers for the
+    // current turf+net, regardless of whether toggles were already set.
+    // Only remove entries for the current turf+net to preserve other contexts.
+    final overridePrefix = '${_selectedTurf!.turfId}_${_selectedNetNumber}_';
+    _manuallyOpenedSlots.removeWhere((key) => key.startsWith(overridePrefix));
+    for (final slot in netSlots) {
+      if (slot.status == SlotStatus.available && slot.blockReason == 'Day opened by owner') {
+        _manuallyOpenedSlots.add(_getSlotOverrideKey(slot.slotId));
+      }
+    }
+    
+    final key = _currentStateKey;
+    // Don't overwrite toggle states if the user already interacted for this key
+    if (_dayOpenStates.containsKey(key)) return;
     
     // Derive toggle state from actual slot statuses in the DB.
     // For each period, check if ANY operating-hour slot is AVAILABLE.
@@ -229,9 +245,7 @@ class _SlotBookingScreenState extends State<SlotBookingScreen> with RouteAware {
         _isSidebarVisible = false;
       }
     });
-    if (shouldCloseSidebar) {
-      _loadSlots();
-    }
+    _loadSlots();
   }
 
   void _onNetSelected(int netNumber) {
@@ -321,7 +335,7 @@ class _SlotBookingScreenState extends State<SlotBookingScreen> with RouteAware {
       bool shouldBeBlocked = false;
       final isManuallyOpened = _isSlotManuallyOpened(slot.slotId);
       final blockReason = slot.blockReason ?? '';
-      final isManualBlock = blockReason == 'Blocked by owner';
+      final isManualBlock = blockReason == 'Blocked by owner' || blockReason == 'Closed by owner';
       
       // Check if this slot is within operating hours
       final isWithinOperatingHours = _isSlotWithinOperatingHours(slot);
@@ -379,25 +393,44 @@ class _SlotBookingScreenState extends State<SlotBookingScreen> with RouteAware {
     }
   }
 
+  // Cached operating hours to avoid re-parsing on every slot check
+  String? _cachedOpHoursTurfId;
+  String? _cachedOpHoursOpen;
+  String? _cachedOpHoursClose;
+  int _cachedOpenMinutes = 0;
+  int _cachedCloseMinutes = 0;
+
   /// Check if a slot falls within the turf's operating hours
   bool _isSlotWithinOperatingHours(SlotModel slot) {
     if (_selectedTurf == null) return false;
     
-    final openHour = int.parse(_selectedTurf!.openTime.split(':')[0]);
-    final openMinute = int.parse(_selectedTurf!.openTime.split(':')[1]);
-    final closeHour = int.parse(_selectedTurf!.closeTime.split(':')[0]);
-    final closeMinute = int.parse(_selectedTurf!.closeTime.split(':')[1]);
-    
-    final openMinutes = openHour * 60 + openMinute;
-    final closeMinutesRaw = closeHour * 60 + closeMinute;
-    int closeMinutes;
-    if (closeMinutesRaw == 0) {
-      closeMinutes = 1440;
-    } else if (closeMinutesRaw <= openMinutes) {
-      closeMinutes = closeMinutesRaw + 1440;
-    } else {
-      closeMinutes = closeMinutesRaw;
+    // Re-parse only when turf or times change
+    if (_cachedOpHoursTurfId != _selectedTurf!.turfId ||
+        _cachedOpHoursOpen != _selectedTurf!.openTime ||
+        _cachedOpHoursClose != _selectedTurf!.closeTime) {
+      final openHour = int.parse(_selectedTurf!.openTime.split(':')[0]);
+      final openMinute = int.parse(_selectedTurf!.openTime.split(':')[1]);
+      final closeHour = int.parse(_selectedTurf!.closeTime.split(':')[0]);
+      final closeMinute = int.parse(_selectedTurf!.closeTime.split(':')[1]);
+
+      _cachedOpenMinutes = openHour * 60 + openMinute;
+      final closeMinutesRaw = closeHour * 60 + closeMinute;
+      if (closeMinutesRaw == 0) {
+        _cachedCloseMinutes = 1440;
+      } else if (closeMinutesRaw == _cachedOpenMinutes) {
+        _cachedCloseMinutes = _cachedOpenMinutes;
+      } else if (closeMinutesRaw < _cachedOpenMinutes) {
+        _cachedCloseMinutes = closeMinutesRaw + 1440;
+      } else {
+        _cachedCloseMinutes = closeMinutesRaw;
+      }
+      _cachedOpHoursTurfId = _selectedTurf!.turfId;
+      _cachedOpHoursOpen = _selectedTurf!.openTime;
+      _cachedOpHoursClose = _selectedTurf!.closeTime;
     }
+
+    final openMinutes = _cachedOpenMinutes;
+    final closeMinutes = _cachedCloseMinutes;
     
     final startParts = slot.startTime.split(':');
     final endParts = slot.endTime.split(':');
@@ -405,11 +438,13 @@ class _SlotBookingScreenState extends State<SlotBookingScreen> with RouteAware {
     final slotEndRaw = int.parse(endParts[0]) * 60 + int.parse(endParts[1]);
     final slotEnd = slotEndRaw == 0 ? 1440 : slotEndRaw;
     
-    if (closeMinutes <= 1440) {
+    if (closeMinutes == openMinutes) {
+      return false;
+    } else if (closeMinutes <= 1440) {
       return slotStart >= openMinutes && slotEnd <= closeMinutes;
     } else {
-      final inDayPortion = slotStart >= openMinutes;
-      final inNightPortion = (slotStart + 1440) >= openMinutes && (slotEnd + 1440) <= closeMinutes;
+      final inDayPortion = slotStart >= openMinutes && slotEnd <= 1440;
+      final inNightPortion = slotStart < (closeMinutes - 1440) && slotEnd <= (closeMinutes - 1440);
       return inDayPortion || inNightPortion;
     }
   }
@@ -2080,7 +2115,6 @@ class _BookingDialogState extends State<_BookingDialog> {
 
     final bookingProvider = Provider.of<BookingProvider>(context, listen: false);
     final authProvider = Provider.of<AuthProvider>(context, listen: false);
-    final timeParts = widget.slot.displayTimeRange.split(' - ');
     
     final bookingId = await bookingProvider.createManualBooking(
       turfId: widget.turf.turfId,

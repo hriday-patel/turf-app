@@ -51,7 +51,9 @@ class PriceCalculator {
     // Parse start time
     final hour = int.parse(startTime.split(':')[0]);
     
-    // Determine time slot based on hour
+    // Determine time slot based on START hour.
+    // For slots spanning two periods (e.g., 11:30-13:00),
+    // the price is determined by the period at slot start time.
     String timeSlot;
     double price;
     

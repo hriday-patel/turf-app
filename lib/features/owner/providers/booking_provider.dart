@@ -95,8 +95,10 @@ class BookingProvider extends ChangeNotifier {
       notifyListeners();
 
       // Determine payment status based on advance vs total
+      // Clamp advance to not exceed total amount
+      final clampedAdvance = advanceAmount > amount ? amount : advanceAmount;
       String paymentStatus;
-      if (amount > 0 && advanceAmount >= amount) {
+      if (amount > 0 && clampedAdvance >= amount) {
         paymentStatus = 'PAID';
       } else {
         paymentStatus = 'PENDING';
@@ -118,7 +120,7 @@ class BookingProvider extends ChangeNotifier {
         'payment_mode': 'OFFLINE',
         'payment_status': paymentStatus,
         'amount': amount,
-        'advance_amount': advanceAmount,
+        'advance_amount': clampedAdvance,
         'transaction_id': null,
         'booking_status': 'CONFIRMED',
       };
@@ -213,7 +215,13 @@ class BookingProvider extends ChangeNotifier {
         reason: reason,
       );
       
-      if (!success) {
+      if (success) {
+        // Update local lists to reflect the cancellation immediately
+        _bookings.removeWhere((b) => b.bookingId == bookingId);
+        _todaysBookings.removeWhere((b) => b.bookingId == bookingId);
+        _pendingPayments.removeWhere((b) => b.bookingId == bookingId);
+        notifyListeners();
+      } else {
         _errorMessage = 'Failed to cancel booking';
         notifyListeners();
       }

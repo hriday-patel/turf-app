@@ -4,13 +4,10 @@ import 'package:provider/provider.dart';
 import 'package:table_calendar/table_calendar.dart';
 import '../../../config/colors.dart';
 import '../../../core/constants/enums.dart';
-import '../../../data/models/turf_model.dart';
 import '../../../app/routes.dart';
 import '../providers/turf_provider.dart';
 import '../providers/slot_provider.dart';
 import '../providers/booking_provider.dart';
-import '../../auth/providers/auth_provider.dart';
-import '../../../data/services/database_service.dart';
 import '../../../core/services/whatsapp_service.dart';
 
 /// Manual Booking Screen
@@ -34,6 +31,7 @@ class _ManualBookingScreenState extends State<ManualBookingScreen> with RouteAwa
   String? _selectedSlotId;
   double _selectedPrice = 0;
   String _selectedTimeRange = '';
+  int _selectedNetNumber = 1;
   BookingSource _bookingSource = BookingSource.phone;
   bool _isLoading = false;
 
@@ -95,34 +93,46 @@ class _ManualBookingScreenState extends State<ManualBookingScreen> with RouteAwa
     final bookingProvider = Provider.of<BookingProvider>(context, listen: false);
     final turf = turfProvider.getTurfById(widget.turfId);
 
+    if (turf == null) {
+      setState(() => _isLoading = false);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Turf not found. It may have been deleted.')),
+      );
+      return;
+    }
+
     final editedPrice = double.tryParse(_priceController.text) ?? _selectedPrice;
     final advanceAmount = double.tryParse(_advanceController.text) ?? 0;
 
     final timeParts = _selectedTimeRange.split(' - ');
+    if (timeParts.length < 2) {
+      setState(() => _isLoading = false);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Invalid time slot selection. Please re-select.')),
+      );
+      return;
+    }
     final bookingId = await bookingProvider.createManualBooking(
       turfId: widget.turfId,
       slotId: _selectedSlotId!,
       bookingDate: _selectedDate.toIso8601String().split('T')[0],
       startTime: timeParts[0],
       endTime: timeParts[1],
-      turfName: turf?.turfName ?? '',
+      turfName: turf.turfName,
       customerName: _nameController.text.trim(),
       customerPhone: _phoneController.text.trim(),
       bookingSource: _bookingSource,
       amount: editedPrice,
       advanceAmount: advanceAmount,
+      netNumber: _selectedNetNumber,
     );
 
     if (!mounted) return;
     setState(() => _isLoading = false);
 
     if (bookingId != null) {
-      // Update slot price if owner changed the booking amount
-      if (_selectedSlotId != null && editedPrice != _selectedPrice) {
-        final dbService = DatabaseService();
-        await dbService.updateSlotPrice(_selectedSlotId!, editedPrice);
-      }
-
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Booking created successfully!'), backgroundColor: AppColors.success),
       );
@@ -132,8 +142,8 @@ class _ManualBookingScreenState extends State<ManualBookingScreen> with RouteAwa
         WhatsAppService.sendBookingConfirmation(
           customerPhone: _phoneController.text.trim(),
           bookingId: bookingId,
-          turfName: turf?.turfName ?? '',
-          netNumber: 1,
+          turfName: turf.turfName,
+          netNumber: _selectedNetNumber,
           date: _selectedDate.toIso8601String().split('T')[0],
           startTime: timeParts[0],
           endTime: timeParts[1],
@@ -266,6 +276,7 @@ class _ManualBookingScreenState extends State<ManualBookingScreen> with RouteAwa
                 _selectedPrice = slot.price;
                 _priceController.text = slot.price.toInt().toString();
                 _selectedTimeRange = '${slot.startTime} - ${slot.endTime}';
+                _selectedNetNumber = slot.netNumber;
               }),
               child: Container(
                 padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),

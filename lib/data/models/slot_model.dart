@@ -95,19 +95,15 @@ class SlotModel {
     };
   }
 
-  /// Check if the slot is currently available for booking
+  /// Check if the slot is currently available for booking.
+  /// Note: Expired reservations are handled server-side via RPC.
+  /// Client treats reserved slots as unavailable until refreshed.
   bool get isAvailable {
-    if (status == SlotStatus.available) return true;
-    
-    // Check if reservation has expired
-    if (status == SlotStatus.reserved && reservedUntil != null) {
-      return DateTime.now().isAfter(reservedUntil!);
-    }
-    
-    return false;
+    return status == SlotStatus.available;
   }
 
-  /// Check if the slot is bookable (available or expired reservation)
+  /// Check if the slot might be bookable (available or expired reservation).
+  /// Server-side RPC performs the authoritative check.
   bool get isBookable {
     return status == SlotStatus.available || 
            (status == SlotStatus.reserved && 
@@ -124,7 +120,11 @@ class SlotModel {
     final parts = time24.split(':');
     int hour = int.parse(parts[0]);
     final minute = parts[1];
-    if (hour >= 24) hour = 0; // Normalize 24:00 to midnight
+    // Treat 00:00 in end-time context as midnight end-of-day
+    if (hour == 0 && minute == '00') {
+      return '12:00 AM';
+    }
+    if (hour >= 24) hour = 0;
     final period = hour >= 12 ? 'PM' : 'AM';
     final displayHour = hour > 12 ? hour - 12 : (hour == 0 ? 12 : hour);
     return '$displayHour:$minute $period';
