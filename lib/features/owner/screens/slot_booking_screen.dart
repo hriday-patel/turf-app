@@ -269,6 +269,7 @@ class _SlotBookingScreenState extends State<SlotBookingScreen> with RouteAware {
       }
     });
     await _applyPeriodChanges();
+    if (mounted) setState(() {});
   }
 
   void _togglePeriod(String period, bool isOpen) async {
@@ -300,6 +301,7 @@ class _SlotBookingScreenState extends State<SlotBookingScreen> with RouteAware {
       }
     });
     await _applyPeriodChanges();
+    if (mounted) setState(() {});
   }
 
   Future<void> _applyPeriodChanges() async {
@@ -319,8 +321,7 @@ class _SlotBookingScreenState extends State<SlotBookingScreen> with RouteAware {
       bool shouldBeBlocked = false;
       final isManuallyOpened = _isSlotManuallyOpened(slot.slotId);
       final blockReason = slot.blockReason ?? '';
-      final isPeriodBlocked = blockReason.contains('Period closed');
-      final isAutoClosed = blockReason == 'Closed';
+      final isManualBlock = blockReason == 'Blocked by owner';
       
       // Check if this slot is within operating hours
       final isWithinOperatingHours = _isSlotWithinOperatingHours(slot);
@@ -343,7 +344,7 @@ class _SlotBookingScreenState extends State<SlotBookingScreen> with RouteAware {
 
       // Respect manual overrides: keep slot open even if period is closed
       if (isManuallyOpened && shouldBeBlocked) {
-        if (slot.status == SlotStatus.blocked && (isPeriodBlocked || isAutoClosed)) {
+        if (slot.status == SlotStatus.blocked) {
           await slotProvider.unblockSlot(
             slot.slotId,
             overrideMarker: isClosedDay ? 'Day opened by owner' : null,
@@ -358,9 +359,10 @@ class _SlotBookingScreenState extends State<SlotBookingScreen> with RouteAware {
           authProvider.currentUserId!,
           'Period closed by owner',
         );
-      } else if (!shouldBeBlocked && slot.status == SlotStatus.blocked && (isPeriodBlocked || (isAutoClosed && isWithinOperatingHours))) {
-        // Unblock: period-closed slots being reopened, OR auto-closed slots
-        // that are within operating hours (e.g., owner toggling DAY OPEN on a closed day).
+      } else if (!shouldBeBlocked && slot.status == SlotStatus.blocked && !isManualBlock && isWithinOperatingHours) {
+        // Unblock any non-manually-blocked slot within operating hours when
+        // the period toggle is open. Covers 'Closed', 'Period closed by owner',
+        // 'Outside operating hours', null, etc.
         // If this is a closed day, mark with override so sync preserves it.
         await slotProvider.unblockSlot(
           slot.slotId,
