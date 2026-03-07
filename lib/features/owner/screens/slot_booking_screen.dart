@@ -27,6 +27,7 @@ class _SlotBookingScreenState extends State<SlotBookingScreen> with RouteAware {
   int _selectedNetNumber = 1;
   DateTime _selectedDate = DateTime.now();
   bool _isLoading = false;
+  bool _isSidebarVisible = false;
   
   // Toggle states stored per turf+net+date combination
   // Key format: "turfId_netNumber_date"
@@ -206,19 +207,27 @@ class _SlotBookingScreenState extends State<SlotBookingScreen> with RouteAware {
       return;
     }
     
+    final shouldCloseSidebar = turf.numberOfNets <= 1 || turf.turfType == TurfType.groundCricket;
     setState(() {
       _selectedTurf = turf;
       _selectedNetNumber = 1;
       _isLoading = true;
+      if (shouldCloseSidebar) {
+        _isSidebarVisible = false;
+      }
     });
-    _loadSlots();
+    if (shouldCloseSidebar) {
+      _loadSlots();
+    }
   }
 
   void _onNetSelected(int netNumber) {
     setState(() {
       _selectedNetNumber = netNumber;
+      _isSidebarVisible = false;
       // Note: We don't reset toggles - each net has its own state
     });
+    _loadSlots();
   }
 
   void _onDateSelected(DateTime date) {
@@ -368,27 +377,86 @@ class _SlotBookingScreenState extends State<SlotBookingScreen> with RouteAware {
       ),
       body: approvedTurfs.isEmpty
           ? _buildEmptyState()
-          : Row(
+          : Stack(
               children: [
-                // Left Sidebar - Turf & Net Selector
-                _buildSidebar(approvedTurfs),
-                
-                // Main Content
-                Expanded(
-                  child: Column(
-                    children: [
-                      // Date Picker
-                      _buildDatePicker(),
-                      
-                      // Slots Grid
-                      Expanded(
-                        child: _buildSlotsContent(),
-                      ),
-                    ],
-                  ),
+                // Main Content (full width)
+                Column(
+                  children: [
+                    // Compact venue/net info bar
+                    _buildCollapsedInfoBar(approvedTurfs),
+                    // Date Picker
+                    _buildDatePicker(),
+                    // Slots Grid
+                    Expanded(
+                      child: _buildSlotsContent(),
+                    ),
+                  ],
                 ),
+                // Sidebar overlay
+                if (_isSidebarVisible) ...[
+                  // Scrim
+                  GestureDetector(
+                    onTap: () => setState(() => _isSidebarVisible = false),
+                    child: Container(color: Colors.black54),
+                  ),
+                  // Sidebar panel
+                  _buildSidebar(approvedTurfs),
+                ],
               ],
             ),
+    );
+  }
+
+  Widget _buildCollapsedInfoBar(List<TurfModel> turfs) {
+    final venueName = _selectedTurf?.turfName ?? 'Select Venue';
+    final netLabel = (_selectedTurf != null && _selectedTurf!.numberOfNets > 1)
+        ? ' · Net $_selectedNetNumber'
+        : '';
+    return GestureDetector(
+      onTap: () => setState(() => _isSidebarVisible = true),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+        color: Colors.white,
+        child: Row(
+          children: [
+            Icon(Icons.stadium, color: AppColors.primary, size: 20),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                '$venueName$netLabel',
+                style: const TextStyle(
+                  fontWeight: FontWeight.w600,
+                  fontSize: 14,
+                  color: AppColors.textPrimary,
+                ),
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+              decoration: BoxDecoration(
+                color: AppColors.primary.withOpacity(0.1),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(Icons.swap_horiz, size: 16, color: AppColors.primary),
+                  const SizedBox(width: 4),
+                  Text(
+                    'Change',
+                    style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                      color: AppColors.primary,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 
@@ -424,26 +492,35 @@ class _SlotBookingScreenState extends State<SlotBookingScreen> with RouteAware {
   }
 
   Widget _buildSidebar(List<TurfModel> turfs) {
-    return Container(
-      width: 200,
-      color: Colors.white,
-      child: Column(
-        children: [
-          // Turf Selector Header
-          Container(
-            padding: const EdgeInsets.all(16),
-            color: AppColors.primary.withOpacity(0.1),
-            child: Row(
-              children: [
-                Icon(Icons.stadium, color: AppColors.primary, size: 20),
-                const SizedBox(width: 8),
-                const Text(
-                  'Select Venue',
-                  style: TextStyle(fontWeight: FontWeight.bold, color: AppColors.textPrimary),
+    return Align(
+      alignment: Alignment.centerLeft,
+      child: Container(
+        width: 260,
+        color: Colors.white,
+        child: SafeArea(
+          child: Column(
+            children: [
+              // Header with close button
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                color: AppColors.primary.withOpacity(0.1),
+                child: Row(
+                  children: [
+                    Icon(Icons.stadium, color: AppColors.primary, size: 20),
+                    const SizedBox(width: 8),
+                    const Expanded(
+                      child: Text(
+                        'Select Venue',
+                        style: TextStyle(fontWeight: FontWeight.bold, color: AppColors.textPrimary),
+                      ),
+                    ),
+                    GestureDetector(
+                      onTap: () => setState(() => _isSidebarVisible = false),
+                      child: Icon(Icons.close, color: AppColors.textSecondary, size: 22),
+                    ),
+                  ],
                 ),
-              ],
-            ),
-          ),
+              ),
           
           // Turf List
           Expanded(
@@ -500,17 +577,28 @@ class _SlotBookingScreenState extends State<SlotBookingScreen> with RouteAware {
             Container(
               padding: const EdgeInsets.all(16),
               decoration: BoxDecoration(
-                color: AppColors.background,
+                color: AppColors.primary.withOpacity(0.05),
                 border: Border(top: BorderSide(color: AppColors.divider)),
               ),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const Text(
-                    'Select Net',
-                    style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12, color: AppColors.textSecondary),
+                  Row(
+                    children: [
+                      Icon(Icons.sports_cricket, size: 16, color: AppColors.primary),
+                      const SizedBox(width: 6),
+                      Text(
+                        'Select Net for ${_selectedTurf!.turfName}',
+                        style: TextStyle(
+                          fontWeight: FontWeight.bold,
+                          fontSize: 13,
+                          color: AppColors.primary,
+                        ),
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ],
                   ),
-                  const SizedBox(height: 8),
+                  const SizedBox(height: 10),
                   Wrap(
                     spacing: 8,
                     runSpacing: 8,
@@ -518,22 +606,21 @@ class _SlotBookingScreenState extends State<SlotBookingScreen> with RouteAware {
                       _selectedTurf!.numberOfNets,
                       (index) {
                         final netNumber = index + 1;
-                        final isSelected = _selectedNetNumber == netNumber;
                         return GestureDetector(
                           onTap: () => _onNetSelected(netNumber),
                           child: Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
                             decoration: BoxDecoration(
-                              color: isSelected ? AppColors.primary : Colors.white,
-                              borderRadius: BorderRadius.circular(8),
-                              border: Border.all(color: isSelected ? AppColors.primary : AppColors.divider),
+                              color: Colors.white,
+                              borderRadius: BorderRadius.circular(10),
+                              border: Border.all(color: AppColors.primary.withOpacity(0.4)),
                             ),
                             child: Text(
                               'Net $netNumber',
                               style: TextStyle(
-                                fontSize: 12,
+                                fontSize: 13,
                                 fontWeight: FontWeight.w600,
-                                color: isSelected ? Colors.white : AppColors.textPrimary,
+                                color: AppColors.primary,
                               ),
                             ),
                           ),
@@ -545,6 +632,8 @@ class _SlotBookingScreenState extends State<SlotBookingScreen> with RouteAware {
               ),
             ),
         ],
+          ),
+        ),
       ),
     );
   }
@@ -847,15 +936,21 @@ class _SlotBookingScreenState extends State<SlotBookingScreen> with RouteAware {
         color: Colors.white,
         borderRadius: BorderRadius.circular(12),
       ),
-      child: Wrap(
-        spacing: 16,
-        runSpacing: 8,
-        alignment: WrapAlignment.center,
+      child: Column(
         children: [
-          _buildLegendItem('Available', AppColors.success),
-          _buildLegendItem('Pending', Colors.orange),
-          _buildLegendItem('Booked', AppColors.error),
-          _buildLegendItem('Closed', Colors.grey.shade400),
+          Row(
+            children: [
+              Expanded(child: _buildLegendItem('Available', AppColors.success)),
+              Expanded(child: _buildLegendItem('Pending', Colors.orange)),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              Expanded(child: _buildLegendItem('Booked', AppColors.error)),
+              Expanded(child: _buildLegendItem('Closed', Colors.grey.shade400)),
+            ],
+          ),
         ],
       ),
     );
