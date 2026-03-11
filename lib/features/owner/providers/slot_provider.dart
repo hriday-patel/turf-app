@@ -314,7 +314,7 @@ class SlotProvider extends ChangeNotifier {
           isWithinOperatingHours = inDayPortion || inNightPortion;
         }
 
-        final isManualOverride = blockReason == 'Day opened by owner';
+        final isManualOverride = blockReason == 'Day opened by owner' || blockReason == 'Opened by owner';
         final isAutoClosed = blockReason == 'Closed' || blockReason == 'Outside operating hours';
 
         // === daysOpen enforcement ===
@@ -329,8 +329,9 @@ class SlotProvider extends ChangeNotifier {
         }
 
         // Day is OPEN in config from here on.
-        // Cleanup: clear override marker since day is officially open now
-        if (status == 'AVAILABLE' && isManualOverride) {
+        // Cleanup: clear override marker ONLY if slot is within operating hours
+        // (if outside operating hours, the marker is still needed to prevent re-blocking)
+        if (status == 'AVAILABLE' && isManualOverride && isWithinOperatingHours) {
           await _dbService.unblockSlot(slot['id'] as String); // clears marker, stays AVAILABLE
         }
         // Unblock auto-closed slots that are now within operating hours
@@ -339,7 +340,8 @@ class SlotProvider extends ChangeNotifier {
         }
 
         // === Operating hours enforcement (open days only) ===
-        if (!isWithinOperatingHours && status == 'AVAILABLE') {
+        // Don't re-block manually overridden slots — owner explicitly opened them
+        if (!isWithinOperatingHours && status == 'AVAILABLE' && !isManualOverride) {
           await _dbService.blockSlot(slot['id'] as String, turf.ownerId, 'Closed');
         }
       }

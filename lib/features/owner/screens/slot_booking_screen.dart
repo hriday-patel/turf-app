@@ -219,7 +219,8 @@ class _SlotBookingScreenState extends State<SlotBookingScreen> with RouteAware, 
     final overridePrefix = '${_selectedTurf!.turfId}_${_selectedNetNumber}_';
     _manuallyOpenedSlots.removeWhere((key) => key.startsWith(overridePrefix));
     for (final slot in netSlots) {
-      if (slot.status == SlotStatus.available && slot.blockReason == 'Day opened by owner') {
+      if (slot.status == SlotStatus.available && 
+          (slot.blockReason == 'Day opened by owner' || slot.blockReason == 'Opened by owner')) {
         _manuallyOpenedSlots.add(_getSlotOverrideKey(slot.slotId));
       }
     }
@@ -378,11 +379,6 @@ class _SlotBookingScreenState extends State<SlotBookingScreen> with RouteAware, 
       // Check if this slot is within operating hours
       final isWithinOperatingHours = _isSlotWithinOperatingHours(slot);
       
-      // Time period divisions:
-      // Morning: 6 AM - 12 PM (6-11)
-      // Afternoon: 12 PM - 6 PM (12-17)
-      // Evening: 6 PM - 12 AM (18-23)
-      // Night: 12 AM - 6 AM (0-5)
       if (hour >= 6 && hour < 12) {
         shouldBeBlocked = !_isMorningOpen;
       } else if (hour >= 12 && hour < 18) {
@@ -390,7 +386,6 @@ class _SlotBookingScreenState extends State<SlotBookingScreen> with RouteAware, 
       } else if (hour >= 18 && hour < 24) {
         shouldBeBlocked = !_isEveningOpen;
       } else {
-        // 0-5 hours (night)
         shouldBeBlocked = !_isNightOpen;
       }
 
@@ -399,7 +394,7 @@ class _SlotBookingScreenState extends State<SlotBookingScreen> with RouteAware, 
         if (slot.status == SlotStatus.blocked) {
           await slotProvider.unblockSlot(
             slot.slotId,
-            overrideMarker: isClosedDay ? 'Day opened by owner' : null,
+            overrideMarker: 'Opened by owner',
           );
         }
         continue;
@@ -412,10 +407,6 @@ class _SlotBookingScreenState extends State<SlotBookingScreen> with RouteAware, 
           'Period closed by owner',
         );
       } else if (!shouldBeBlocked && slot.status == SlotStatus.blocked && !isManualBlock && isWithinOperatingHours) {
-        // Unblock any non-manually-blocked slot within operating hours when
-        // the period toggle is open. Covers 'Closed', 'Period closed by owner',
-        // 'Outside operating hours', null, etc.
-        // If this is a closed day, mark with override so sync preserves it.
         await slotProvider.unblockSlot(
           slot.slotId,
           overrideMarker: isClosedDay ? 'Day opened by owner' : null,
@@ -424,7 +415,6 @@ class _SlotBookingScreenState extends State<SlotBookingScreen> with RouteAware, 
     }
     
     // Reload slot data from DB without regenerating/syncing
-    // (regeneration would re-close slots the owner just opened on a closed day)
     if (_selectedTurf != null) {
       final dateStr = _selectedDate.toIso8601String().split('T')[0];
       await slotProvider.loadSlots(_selectedTurf!.turfId, dateStr);
@@ -1572,9 +1562,6 @@ class _SlotBookingScreenState extends State<SlotBookingScreen> with RouteAware, 
     
     // Show open option for closed slots that haven't been manually opened
     final showManualOpenOption = effectivelyClosed;
-    
-    // Show close option for manually opened slots
-    final showManualCloseOption = isManuallyOpened && (isBlocked || isPeriodClosed);
 
     showModalBottomSheet(
       context: context,
@@ -1679,49 +1666,20 @@ class _SlotBookingScreenState extends State<SlotBookingScreen> with RouteAware, 
                 bgColor: const Color(0xFFECFDF5),
                 borderColor: const Color(0xFF22C55E),
                 textColor: const Color(0xFF166534),
-                () {
+                () async {
                   Navigator.pop(context);
                   _toggleSlotManualOverride(slot.slotId);
-                  // Unblock the slot in database if it was blocked
+                  // Unblock the slot in database — always set override marker
+                  // so _syncOperatingHoursForNet preserves it across refreshes
                   if (isBlocked) {
                     final slotProvider = Provider.of<SlotProvider>(context, listen: false);
-                    final authProvider = Provider.of<AuthProvider>(context, listen: false);
-                    // Mark with override on closed days so sync preserves it
-                    const dayNames = ['MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT', 'SUN'];
-                    final dayOfWeek = dayNames[_selectedDate.weekday - 1];
-                    final isClosedDay = _selectedTurf != null && !_selectedTurf!.daysOpen.contains(dayOfWeek);
-                    slotProvider.unblockSlot(
+                    await slotProvider.unblockSlot(
                       slot.slotId,
-                      overrideMarker: isClosedDay ? 'Day opened by owner' : null,
+                      overrideMarker: 'Opened by owner',
                     );
                   }
+                  _loadSlots();
                   _showPremiumToast(context, 'Slot opened - You can now create a booking', type: _ToastType.success);
-                },
-              ),
-              const SizedBox(height: 12),
-            ],
-            
-            // Show close option when slot is manually opened
-            if (showManualCloseOption) ...[
-              _buildActionButton(
-                'Close This Slot',
-                Icons.lock,
-                Colors.grey,
-                bgColor: const Color(0xFFF1F5F9),
-                borderColor: const Color(0xFF94A3B8),
-                textColor: const Color(0xFF475569),
-                () {
-                  Navigator.pop(context);
-                  _toggleSlotManualOverride(slot.slotId);
-                  // Re-block the slot in database
-                  final slotProvider = Provider.of<SlotProvider>(context, listen: false);
-                  final authProvider = Provider.of<AuthProvider>(context, listen: false);
-                  slotProvider.blockSlot(
-                    slot.slotId,
-                    authProvider.currentUserId ?? '',
-                    'Closed by owner',
-                  );
-                  _showPremiumToast(context, 'Slot closed', type: _ToastType.info);
                 },
               ),
               const SizedBox(height: 12),
@@ -1996,13 +1954,10 @@ class _SlotBookingScreenState extends State<SlotBookingScreen> with RouteAware, 
 
   Future<void> _unblockSlot(SlotModel slot) async {
     final slotProvider = Provider.of<SlotProvider>(context, listen: false);
-    // If this is a closed day, mark the slot so sync preserves the override
-    const dayNames = ['MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT', 'SUN'];
-    final dayOfWeek = dayNames[_selectedDate.weekday - 1];
-    final isClosedDay = _selectedTurf != null && !_selectedTurf!.daysOpen.contains(dayOfWeek);
+    // Always set override marker so sync preserves the manually opened slot
     await slotProvider.unblockSlot(
       slot.slotId,
-      overrideMarker: isClosedDay ? 'Day opened by owner' : null,
+      overrideMarker: 'Opened by owner',
     );
     _loadSlots();
   }
