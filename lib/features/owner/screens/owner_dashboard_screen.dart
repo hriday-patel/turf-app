@@ -141,11 +141,17 @@ class _OwnerDashboardScreenState extends State<OwnerDashboardScreen>
       // Force refresh from database to get latest verification status
       await turfProvider.refreshTurfs(authProvider.currentUserId!);
       
-      // Refresh bookings after turfs are updated (only for approved turfs)
+      // Refresh Quick Overview stats for approved turfs
       final approvedTurfIds = turfProvider.approvedTurfs.map((t) => t.turfId).toList();
       if (approvedTurfIds.isNotEmpty) {
         bookingProvider.loadTodaysBookings(approvedTurfIds);
         bookingProvider.loadPendingPayments(approvedTurfIds);
+      }
+      
+      // Refresh Recent Bookings for ALL turfs
+      final allTurfIds = turfProvider.turfIds;
+      if (allTurfIds.isNotEmpty) {
+        bookingProvider.loadRecentBookings(allTurfIds);
       }
     }
   }
@@ -164,11 +170,17 @@ class _OwnerDashboardScreenState extends State<OwnerDashboardScreen>
     final turfProvider = Provider.of<TurfProvider>(context, listen: false);
     final bookingProvider = Provider.of<BookingProvider>(context, listen: false);
     
-    // Only load bookings for approved turfs
+    // Load Quick Overview stats for approved turfs
     final approvedTurfIds = turfProvider.approvedTurfs.map((t) => t.turfId).toList();
     if (approvedTurfIds.isNotEmpty) {
       bookingProvider.loadTodaysBookings(approvedTurfIds);
       bookingProvider.loadPendingPayments(approvedTurfIds);
+    }
+    
+    // Load Recent Bookings for ALL turfs
+    final allTurfIds = turfProvider.turfIds;
+    if (allTurfIds.isNotEmpty) {
+      bookingProvider.loadRecentBookings(allTurfIds);
     }
   }
 
@@ -781,7 +793,7 @@ class _OwnerDashboardScreenState extends State<OwnerDashboardScreen>
   Widget _buildRecentActivity() {
     return Consumer<BookingProvider>(
       builder: (context, bookingProvider, _) {
-        final recentBookings = bookingProvider.bookings.take(5).toList();
+        final recentBookings = bookingProvider.recentBookings;
         
         return NotchedSectionContainer(
           margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),

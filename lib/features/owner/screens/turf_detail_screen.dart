@@ -137,14 +137,7 @@ class _TurfDetailScreenState extends State<TurfDetailScreen> with RouteAware {
                           ),
                   ),
                 ),
-                actions: [
-                  IconButton(
-                    icon: const Icon(Icons.edit, color: AppColors.textPrimary),
-                    onPressed: () {
-                      // TODO: Edit turf
-                    },
-                  ),
-                ],
+
               ),
 
               // Content
@@ -156,10 +149,6 @@ class _TurfDetailScreenState extends State<TurfDetailScreen> with RouteAware {
                     children: [
                       // Quick Stats
                       _buildQuickStats(turf),
-                      const SizedBox(height: 24),
-
-                      // Action Buttons
-                      _buildActionButtons(context, turf),
                       const SizedBox(height: 24),
 
                       // Details Section
@@ -249,53 +238,6 @@ class _TurfDetailScreenState extends State<TurfDetailScreen> with RouteAware {
     );
   }
 
-  Widget _buildActionButtons(BuildContext context, TurfModel turf) {
-    return Row(
-      children: [
-        Expanded(
-          child: ElevatedButton.icon(
-            onPressed: () {
-              Navigator.pushNamed(
-                context,
-                AppRoutes.slotManagement,
-                arguments: {'turfId': turf.turfId},
-              );
-            },
-            icon: const Icon(Icons.calendar_view_day),
-            label: const Text('Manage Slots'),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: AppColors.primary,
-              padding: const EdgeInsets.symmetric(vertical: 14),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(12),
-              ),
-            ),
-          ),
-        ),
-        const SizedBox(width: 12),
-        Expanded(
-          child: OutlinedButton.icon(
-            onPressed: () {
-              Navigator.pushNamed(
-                context,
-                AppRoutes.manualBooking,
-                arguments: {'turfId': turf.turfId},
-              );
-            },
-            icon: const Icon(Icons.add_circle_outline),
-            label: const Text('Add Booking'),
-            style: OutlinedButton.styleFrom(
-              padding: const EdgeInsets.symmetric(vertical: 14),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(12),
-              ),
-            ),
-          ),
-        ),
-      ],
-    );
-  }
-
   Widget _buildDetailsSection(TurfModel turf) {
     return Container(
       padding: const EdgeInsets.all(16),
@@ -371,24 +313,13 @@ class _TurfDetailScreenState extends State<TurfDetailScreen> with RouteAware {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              const Text(
-                'Pricing',
-                style: TextStyle(
-                  fontSize: 16,
-                  fontWeight: FontWeight.bold,
-                  color: AppColors.textPrimary,
-                ),
-              ),
-              TextButton(
-                onPressed: () {
-                  // TODO: Edit pricing
-                },
-                child: const Text('Edit'),
-              ),
-            ],
+          const Text(
+            'Pricing',
+            style: TextStyle(
+              fontSize: 16,
+              fontWeight: FontWeight.bold,
+              color: AppColors.textPrimary,
+            ),
           ),
           const SizedBox(height: 8),
           Text(

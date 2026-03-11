@@ -12,6 +12,7 @@ class BookingProvider extends ChangeNotifier {
   List<BookingModel> _bookings = [];
   List<BookingModel> _todaysBookings = [];
   List<BookingModel> _pendingPayments = [];
+  List<BookingModel> _recentBookings = [];
   bool _isLoading = false;
   String? _errorMessage;
   StreamSubscription? _bookingsSubscription;
@@ -20,6 +21,7 @@ class BookingProvider extends ChangeNotifier {
   List<BookingModel> get bookings => _bookings;
   List<BookingModel> get todaysBookings => _todaysBookings;
   List<BookingModel> get pendingPayments => _pendingPayments;
+  List<BookingModel> get recentBookings => _recentBookings;
   bool get isLoading => _isLoading;
   String? get errorMessage => _errorMessage;
 
@@ -71,6 +73,19 @@ class BookingProvider extends ChangeNotifier {
       notifyListeners();
     } catch (e) {
       _errorMessage = 'Failed to load pending payments: $e';
+      notifyListeners();
+    }
+  }
+
+  /// Load recent bookings (one-time fetch from DB)
+  Future<void> loadRecentBookings(List<String> turfIds) async {
+    try {
+      final snapshot = await _dbService.getRecentBookings(turfIds, limit: 5);
+      _recentBookings =
+          snapshot.map((row) => BookingModel.fromMap(row)).toList();
+      notifyListeners();
+    } catch (e) {
+      _errorMessage = 'Failed to load recent bookings: $e';
       notifyListeners();
     }
   }

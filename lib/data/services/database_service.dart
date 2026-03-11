@@ -657,6 +657,21 @@ class DatabaseService {
         .order('booking_date', ascending: false);
   }
 
+  /// Get recent bookings across all turfs (one-time fetch, limited)
+  Future<List<Map<String, dynamic>>> getRecentBookings(
+    List<String> turfIds, {
+    int limit = 5,
+  }) async {
+    if (turfIds.isEmpty) return [];
+    return await _client
+        .from('bookings')
+        .select('*')
+        .inFilter('turf_id', turfIds)
+        .eq('booking_status', 'CONFIRMED')
+        .order('created_at', ascending: false)
+        .limit(limit);
+  }
+
   /// Update booking
   Future<void> updateBooking(String bookingId, Map<String, dynamic> data) async {
     data['updated_at'] = DateTime.now().toIso8601String();
