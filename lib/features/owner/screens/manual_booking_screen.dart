@@ -3,12 +3,14 @@ import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'package:table_calendar/table_calendar.dart';
 import '../../../config/colors.dart';
+import '../../../config/glass_widgets.dart';
 import '../../../core/constants/enums.dart';
 import '../../../app/routes.dart';
 import '../providers/turf_provider.dart';
 import '../providers/slot_provider.dart';
 import '../providers/booking_provider.dart';
 import '../../../core/services/whatsapp_service.dart';
+import '../../../core/utils/app_toast.dart';
 
 /// Manual Booking Screen
 /// Allows owner to create phone/walk-in bookings
@@ -81,9 +83,7 @@ class _ManualBookingScreenState extends State<ManualBookingScreen> with RouteAwa
 
   Future<void> _submitBooking() async {
     if (!_formKey.currentState!.validate() || _selectedSlotId == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Please fill all fields and select a slot')),
-      );
+      showAppToast(context, 'Please fill all fields and select a slot', type: ToastType.warning);
       return;
     }
 
@@ -96,9 +96,7 @@ class _ManualBookingScreenState extends State<ManualBookingScreen> with RouteAwa
     if (turf == null) {
       setState(() => _isLoading = false);
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Turf not found. It may have been deleted.')),
-      );
+      showAppToast(context, 'Turf not found. It may have been deleted.', type: ToastType.error);
       return;
     }
 
@@ -109,9 +107,7 @@ class _ManualBookingScreenState extends State<ManualBookingScreen> with RouteAwa
     if (timeParts.length < 2) {
       setState(() => _isLoading = false);
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Invalid time slot selection. Please re-select.')),
-      );
+      showAppToast(context, 'Invalid time slot selection. Please re-select.', type: ToastType.error);
       return;
     }
     final bookingId = await bookingProvider.createManualBooking(
@@ -133,9 +129,7 @@ class _ManualBookingScreenState extends State<ManualBookingScreen> with RouteAwa
     setState(() => _isLoading = false);
 
     if (bookingId != null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Booking created successfully!'), backgroundColor: AppColors.success),
-      );
+      showAppToast(context, 'Booking created successfully!', type: ToastType.success);
       
       // Send WhatsApp confirmation
       if (_phoneController.text.trim().isNotEmpty) {
@@ -160,17 +154,19 @@ class _ManualBookingScreenState extends State<ManualBookingScreen> with RouteAwa
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: AppColors.background,
-      appBar: AppBar(
-        title: const Text('Manual Booking'),
-        backgroundColor: AppColors.primary,
-      ),
-      body: SingleChildScrollView(
-        padding: const EdgeInsets.all(20),
-        child: Form(
-          key: _formKey,
+      body: GlassScaffoldBackground(
+        child: SafeArea(
           child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
+              GlassAppBar(title: 'Manual Booking'),
+              Expanded(
+                child: SingleChildScrollView(
+                  padding: const EdgeInsets.all(20),
+                  child: Form(
+                    key: _formKey,
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
               // Date Picker
               _buildSectionTitle('Select Date'),
               _buildDatePicker(),
@@ -223,6 +219,11 @@ class _ManualBookingScreenState extends State<ManualBookingScreen> with RouteAwa
           ),
         ),
       ),
+              ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 
@@ -235,7 +236,7 @@ class _ManualBookingScreenState extends State<ManualBookingScreen> with RouteAwa
 
   Widget _buildDatePicker() {
     return Container(
-      decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(12)),
+      decoration: BoxDecoration(color: AppColors.glassFill, borderRadius: BorderRadius.circular(12)),
       child: TableCalendar(
         firstDay: DateTime.now(),
         lastDay: DateTime.now().add(const Duration(days: 60)),
@@ -281,14 +282,14 @@ class _ManualBookingScreenState extends State<ManualBookingScreen> with RouteAwa
               child: Container(
                 padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
                 decoration: BoxDecoration(
-                  color: isSelected ? AppColors.primary : Colors.white,
+                  color: isSelected ? AppColors.primary : AppColors.glassFill,
                   borderRadius: BorderRadius.circular(10),
                   border: Border.all(color: isSelected ? AppColors.primary : AppColors.divider),
                 ),
                 child: Column(
                   children: [
                     Text(slot.displayTimeRange.split(' - ')[0], style: TextStyle(fontWeight: FontWeight.w600, color: isSelected ? Colors.white : AppColors.textPrimary)),
-                    Text('₹${slot.price.toInt()}', style: TextStyle(fontSize: 11, color: isSelected ? Colors.white70 : AppColors.textSecondary)),
+                    Text('₹${slot.price.toInt()}', style: TextStyle(fontSize: 11, color: isSelected ? Colors.white.withOpacity(0.7) : AppColors.textSecondary)),
                   ],
                 ),
               ),
@@ -309,8 +310,8 @@ class _ManualBookingScreenState extends State<ManualBookingScreen> with RouteAwa
         labelText: label,
         prefixIcon: Icon(icon),
         filled: true,
-        fillColor: Colors.white,
-        border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
+        fillColor: AppColors.glassFill,
+        border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: const BorderSide(color: AppColors.glassBorder)),
       ),
     );
   }
@@ -333,7 +334,7 @@ class _ManualBookingScreenState extends State<ManualBookingScreen> with RouteAwa
         child: Container(
           padding: const EdgeInsets.symmetric(vertical: 14),
           decoration: BoxDecoration(
-            color: isSelected ? AppColors.primary : Colors.white,
+            color: isSelected ? AppColors.primary : AppColors.glassFill,
             borderRadius: BorderRadius.circular(12),
             border: Border.all(color: isSelected ? AppColors.primary : AppColors.divider),
           ),
@@ -364,8 +365,8 @@ class _ManualBookingScreenState extends State<ManualBookingScreen> with RouteAwa
         labelText: 'Slot Price (₹)',
         prefixIcon: const Icon(Icons.currency_rupee),
         filled: true,
-        fillColor: Colors.white,
-        border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
+        fillColor: AppColors.glassFill,
+        border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: const BorderSide(color: AppColors.glassBorder)),
       ),
     );
   }
@@ -380,8 +381,8 @@ class _ManualBookingScreenState extends State<ManualBookingScreen> with RouteAwa
         hintText: '0',
         prefixIcon: const Icon(Icons.account_balance_wallet),
         filled: true,
-        fillColor: Colors.white,
-        border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
+        fillColor: AppColors.glassFill,
+        border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: const BorderSide(color: AppColors.glassBorder)),
       ),
       onChanged: (_) => setState(() {}),
     );

@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import 'package:table_calendar/table_calendar.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../../../config/colors.dart';
+import '../../../config/glass_widgets.dart';
 import '../../../core/constants/enums.dart';
 import '../../../data/models/turf_model.dart';
 import '../../../data/models/slot_model.dart';
@@ -12,7 +13,20 @@ import '../providers/turf_provider.dart';
 import '../providers/slot_provider.dart';
 import '../providers/booking_provider.dart';
 import '../../auth/providers/auth_provider.dart';
+import '../../../core/utils/app_toast.dart';
 import '../../../data/services/database_service.dart';
+
+enum _ToastType { success, error, warning, info }
+
+void _showPremiumToast(BuildContext context, String message, {_ToastType type = _ToastType.info}) {
+  final mapped = switch (type) {
+    _ToastType.success => ToastType.success,
+    _ToastType.error => ToastType.error,
+    _ToastType.warning => ToastType.warning,
+    _ToastType.info => ToastType.info,
+  };
+  showAppToast(context, message, type: mapped);
+}
 
 /// Comprehensive Slot Booking Screen
 /// Allows owner to view all slots and create manual bookings
@@ -23,7 +37,7 @@ class SlotBookingScreen extends StatefulWidget {
   State<SlotBookingScreen> createState() => _SlotBookingScreenState();
 }
 
-class _SlotBookingScreenState extends State<SlotBookingScreen> with RouteAware {
+class _SlotBookingScreenState extends State<SlotBookingScreen> with RouteAware, TickerProviderStateMixin {
   TurfModel? _selectedTurf;
   int _selectedNetNumber = 1;
   DateTime _selectedDate = DateTime.now();
@@ -42,6 +56,11 @@ class _SlotBookingScreenState extends State<SlotBookingScreen> with RouteAware {
   // Track manually overridden slots (open even when period is closed)
   // Key format: "turfId_netNumber_slotId"
   final Set<String> _manuallyOpenedSlots = {};
+
+  // Section entrance animations
+  late final AnimationController _sectionAnimController;
+  late final List<Animation<double>> _sectionFadeAnims;
+  late final List<Animation<Offset>> _sectionSlideAnims;
   
   // Helper to generate unique key for current turf+net+date
   String get _currentStateKey {
@@ -66,6 +85,26 @@ class _SlotBookingScreenState extends State<SlotBookingScreen> with RouteAware {
   @override
   void initState() {
     super.initState();
+    // Section entrance staggered animation (7 sections: venue, calendar, control, night, morning, afternoon, evening)
+    _sectionAnimController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 800),
+    );
+    _sectionFadeAnims = List.generate(7, (i) {
+      final start = i * 0.09;
+      final end = (start + 0.44).clamp(0.0, 1.0);
+      return Tween<double>(begin: 0.0, end: 1.0).animate(
+        CurvedAnimation(parent: _sectionAnimController, curve: Interval(start, end, curve: Curves.easeOut)),
+      );
+    });
+    _sectionSlideAnims = List.generate(7, (i) {
+      final start = i * 0.09;
+      final end = (start + 0.44).clamp(0.0, 1.0);
+      return Tween<Offset>(begin: const Offset(0, 12), end: Offset.zero).animate(
+        CurvedAnimation(parent: _sectionAnimController, curve: Interval(start, end, curve: Curves.easeOut)),
+      );
+    });
+    _sectionAnimController.forward();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _refreshAllData();
     });
@@ -82,6 +121,7 @@ class _SlotBookingScreenState extends State<SlotBookingScreen> with RouteAware {
 
   @override
   void dispose() {
+    _sectionAnimController.dispose();
     AppRoutes.routeObserver.unsubscribe(this);
     super.dispose();
   }
@@ -229,9 +269,7 @@ class _SlotBookingScreenState extends State<SlotBookingScreen> with RouteAware {
     }
     // Verify turf is still approved before selecting
     if (turf.verificationStatus != VerificationStatus.approved) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('This turf is no longer approved'), backgroundColor: Colors.orange),
-      );
+      _showPremiumToast(context, 'This turf is no longer approved', type: _ToastType.warning);
       _refreshAllData();
       return;
     }
@@ -478,26 +516,50 @@ class _SlotBookingScreenState extends State<SlotBookingScreen> with RouteAware {
     final approvedTurfs = turfProvider.turfs.where((t) => t.verificationStatus == VerificationStatus.approved).toList();
 
     return Scaffold(
-      backgroundColor: AppColors.background,
-      appBar: AppBar(
-        title: const Text('Booking'),
-        backgroundColor: AppColors.primary,
-        elevation: 0,
-      ),
-      body: approvedTurfs.isEmpty
-          ? _buildEmptyState()
-          : Stack(
-              children: [
-                // Main Content (full width)
-                Column(
-                  children: [
-                    // Compact venue/net info bar
-                    _buildCollapsedInfoBar(approvedTurfs),
-                    // Date Picker
-                    _buildDatePicker(),
-                    // Slots Grid
-                    Expanded(
-                      child: _buildSlotsContent(),
+      backgroundColor: const Color(0xFFF8FAFC),
+      body: SafeArea(
+          child: Stack(
+            children: [
+              // Single smooth gradient wash from blue to page background
+              Positioned.fill(
+                child: Container(
+                  decoration: const BoxDecoration(
+                    gradient: LinearGradient(
+                      begin: Alignment.topCenter,
+                      end: Alignment.bottomCenter,
+                      stops: [0.0, 0.15, 0.35, 0.5],
+                      colors: [
+                        Color(0xFFAFC6FF),
+                        Color(0xFFCBDBFF),
+                        Color(0xFFE8EFFE),
+                        Color(0xFFF8FAFC),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+              // Actual content on top
+              Column(
+            children: [
+              Theme(
+                data: Theme.of(context).copyWith(
+                  appBarTheme: const AppBarTheme(backgroundColor: Colors.transparent, elevation: 0),
+                ),
+                child: GlassAppBar(title: 'Booking Dashboard'),
+              ),
+              Expanded(
+                child: approvedTurfs.isEmpty
+                    ? _buildEmptyState()
+                    : Stack(
+                        children: [
+                          // Main Content (full width)
+                          Column(
+                            children: [
+                              // Compact venue/net info bar
+                              _animatedSection(index: 0, child: _buildCollapsedInfoBar(approvedTurfs)),
+                              // Slots Grid (calendar + everything inside scroll)
+                              Expanded(
+                                child: _buildSlotsContent(),
                     ),
                   ],
                 ),
@@ -513,6 +575,27 @@ class _SlotBookingScreenState extends State<SlotBookingScreen> with RouteAware {
                 ],
               ],
             ),
+              ),
+            ],
+              ),
+            ],
+          ),
+      ),
+    );
+  }
+
+  Widget _animatedSection({required int index, required Widget child}) {
+    return AnimatedBuilder(
+      animation: _sectionAnimController,
+      builder: (context, _) {
+        return Transform.translate(
+          offset: _sectionSlideAnims[index].value,
+          child: Opacity(
+            opacity: _sectionFadeAnims[index].value,
+            child: child,
+          ),
+        );
+      },
     );
   }
 
@@ -524,8 +607,20 @@ class _SlotBookingScreenState extends State<SlotBookingScreen> with RouteAware {
     return GestureDetector(
       onTap: () => setState(() => _isSidebarVisible = true),
       child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-        color: Colors.white,
+        margin: const EdgeInsets.fromLTRB(16, 8, 16, 12),
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: const Color(0xFFE2E8F0)),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withOpacity(0.04),
+              blurRadius: 8,
+              offset: const Offset(0, 2),
+            ),
+          ],
+        ),
         child: Row(
           children: [
             Icon(Icons.stadium, color: AppColors.primary, size: 20),
@@ -536,7 +631,7 @@ class _SlotBookingScreenState extends State<SlotBookingScreen> with RouteAware {
                 style: const TextStyle(
                   fontWeight: FontWeight.w600,
                   fontSize: 14,
-                  color: AppColors.textPrimary,
+                  color: Color(0xFF0F172A),
                 ),
                 overflow: TextOverflow.ellipsis,
               ),
@@ -605,7 +700,7 @@ class _SlotBookingScreenState extends State<SlotBookingScreen> with RouteAware {
       alignment: Alignment.centerLeft,
       child: Container(
         width: 260,
-        color: Colors.white,
+        color: AppColors.surface,
         child: SafeArea(
           child: Column(
             children: [
@@ -720,7 +815,7 @@ class _SlotBookingScreenState extends State<SlotBookingScreen> with RouteAware {
                           child: Container(
                             padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
                             decoration: BoxDecoration(
-                              color: Colors.white,
+                              color: AppColors.glassFill,
                               borderRadius: BorderRadius.circular(10),
                               border: Border.all(color: AppColors.primary.withOpacity(0.4)),
                             ),
@@ -749,7 +844,20 @@ class _SlotBookingScreenState extends State<SlotBookingScreen> with RouteAware {
 
   Widget _buildDatePicker() {
     return Container(
-      color: Colors.white,
+      margin: const EdgeInsets.fromLTRB(16, 8, 16, 14),
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: const Color(0xFFE2E8F0)),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.04),
+            blurRadius: 8,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
       child: TableCalendar(
         firstDay: DateTime.now().subtract(const Duration(days: 1)),
         lastDay: DateTime.now().add(const Duration(days: 60)),
@@ -762,15 +870,122 @@ class _SlotBookingScreenState extends State<SlotBookingScreen> with RouteAware {
           titleCentered: true,
           headerPadding: EdgeInsets.symmetric(vertical: 8),
         ),
-        calendarStyle: CalendarStyle(
-          selectedDecoration: const BoxDecoration(
-            color: AppColors.primary,
-            shape: BoxShape.circle,
-          ),
-          todayDecoration: BoxDecoration(
-            color: AppColors.primary.withOpacity(0.3),
-            shape: BoxShape.circle,
-          ),
+        calendarStyle: const CalendarStyle(
+          // Hide default decorations — custom builders handle selected/today
+          selectedDecoration: BoxDecoration(color: Colors.transparent),
+          selectedTextStyle: TextStyle(color: Colors.transparent),
+          todayDecoration: BoxDecoration(color: Colors.transparent),
+          todayTextStyle: TextStyle(color: Colors.transparent),
+          defaultTextStyle: TextStyle(color: Color(0xFF64748B)),
+          weekendTextStyle: TextStyle(color: Color(0xFF64748B)),
+          cellPadding: EdgeInsets.symmetric(horizontal: 2, vertical: 2),
+        ),
+        daysOfWeekVisible: false,
+        calendarBuilders: CalendarBuilders(
+          selectedBuilder: (context, day, focusedDay) {
+            final dayLabel = const ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'][day.weekday - 1];
+            return Center(
+              child: AnimatedContainer(
+                duration: const Duration(milliseconds: 200),
+                curve: Curves.easeInOut,
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF4F7DF3),
+                  borderRadius: BorderRadius.circular(22),
+                ),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      dayLabel,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 11,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      '${day.day}',
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.bold,
+                        fontSize: 15,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            );
+          },
+          todayBuilder: (context, day, focusedDay) {
+            final isSelected = isSameDay(day, _selectedDate);
+            final dayLabel = const ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'][day.weekday - 1];
+            return Center(
+              child: AnimatedContainer(
+                duration: const Duration(milliseconds: 200),
+                curve: Curves.easeInOut,
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                decoration: BoxDecoration(
+                  color: isSelected
+                      ? const Color(0xFF4F7DF3)
+                      : const Color(0xFF4F7DF3).withOpacity(0.12),
+                  borderRadius: BorderRadius.circular(22),
+                ),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      dayLabel,
+                      style: TextStyle(
+                        color: isSelected ? Colors.white : const Color(0xFF4F7DF3),
+                        fontSize: 11,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      '${day.day}',
+                      style: TextStyle(
+                        color: isSelected ? Colors.white : const Color(0xFF4F7DF3),
+                        fontWeight: FontWeight.w600,
+                        fontSize: 15,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            );
+          },
+          defaultBuilder: (context, day, focusedDay) {
+            final dayLabel = const ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'][day.weekday - 1];
+            return Center(
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 6),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      dayLabel,
+                      style: const TextStyle(
+                        color: Color(0xFF94A3B8),
+                        fontSize: 11,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      '${day.day}',
+                      style: const TextStyle(
+                        color: Color(0xFF64748B),
+                        fontSize: 15,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            );
+          },
         ),
       ),
     );
@@ -907,9 +1122,10 @@ class _SlotBookingScreenState extends State<SlotBookingScreen> with RouteAware {
             child: Column(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                Icon(Icons.event_busy, size: 48, color: AppColors.textSecondary.withOpacity(0.5)),
+                Icon(Icons.event_busy, size: 48, color: const Color(0xFF94A3B8)),
                 const SizedBox(height: 16),
-                const Text('No slots available for this date'),
+                const Text('No slots available for this date',
+                    style: TextStyle(color: Color(0xFF64748B))),
               ],
             ),
           );
@@ -923,101 +1139,112 @@ class _SlotBookingScreenState extends State<SlotBookingScreen> with RouteAware {
             child: Column(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                Icon(Icons.event_busy, size: 48, color: AppColors.textSecondary.withOpacity(0.5)),
+                Icon(Icons.event_busy, size: 48, color: const Color(0xFF94A3B8)),
                 const SizedBox(height: 16),
-                Text('No slots for Net $_selectedNetNumber'),
+                Text('No slots for Net $_selectedNetNumber',
+                    style: const TextStyle(color: Color(0xFF64748B))),
               ],
             ),
           );
         }
 
         // Group slots by time period
-        // Morning: 6 AM - 12 PM, Afternoon: 12 PM - 6 PM, Evening: 6 PM - 12 AM, Night: 12 AM - 6 AM
         final night = slots.where((s) => _getTimePeriod(s.startTime) == 'Night').toList();
         final morning = slots.where((s) => _getTimePeriod(s.startTime) == 'Morning').toList();
         final afternoon = slots.where((s) => _getTimePeriod(s.startTime) == 'Afternoon').toList();
         final evening = slots.where((s) => _getTimePeriod(s.startTime) == 'Evening').toList();
 
         return SingleChildScrollView(
-          padding: const EdgeInsets.all(16),
+          padding: const EdgeInsets.only(bottom: 24),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // Net indicator with Day toggle - for multi-net turfs
-              if (_selectedTurf != null && _selectedTurf!.numberOfNets > 1)
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-                  margin: const EdgeInsets.only(bottom: 16),
+              // Date picker inside scroll
+              _animatedSection(index: 1, child: _buildDatePicker()),
+              const SizedBox(height: 8),
+
+              // Slot control panel card
+              _animatedSection(
+                index: 2,
+                child: Container(
+                  margin: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+                  padding: const EdgeInsets.all(16),
                   decoration: BoxDecoration(
-                    color: AppColors.primary.withOpacity(0.1),
-                    borderRadius: BorderRadius.circular(12),
-                    border: Border.all(color: AppColors.primary.withOpacity(0.2)),
+                    color: const Color(0xFFF8FAFC),
+                    borderRadius: BorderRadius.circular(18),
+                    border: Border.all(color: const Color(0xFFE2E8F0)),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withOpacity(0.04),
+                        blurRadius: 8,
+                        offset: const Offset(0, 2),
+                      ),
+                    ],
                   ),
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
+                      // Net indicator with Day toggle
                       Row(
-                        mainAxisSize: MainAxisSize.min,
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
                         children: [
-                          Icon(Icons.sports_cricket, size: 18, color: AppColors.primary),
-                          const SizedBox(width: 8),
-                          Text(
-                            'Slots for Net $_selectedNetNumber',
-                            style: TextStyle(
-                              color: AppColors.primary,
-                              fontWeight: FontWeight.bold,
-                              fontSize: 15,
-                            ),
+                          Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(
+                                (_selectedTurf != null && _selectedTurf!.numberOfNets > 1)
+                                    ? Icons.sports_cricket
+                                    : Icons.calendar_today,
+                                size: 18,
+                                color: const Color(0xFF4F7DF3),
+                              ),
+                              const SizedBox(width: 8),
+                              Text(
+                                (_selectedTurf != null && _selectedTurf!.numberOfNets > 1)
+                                    ? 'Net $_selectedNetNumber Slots'
+                                    : 'Today\'s Slots',
+                                style: const TextStyle(
+                                  color: Color(0xFF0F172A),
+                                  fontWeight: FontWeight.w600,
+                                  fontSize: 15,
+                                ),
+                              ),
+                            ],
                           ),
+                          _buildDayToggle(),
                         ],
                       ),
-                      _buildDayToggle(),
+                      const SizedBox(height: 12),
+                      // Legend
+                      _buildLegend(),
                     ],
                   ),
                 ),
-              
-              // For single net turfs, show just the day toggle
-              if (_selectedTurf != null && _selectedTurf!.numberOfNets == 1)
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-                  margin: const EdgeInsets.only(bottom: 16),
-                  decoration: BoxDecoration(
-                    color: AppColors.primary.withOpacity(0.1),
-                    borderRadius: BorderRadius.circular(12),
-                    border: Border.all(color: AppColors.primary.withOpacity(0.2)),
-                  ),
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Icon(Icons.calendar_today, size: 18, color: AppColors.primary),
-                          const SizedBox(width: 8),
-                          Text(
-                            'Today\'s Slots',
-                            style: TextStyle(
-                              color: AppColors.primary,
-                              fontWeight: FontWeight.bold,
-                              fontSize: 15,
-                            ),
-                          ),
-                        ],
-                      ),
-                      _buildDayToggle(),
-                    ],
-                  ),
-                ),
-              
-              // Legend
-              _buildLegend(),
-              const SizedBox(height: 20),
-              
-              // Time Period Sections with inline toggles (always show all 4 divisions)
-              _buildTimePeriodSection('Night', '12 AM - 6 AM', night, Icons.bedtime, 'night', _isNightOpen),
-              _buildTimePeriodSection('Morning', '6 AM - 12 PM', morning, Icons.wb_sunny, 'morning', _isMorningOpen),
-              _buildTimePeriodSection('Afternoon', '12 PM - 6 PM', afternoon, Icons.wb_cloudy, 'afternoon', _isAfternoonOpen),
-              _buildTimePeriodSection('Evening', '6 PM - 12 AM', evening, Icons.nightlight_round, 'evening', _isEveningOpen),
+              ),
+
+              const SizedBox(height: 8),
+
+              // Time Period Sections
+              _animatedSection(
+                index: 3,
+                child: _buildTimePeriodSection('Night', '12 AM - 6 AM', night, Icons.bedtime, 'night', _isNightOpen,
+                    iconColor: const Color(0xFF6366F1), iconBgColor: const Color(0xFFEEF2FF)),
+              ),
+              _animatedSection(
+                index: 4,
+                child: _buildTimePeriodSection('Morning', '6 AM - 12 PM', morning, Icons.wb_sunny, 'morning', _isMorningOpen,
+                    iconColor: const Color(0xFFF59E0B), iconBgColor: const Color(0xFFFFF7ED)),
+              ),
+              _animatedSection(
+                index: 5,
+                child: _buildTimePeriodSection('Afternoon', '12 PM - 6 PM', afternoon, Icons.wb_cloudy, 'afternoon', _isAfternoonOpen,
+                    iconColor: const Color(0xFFFB923C), iconBgColor: const Color(0xFFFFF7ED)),
+              ),
+              _animatedSection(
+                index: 6,
+                child: _buildTimePeriodSection('Evening', '6 PM - 12 AM', evening, Icons.nightlight_round, 'evening', _isEveningOpen,
+                    iconColor: const Color(0xFF8B5CF6), iconBgColor: const Color(0xFFF5F3FF)),
+              ),
             ],
           ),
         );
@@ -1042,7 +1269,7 @@ class _SlotBookingScreenState extends State<SlotBookingScreen> with RouteAware {
     return Container(
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: AppColors.glassFill,
         borderRadius: BorderRadius.circular(12),
       ),
       child: Column(
@@ -1082,73 +1309,102 @@ class _SlotBookingScreenState extends State<SlotBookingScreen> with RouteAware {
     );
   }
 
-  Widget _buildTimePeriodSection(String title, String timeRange, List<SlotModel> slots, IconData icon, String periodKey, bool isOpen) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        // Header with inline toggle
-        Container(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-          margin: const EdgeInsets.only(bottom: 12),
-          decoration: BoxDecoration(
-            color: isOpen ? Colors.white : Colors.grey.shade100,
-            borderRadius: BorderRadius.circular(10),
-            border: Border.all(
-              color: isOpen ? AppColors.primary.withOpacity(0.2) : Colors.grey.shade300,
-            ),
+  Widget _buildTimePeriodSection(String title, String timeRange, List<SlotModel> slots, IconData icon, String periodKey, bool isOpen, {
+    required Color iconColor,
+    required Color iconBgColor,
+  }) {
+    return Container(
+      margin: const EdgeInsets.fromLTRB(16, 0, 16, 18),
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: const Color(0xFFE2E8F0)),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.04),
+            blurRadius: 8,
+            offset: const Offset(0, 2),
           ),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Header row with icon badge, title, time range, and toggle
+          Row(
             children: [
-              Row(
-                children: [
-                  Icon(icon, size: 20, color: isOpen ? AppColors.primary : Colors.grey),
-                  const SizedBox(width: 8),
-                  Text(
-                    title,
-                    style: TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.bold,
-                      color: isOpen ? AppColors.textPrimary : Colors.grey,
+              // Icon with colored background
+              Container(
+                width: 38,
+                height: 38,
+                decoration: BoxDecoration(
+                  color: iconBgColor,
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Center(
+                  child: Icon(icon, size: 20, color: iconColor),
+                ),
+              ),
+              const SizedBox(width: 12),
+              // Title + time range
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      title,
+                      style: TextStyle(
+                        fontSize: 15,
+                        fontWeight: FontWeight.w700,
+                        color: isOpen ? const Color(0xFF0F172A) : AppColors.textSecondary,
+                      ),
                     ),
-                  ),
-                  const SizedBox(width: 8),
-                  Text(
-                    timeRange,
-                    style: TextStyle(
-                      fontSize: 12,
-                      color: isOpen ? AppColors.textSecondary : Colors.grey,
+                    const SizedBox(height: 2),
+                    Text(
+                      timeRange,
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: isOpen ? const Color(0xFF64748B) : AppColors.textSecondary.withOpacity(0.5),
+                      ),
                     ),
-                  ),
-                ],
+                  ],
+                ),
               ),
               _buildInlinePeriodToggle(periodKey, isOpen),
             ],
           ),
-        ),
-        // Slots grid
-        if (slots.isEmpty)
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.all(12),
-            decoration: BoxDecoration(
-              color: Colors.grey.shade50,
-              borderRadius: BorderRadius.circular(10),
-              border: Border.all(color: Colors.grey.shade200),
+          const SizedBox(height: 14),
+          // Slots grid
+          if (slots.isEmpty)
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Colors.grey.shade50,
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: Colors.grey.shade200),
+              ),
+              child: Text(
+                'No slots in this period',
+                style: TextStyle(fontSize: 12, color: AppColors.textSecondary),
+              ),
+            )
+          else
+            GridView.builder(
+              shrinkWrap: true,
+              physics: const NeverScrollableScrollPhysics(),
+              gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                crossAxisCount: 3,
+                crossAxisSpacing: 10,
+                mainAxisSpacing: 10,
+                childAspectRatio: 0.92,
+              ),
+              itemCount: slots.length,
+              itemBuilder: (context, index) => _buildSlotCard(slots[index]),
             ),
-            child: Text(
-              'No slots in this period',
-              style: TextStyle(fontSize: 12, color: AppColors.textSecondary),
-            ),
-          )
-        else
-          Wrap(
-            spacing: 12,
-            runSpacing: 12,
-            children: slots.map((slot) => _buildSlotCard(slot)).toList(),
-          ),
-        const SizedBox(height: 24),
-      ],
+        ],
+      ),
     );
   }
 
@@ -1171,64 +1427,79 @@ class _SlotBookingScreenState extends State<SlotBookingScreen> with RouteAware {
 
     Color bgColor;
     Color textColor;
+    Color borderColor;
     String statusLabel;
     bool showManualOverrideOption = false;
     
     // Determine slot display based on status
     if (isPast) {
-      bgColor = Colors.grey.shade200;
-      textColor = Colors.grey;
+      bgColor = const Color(0xFFF8FAFC);
+      borderColor = const Color(0xFFE2E8F0);
+      textColor = const Color(0xFF94A3B8);
       statusLabel = 'Past';
     } else if (isBooked) {
-      bgColor = AppColors.error.withOpacity(0.1);
-      textColor = AppColors.error;
+      bgColor = const Color(0xFFFEF2F2);
+      borderColor = const Color(0xFFEF4444);
+      textColor = const Color(0xFF991B1B);
       statusLabel = 'Booked';
     } else if (isReserved) {
-      bgColor = Colors.orange.withOpacity(0.1);
-      textColor = Colors.orange;
+      bgColor = const Color(0xFFFFFBEB);
+      borderColor = const Color(0xFFF59E0B);
+      textColor = const Color(0xFF92400E);
       statusLabel = 'Pending';
     } else if (effectivelyClosed) {
       // Slot is closed (blocked or period closed) but can be manually opened
-      bgColor = Colors.grey.shade300;
-      textColor = Colors.grey.shade600;
+      bgColor = const Color(0xFFF8FAFC);
+      borderColor = const Color(0xFFE2E8F0);
+      textColor = const Color(0xFF64748B);
       statusLabel = 'Closed';
       showManualOverrideOption = true;
     } else if (isManuallyOpened && (isBlocked || isPeriodClosed)) {
       // Slot was closed but manually opened by owner
-      bgColor = AppColors.success.withOpacity(0.1);
-      textColor = AppColors.success;
+      bgColor = const Color(0xFFECFDF5);
+      borderColor = const Color(0xFF22C55E);
+      textColor = const Color(0xFF166534);
       statusLabel = 'Open';
       showManualOverrideOption = true;
     } else {
-      bgColor = AppColors.success.withOpacity(0.1);
-      textColor = AppColors.success;
+      bgColor = const Color(0xFFECFDF5);
+      borderColor = const Color(0xFF22C55E);
+      textColor = const Color(0xFF166534);
       statusLabel = 'Available';
     }
 
     // Determine if slot is tappable (all non-past slots are tappable)
     final isTappable = !isPast;
 
-    return GestureDetector(
+    return _SlotTapWrapper(
+      enabled: isTappable,
       onTap: isTappable ? () => _showSlotActions(slot, isPeriodClosed: isPeriodClosed, isManuallyOpened: isManuallyOpened) : null,
       child: Container(
-        width: 100,
         padding: const EdgeInsets.all(12),
         decoration: BoxDecoration(
           color: bgColor,
-          borderRadius: BorderRadius.circular(12),
+          borderRadius: BorderRadius.circular(16),
           border: Border.all(
-            color: isManuallyOpened && isPeriodClosed 
-                ? AppColors.success 
-                : textColor.withOpacity(0.3),
+            color: isManuallyOpened && isPeriodClosed
+                ? const Color(0xFF22C55E)
+                : borderColor,
             width: isManuallyOpened && isPeriodClosed ? 2 : 1,
           ),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withOpacity(0.04),
+              blurRadius: 6,
+              offset: const Offset(0, 2),
+            ),
+          ],
         ),
         child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
           children: [
             Text(
               slot.displayTimeRange.split(' - ')[0],
               style: TextStyle(
-                fontWeight: FontWeight.bold,
+                fontWeight: FontWeight.w700,
                 color: textColor,
                 fontSize: 13,
               ),
@@ -1237,26 +1508,27 @@ class _SlotBookingScreenState extends State<SlotBookingScreen> with RouteAware {
             if (effectivelyClosed)
               Icon(Icons.lock, size: 14, color: textColor)
             else if (isManuallyOpened && (isBlocked || isPeriodClosed))
-              Icon(Icons.lock_open, size: 14, color: AppColors.success)
+              Icon(Icons.lock_open, size: 14, color: const Color(0xFF166534))
             else
               Text(
                 '₹${slot.price.toInt()}',
                 style: TextStyle(
-                  fontSize: 11,
-                  color: textColor.withOpacity(0.8),
+                  fontSize: 12,
+                  fontWeight: FontWeight.w500,
+                  color: textColor.withOpacity(0.85),
                 ),
               ),
             const SizedBox(height: 4),
             Container(
-              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
               decoration: BoxDecoration(
-                color: textColor.withOpacity(0.15),
-                borderRadius: BorderRadius.circular(4),
+                color: textColor.withOpacity(0.1),
+                borderRadius: BorderRadius.circular(6),
               ),
               child: Text(
                 statusLabel,
                 style: TextStyle(
-                  fontSize: 9,
+                  fontSize: 10,
                   fontWeight: FontWeight.w600,
                   color: textColor,
                 ),
@@ -1307,11 +1579,11 @@ class _SlotBookingScreenState extends State<SlotBookingScreen> with RouteAware {
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
-      backgroundColor: Colors.transparent,
+      backgroundColor: AppColors.background,
       builder: (context) => Container(
         padding: const EdgeInsets.all(24),
         decoration: const BoxDecoration(
-          color: Colors.white,
+          color: AppColors.surface,
           borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
         ),
         child: Column(
@@ -1404,6 +1676,9 @@ class _SlotBookingScreenState extends State<SlotBookingScreen> with RouteAware {
                 'Open This Slot',
                 Icons.lock_open,
                 AppColors.success,
+                bgColor: const Color(0xFFECFDF5),
+                borderColor: const Color(0xFF22C55E),
+                textColor: const Color(0xFF166534),
                 () {
                   Navigator.pop(context);
                   _toggleSlotManualOverride(slot.slotId);
@@ -1420,12 +1695,7 @@ class _SlotBookingScreenState extends State<SlotBookingScreen> with RouteAware {
                       overrideMarker: isClosedDay ? 'Day opened by owner' : null,
                     );
                   }
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(
-                      content: Text('Slot opened - You can now create a booking'),
-                      backgroundColor: AppColors.success,
-                    ),
-                  );
+                  _showPremiumToast(context, 'Slot opened - You can now create a booking', type: _ToastType.success);
                 },
               ),
               const SizedBox(height: 12),
@@ -1437,6 +1707,9 @@ class _SlotBookingScreenState extends State<SlotBookingScreen> with RouteAware {
                 'Close This Slot',
                 Icons.lock,
                 Colors.grey,
+                bgColor: const Color(0xFFF1F5F9),
+                borderColor: const Color(0xFF94A3B8),
+                textColor: const Color(0xFF475569),
                 () {
                   Navigator.pop(context);
                   _toggleSlotManualOverride(slot.slotId);
@@ -1448,12 +1721,7 @@ class _SlotBookingScreenState extends State<SlotBookingScreen> with RouteAware {
                     authProvider.currentUserId ?? '',
                     'Closed by owner',
                   );
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(
-                      content: Text('Slot closed'),
-                      backgroundColor: Colors.grey,
-                    ),
-                  );
+                  _showPremiumToast(context, 'Slot closed', type: _ToastType.info);
                 },
               ),
               const SizedBox(height: 12),
@@ -1474,6 +1742,9 @@ class _SlotBookingScreenState extends State<SlotBookingScreen> with RouteAware {
                 'Close Slot',
                 Icons.lock,
                 Colors.grey,
+                bgColor: const Color(0xFFF1F5F9),
+                borderColor: const Color(0xFF94A3B8),
+                textColor: const Color(0xFF475569),
                 () {
                   Navigator.pop(context);
                   _blockSlot(slot);
@@ -1486,6 +1757,9 @@ class _SlotBookingScreenState extends State<SlotBookingScreen> with RouteAware {
                 'Mark Payment Received',
                 Icons.check_circle,
                 AppColors.success,
+                bgColor: const Color(0xFFECFDF5),
+                borderColor: const Color(0xFF22C55E),
+                textColor: const Color(0xFF166534),
                 () async {
                   Navigator.pop(context);
                   await _markPaymentAndUpdateSlot(slot);
@@ -1496,6 +1770,9 @@ class _SlotBookingScreenState extends State<SlotBookingScreen> with RouteAware {
                 'Cancel Booking',
                 Icons.cancel,
                 AppColors.error,
+                bgColor: const Color(0xFFFEF2F2),
+                borderColor: const Color(0xFFEF4444),
+                textColor: const Color(0xFF991B1B),
                 () async {
                   Navigator.pop(context);
                   await _cancelBookingForSlot(slot);
@@ -1518,6 +1795,9 @@ class _SlotBookingScreenState extends State<SlotBookingScreen> with RouteAware {
                 'Cancel Booking',
                 Icons.cancel,
                 AppColors.error,
+                bgColor: const Color(0xFFFEF2F2),
+                borderColor: const Color(0xFFEF4444),
+                textColor: const Color(0xFF991B1B),
                 () async {
                   Navigator.pop(context);
                   await _cancelBookingForSlot(slot);
@@ -1548,9 +1828,7 @@ class _SlotBookingScreenState extends State<SlotBookingScreen> with RouteAware {
 
     if (booking == null || !mounted) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Payment details not found')),
-        );
+        _showPremiumToast(context, 'Payment details not found', type: _ToastType.warning);
       }
       return;
     }
@@ -1560,11 +1838,11 @@ class _SlotBookingScreenState extends State<SlotBookingScreen> with RouteAware {
 
     showModalBottomSheet(
       context: context,
-      backgroundColor: Colors.transparent,
+      backgroundColor: AppColors.background,
       builder: (context) => Container(
         padding: const EdgeInsets.all(20),
         decoration: const BoxDecoration(
-          color: Colors.white,
+          color: AppColors.surface,
           borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
         ),
         child: Column(
@@ -1621,9 +1899,7 @@ class _SlotBookingScreenState extends State<SlotBookingScreen> with RouteAware {
 
     if (booking == null) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Booking not found')),
-        );
+        _showPremiumToast(context, 'Booking not found', type: _ToastType.warning);
       }
       return;
     }
@@ -1636,9 +1912,7 @@ class _SlotBookingScreenState extends State<SlotBookingScreen> with RouteAware {
     );
 
     if (success && mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Booking cancelled'), backgroundColor: Colors.green),
-      );
+      _showPremiumToast(context, 'Booking cancelled', type: _ToastType.success);
       _loadSlots();
     }
   }
@@ -1654,24 +1928,40 @@ class _SlotBookingScreenState extends State<SlotBookingScreen> with RouteAware {
       _loadSlots();
       
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Payment marked as received'), backgroundColor: Colors.green),
-        );
+        _showPremiumToast(context, 'Payment marked as received', type: _ToastType.success);
       }
     }
   }
 
-  Widget _buildActionButton(String label, IconData icon, Color color, VoidCallback onTap) {
+  Widget _buildActionButton(String label, IconData icon, Color color, VoidCallback onTap, {Color? bgColor, Color? borderColor, Color? textColor}) {
+    final bg = bgColor ?? const Color(0xFFEFF6FF);
+    final bdr = borderColor ?? const Color(0xFF3B82F6);
+    final txt = textColor ?? const Color(0xFF1D4ED8);
     return SizedBox(
       width: double.infinity,
-      child: ElevatedButton.icon(
-        onPressed: onTap,
-        icon: Icon(icon, color: Colors.white),
-        label: Text(label),
-        style: ElevatedButton.styleFrom(
-          backgroundColor: color,
-          padding: const EdgeInsets.symmetric(vertical: 14),
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      height: 52,
+      child: Material(
+        color: bg,
+        borderRadius: BorderRadius.circular(28),
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(28),
+          splashColor: bdr.withOpacity(0.15),
+          highlightColor: bdr.withOpacity(0.10),
+          child: Container(
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(28),
+              border: Border.all(color: bdr, width: 1),
+            ),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(icon, color: txt, size: 20),
+                const SizedBox(width: 10),
+                Text(label, style: TextStyle(color: txt, fontSize: 15, fontWeight: FontWeight.w600)),
+              ],
+            ),
+          ),
         ),
       ),
     );
@@ -1786,291 +2076,480 @@ class _BookingDialogState extends State<_BookingDialog> {
   Widget build(BuildContext context) {
     final dateStr = '${widget.selectedDate.day}/${widget.selectedDate.month}/${widget.selectedDate.year}';
     
+    // Month names for ticket-style date
+    const months = ['', 'JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN', 'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC'];
+    final ticketDate = '${widget.selectedDate.day.toString().padLeft(2, '0')}. ${months[widget.selectedDate.month]} ${widget.selectedDate.year}';
+    final netLabel = widget.turf.numberOfNets > 1 ? 'Net ${widget.selectedNetNumber}' : null;
+    
     return Dialog(
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-      child: Container(
-        width: 400,
-        padding: const EdgeInsets.all(24),
-        child: Form(
-          key: _formKey,
-          child: SingleChildScrollView(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                // Header
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    const Text(
-                      'Create Booking',
-                      style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
-                    ),
-                    IconButton(
-                      onPressed: () => Navigator.pop(context),
-                      icon: const Icon(Icons.close),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 16),
-                
-                // Slot Info Card
-                Container(
-                  padding: const EdgeInsets.all(16),
-                  decoration: BoxDecoration(
-                    color: AppColors.primary.withOpacity(0.1),
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  child: Column(
-                    children: [
-                      Row(
-                        children: [
-                          Icon(Icons.stadium, color: AppColors.primary, size: 20),
-                          const SizedBox(width: 8),
-                          Expanded(
-                            child: Text(
-                              widget.turf.turfName,
-                              style: const TextStyle(fontWeight: FontWeight.w600),
-                            ),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 12),
-                      Row(
-                        children: [
-                          Expanded(
-                            child: Row(
-                              children: [
-                                Icon(Icons.calendar_today, size: 16, color: AppColors.textSecondary),
-                                const SizedBox(width: 6),
-                                Text(dateStr, style: TextStyle(color: AppColors.textSecondary)),
-                              ],
-                            ),
-                          ),
-                          Expanded(
-                            child: Row(
-                              children: [
-                                Icon(Icons.access_time, size: 16, color: AppColors.textSecondary),
-                                const SizedBox(width: 6),
-                                Text(widget.slot.displayTimeRange, style: TextStyle(color: AppColors.textSecondary)),
-                              ],
-                            ),
-                          ),
-                        ],
-                      ),
-                      const Divider(height: 24),
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        children: [
-                          const Text('Booking Amount', style: TextStyle(fontWeight: FontWeight.w500)),
-                          Row(
-                            children: [
-                              SizedBox(
-                                width: 100,
-                                child: TextFormField(
-                                  controller: _bookingAmountController,
-                                  keyboardType: TextInputType.number,
-                                  inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-                                  textAlign: TextAlign.right,
-                                  style: TextStyle(
-                                    fontSize: 18,
-                                    fontWeight: FontWeight.bold,
-                                    color: AppColors.primary,
-                                  ),
-                                  decoration: InputDecoration(
-                                    prefixText: '₹',
-                                    prefixStyle: TextStyle(
-                                      fontSize: 18,
-                                      fontWeight: FontWeight.bold,
-                                      color: AppColors.primary,
-                                    ),
-                                    contentPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                                    isDense: true,
-                                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
-                                  ),
-                                  validator: (v) {
-                                    if (v?.isEmpty == true) return 'Required';
-                                    final amount = double.tryParse(v!) ?? 0;
-                                    if (amount <= 0) return 'Invalid';
-                                    return null;
-                                  },
-                                  onChanged: (_) => setState(() {}),
-                                ),
-                              ),
-                              if (_isPeakRate()) ...[
-                                const SizedBox(width: 8),
-                                Container(
-                                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                                  decoration: BoxDecoration(
-                                    color: Colors.orange.withOpacity(0.2),
-                                    borderRadius: BorderRadius.circular(4),
-                                  ),
-                                  child: const Text(
-                                    'Peak',
-                                    style: TextStyle(fontSize: 10, color: Colors.orange, fontWeight: FontWeight.w600),
-                                  ),
-                                ),
-                              ],
-                            ],
-                          ),
-                        ],
-                      ),
-                    ],
-                  ),
-                ),
-                const SizedBox(height: 20),
-                
-                // Customer Details
-                const Text('Customer Details', style: TextStyle(fontWeight: FontWeight.bold)),
-                const SizedBox(height: 12),
-                
-                TextFormField(
-                  controller: _nameController,
-                  decoration: InputDecoration(
-                    labelText: 'Customer Name',
-                    prefixIcon: const Icon(Icons.person_outline),
-                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-                    filled: true,
-                    fillColor: Colors.grey.shade50,
-                  ),
-                  validator: (v) => v?.isEmpty == true ? 'Please enter name' : null,
-                ),
-                const SizedBox(height: 12),
-                
-                TextFormField(
-                  controller: _phoneController,
-                  keyboardType: TextInputType.phone,
-                  maxLength: 10,
-                  inputFormatters: [
-                    FilteringTextInputFormatter.digitsOnly,
-                    LengthLimitingTextInputFormatter(10),
-                  ],
-                  decoration: InputDecoration(
-                    labelText: 'Phone Number',
-                    prefixIcon: const Icon(Icons.phone_outlined),
-                    counterText: '',
-                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-                    filled: true,
-                    fillColor: Colors.grey.shade50,
-                  ),
-                  validator: (v) {
-                    if (v?.isEmpty == true) return 'Please enter phone number';
-                    if (v!.length != 10) return 'Phone number must be 10 digits';
-                    return null;
-                  },
-                ),
-                const SizedBox(height: 16),
-                
-                // Advance Amount (Required - enter 0 if no advance)
-                Row(
-                  children: [
-                    const Text('Advance Amount', style: TextStyle(fontWeight: FontWeight.bold)),
-                    const SizedBox(width: 4),
-                    Text(
-                      '(Enter 0 if no advance)',
-                      style: TextStyle(fontSize: 12, color: AppColors.textSecondary),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 12),
-                
-                TextFormField(
-                  controller: _advanceController,
-                  keyboardType: TextInputType.number,
-                  inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-                  decoration: InputDecoration(
-                    labelText: 'Advance Amount',
-                    prefixIcon: const Icon(Icons.currency_rupee),
-                    hintText: '0',
-                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-                    filled: true,
-                    fillColor: Colors.grey.shade50,
-                  ),
-                  validator: (v) {
-                    if (v?.isEmpty == true) return 'Please enter advance amount (0 if none)';
-                    final advance = double.tryParse(v!) ?? 0;
-                    if (advance < 0) return 'Cannot be negative';
-                    if (advance > _bookingAmount) return 'Cannot exceed booking amount';
-                    return null;
-                  },
-                  onChanged: (_) => setState(() {}),
-                ),
-                const SizedBox(height: 8),
-                
-                // Payment Status Indicator
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                  decoration: BoxDecoration(
-                    color: _advanceAmount > 0 ? Colors.orange.withOpacity(0.1) : Colors.blue.withOpacity(0.1),
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: Row(
-                    children: [
-                      Icon(
-                        Icons.info,
-                        size: 16,
-                        color: _advanceAmount > 0 ? Colors.orange : Colors.blue,
-                      ),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: Text(
-                          _advanceAmount >= _bookingAmount
-                              ? 'Full payment: ₹${_advanceAmount.toInt()} (pending confirmation)'
-                              : _advanceAmount > 0
-                                  ? 'Advance: ₹${_advanceAmount.toInt()} | Remaining: ₹${(_bookingAmount - _advanceAmount).toInt()}'
-                                  : 'Payment: ₹${_bookingAmount.toInt()} (Pay at Turf)',
-                          style: TextStyle(
-                            color: _advanceAmount > 0 ? Colors.orange : Colors.blue,
-                            fontWeight: FontWeight.w500,
-                            fontSize: 12,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                const SizedBox(height: 16),
-                
-                // Booking Source
-                const Text('Booking Source', style: TextStyle(fontWeight: FontWeight.bold)),
-                const SizedBox(height: 12),
-                
-                Row(
-                  children: [
-                    Expanded(child: _buildSourceChip(BookingSource.phone, Icons.phone, 'Phone')),
-                    const SizedBox(width: 12),
-                    Expanded(child: _buildSourceChip(BookingSource.walkIn, Icons.directions_walk, 'Walk-In')),
-                  ],
-                ),
-                const SizedBox(height: 24),
-                
-                // Create Booking Button
-                SizedBox(
-                  width: double.infinity,
-                  height: 52,
-                  child: ElevatedButton(
-                    onPressed: _isLoading ? null : _createBooking,
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: AppColors.primary,
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-                    ),
-                    child: _isLoading
-                        ? const SizedBox(
-                            width: 24,
-                            height: 24,
-                            child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2),
-                          )
-                        : const Text(
-                            'Create Booking',
-                            style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
-                          ),
-                  ),
+      backgroundColor: Colors.transparent,
+      elevation: 0,
+      insetPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 24),
+      child: Form(
+        key: _formKey,
+        child: SingleChildScrollView(
+          child: Container(
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(20),
+              boxShadow: [
+                BoxShadow(
+                  color: const Color(0xFF2563EB).withOpacity(0.12),
+                  blurRadius: 32,
+                  offset: const Offset(0, 12),
                 ),
               ],
+            ),
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(20),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  // ═══════════════════════════════════════════════════
+                  // TOP SECTION — Ticket info grid (like airline ticket)
+                  // ═══════════════════════════════════════════════════
+                  Container(
+                    width: double.infinity,
+                    decoration: const BoxDecoration(
+                      gradient: LinearGradient(
+                        colors: [Color(0xFF3B82F6), Color(0xFF2563EB)],
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                      ),
+                    ),
+                    child: Stack(
+                      children: [
+                        // Diagonal stripe accents on left edge
+                        Positioned(
+                          left: 0,
+                          top: 0,
+                          bottom: 0,
+                          child: CustomPaint(
+                            size: const Size(6, double.infinity),
+                            painter: _TicketEdgePainter(),
+                          ),
+                        ),
+                        // Diagonal stripe accents on right edge
+                        Positioned(
+                          right: 0,
+                          top: 0,
+                          bottom: 0,
+                          child: CustomPaint(
+                            size: const Size(6, double.infinity),
+                            painter: _TicketEdgePainter(),
+                          ),
+                        ),
+                        Padding(
+                          padding: const EdgeInsets.fromLTRB(22, 20, 22, 18),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              // Title row + close
+                              Row(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Expanded(
+                                    child: Text(
+                                      'Create Booking',
+                                      style: const TextStyle(
+                                        fontSize: 18,
+                                        fontWeight: FontWeight.w600,
+                                        color: Colors.white,
+                                      ),
+                                    ),
+                                  ),
+                                  GestureDetector(
+                                    onTap: () => Navigator.pop(context),
+                                    child: Container(
+                                      padding: const EdgeInsets.all(5),
+                                      decoration: BoxDecoration(
+                                        color: Colors.white.withOpacity(0.18),
+                                        borderRadius: BorderRadius.circular(8),
+                                      ),
+                                      child: const Icon(Icons.close_rounded, color: Colors.white, size: 16),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(height: 2),
+                              // Venue name (large)
+                              Text(
+                                widget.turf.turfName,
+                                style: const TextStyle(
+                                  fontSize: 24,
+                                  fontWeight: FontWeight.w700,
+                                  color: Colors.white,
+                                  height: 1.2,
+                                ),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                              const SizedBox(height: 20),
+                              // 2-column grid: Row 1 — Net | Date
+                              Row(
+                                children: [
+                                  Expanded(
+                                    child: _ticketField('Net', netLabel ?? 'Net 1'),
+                                  ),
+                                  const SizedBox(width: 16),
+                                  Expanded(
+                                    child: _ticketField('Date', ticketDate),
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(height: 18),
+                              // 2-column grid: Row 2 — Time | Amount
+                              Row(
+                                children: [
+                                  Expanded(
+                                    child: _ticketField('Time', widget.slot.displayTimeRange),
+                                  ),
+                                  const SizedBox(width: 16),
+                                  Expanded(
+                                    child: Column(
+                                      crossAxisAlignment: CrossAxisAlignment.start,
+                                      children: [
+                                        Text('Amount', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w500, color: Colors.white.withOpacity(0.78))),
+                                        const SizedBox(height: 4),
+                                        Row(
+                                          children: [
+                                            IntrinsicWidth(
+                                              child: ConstrainedBox(
+                                                constraints: const BoxConstraints(minWidth: 50, maxWidth: 120),
+                                                child: TextFormField(
+                                                  controller: _bookingAmountController,
+                                                  keyboardType: TextInputType.number,
+                                                  inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+                                                  textAlign: TextAlign.left,
+                                                  cursorColor: Colors.white,
+                                                  style: const TextStyle(
+                                                    fontSize: 18,
+                                                    fontWeight: FontWeight.w700,
+                                                    color: Colors.white,
+                                                  ),
+                                                  decoration: const InputDecoration(
+                                                    prefixText: '₹',
+                                                    prefixStyle: TextStyle(
+                                                      fontSize: 18,
+                                                      fontWeight: FontWeight.w700,
+                                                      color: Colors.white,
+                                                    ),
+                                                    contentPadding: EdgeInsets.zero,
+                                                    isDense: true,
+                                                    border: InputBorder.none,
+                                                    filled: false,
+                                                  ),
+                                                  validator: (v) {
+                                                    if (v?.isEmpty == true) return 'Required';
+                                                    final amount = double.tryParse(v!) ?? 0;
+                                                    if (amount <= 0) return 'Invalid';
+                                                    return null;
+                                                  },
+                                                  onChanged: (_) => setState(() {}),
+                                                ),
+                                              ),
+                                            ),
+                                            if (_isPeakRate()) ...[
+                                              const SizedBox(width: 6),
+                                              Container(
+                                                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                                decoration: BoxDecoration(
+                                                  color: Colors.white.withOpacity(0.20),
+                                                  borderRadius: BorderRadius.circular(6),
+                                                ),
+                                                child: Text('Peak', style: TextStyle(fontSize: 9, color: Colors.white, fontWeight: FontWeight.w600)),
+                                              ),
+                                            ],
+                                          ],
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  // ═══════════════════════════════════════════════════
+                  // TICKET TEAR — cutouts + dashed line
+                  // ═══════════════════════════════════════════════════
+                  SizedBox(
+                    height: 28,
+                    child: Stack(
+                      clipBehavior: Clip.none,
+                      children: [
+                        // Fill
+                        Positioned.fill(child: Container(color: Colors.white)),
+                        // Dashed line
+                        Center(
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(horizontal: 20),
+                            child: CustomPaint(
+                              size: const Size(double.infinity, 1),
+                              painter: _TicketDashedLinePainter(),
+                            ),
+                          ),
+                        ),
+                        // Left notch
+                        Positioned(
+                          left: -14,
+                          top: 0,
+                          bottom: 0,
+                          child: Center(
+                            child: Container(
+                              width: 28,
+                              height: 28,
+                              decoration: BoxDecoration(
+                                shape: BoxShape.circle,
+                                color: Colors.black.withOpacity(0.55),
+                              ),
+                            ),
+                          ),
+                        ),
+                        // Right notch
+                        Positioned(
+                          right: -14,
+                          top: 0,
+                          bottom: 0,
+                          child: Center(
+                            child: Container(
+                              width: 28,
+                              height: 28,
+                              decoration: BoxDecoration(
+                                shape: BoxShape.circle,
+                                color: Colors.black.withOpacity(0.55),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  // ═══════════════════════════════════════════════════
+                  // BOTTOM SECTION — Form with stumps watermark
+                  // ═══════════════════════════════════════════════════
+                  Container(
+                    width: double.infinity,
+                    color: Colors.white,
+                    child: Stack(
+                      children: [
+                        // Stumps watermark
+                        Positioned(
+                          right: 10,
+                          bottom: 60,
+                          child: CustomPaint(
+                            size: const Size(90, 110),
+                            painter: _StumpsPainter(color: const Color(0xFF2563EB).withOpacity(0.04)),
+                          ),
+                        ),
+                        Padding(
+                          padding: const EdgeInsets.fromLTRB(22, 4, 22, 20),
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              // ── Customer ──
+                              Text('Customer', style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w500, color: Color(0xFF64748B))),
+                              const SizedBox(height: 10),
+                              TextFormField(
+                                controller: _nameController,
+                                decoration: InputDecoration(
+                                  hintText: 'Full Name',
+                                  hintStyle: const TextStyle(fontSize: 14, color: Color(0xFF94A3B8)),
+                                  prefixIcon: const Icon(Icons.person_outline_rounded, color: Color(0xFF64748B), size: 20),
+                                  border: OutlineInputBorder(
+                                    borderRadius: BorderRadius.circular(14),
+                                    borderSide: const BorderSide(color: Color(0xFFE2E8F0)),
+                                  ),
+                                  enabledBorder: OutlineInputBorder(
+                                    borderRadius: BorderRadius.circular(14),
+                                    borderSide: const BorderSide(color: Color(0xFFE2E8F0)),
+                                  ),
+                                  focusedBorder: OutlineInputBorder(
+                                    borderRadius: BorderRadius.circular(14),
+                                    borderSide: const BorderSide(color: Color(0xFF3B82F6), width: 1.5),
+                                  ),
+                                  filled: true,
+                                  fillColor: const Color(0xFFF8FAFC),
+                                  contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 13),
+                                ),
+                                validator: (v) => v?.isEmpty == true ? 'Please enter name' : null,
+                              ),
+                              const SizedBox(height: 12),
+                              TextFormField(
+                                controller: _phoneController,
+                                keyboardType: TextInputType.phone,
+                                maxLength: 10,
+                                inputFormatters: [
+                                  FilteringTextInputFormatter.digitsOnly,
+                                  LengthLimitingTextInputFormatter(10),
+                                ],
+                                decoration: InputDecoration(
+                                  hintText: 'Phone Number',
+                                  hintStyle: const TextStyle(fontSize: 14, color: Color(0xFF94A3B8)),
+                                  prefixIcon: const Icon(Icons.phone_outlined, color: Color(0xFF64748B), size: 20),
+                                  counterText: '',
+                                  border: OutlineInputBorder(
+                                    borderRadius: BorderRadius.circular(14),
+                                    borderSide: const BorderSide(color: Color(0xFFE2E8F0)),
+                                  ),
+                                  enabledBorder: OutlineInputBorder(
+                                    borderRadius: BorderRadius.circular(14),
+                                    borderSide: const BorderSide(color: Color(0xFFE2E8F0)),
+                                  ),
+                                  focusedBorder: OutlineInputBorder(
+                                    borderRadius: BorderRadius.circular(14),
+                                    borderSide: const BorderSide(color: Color(0xFF3B82F6), width: 1.5),
+                                  ),
+                                  filled: true,
+                                  fillColor: const Color(0xFFF8FAFC),
+                                  contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 13),
+                                ),
+                                validator: (v) {
+                                  if (v?.isEmpty == true) return 'Please enter phone number';
+                                  if (v!.length != 10) return 'Phone number must be 10 digits';
+                                  return null;
+                                },
+                              ),
+                              const SizedBox(height: 18),
+
+                              // ── Advance ──
+                              Row(
+                                children: [
+                                  Text('Advance', style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w500, color: Color(0xFF64748B))),
+                                  const SizedBox(width: 6),
+                                  Text('(Enter 0 if none)', style: TextStyle(fontSize: 10, color: const Color(0xFFCBD5E1))),
+                                ],
+                              ),
+                              const SizedBox(height: 10),
+                              TextFormField(
+                                controller: _advanceController,
+                                keyboardType: TextInputType.number,
+                                inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+                                decoration: InputDecoration(
+                                  hintText: '0',
+                                  hintStyle: const TextStyle(fontSize: 14, color: Color(0xFF94A3B8)),
+                                  prefixIcon: const Icon(Icons.currency_rupee_rounded, color: Color(0xFF64748B), size: 20),
+                                  border: OutlineInputBorder(
+                                    borderRadius: BorderRadius.circular(14),
+                                    borderSide: const BorderSide(color: Color(0xFFE2E8F0)),
+                                  ),
+                                  enabledBorder: OutlineInputBorder(
+                                    borderRadius: BorderRadius.circular(14),
+                                    borderSide: const BorderSide(color: Color(0xFFE2E8F0)),
+                                  ),
+                                  focusedBorder: OutlineInputBorder(
+                                    borderRadius: BorderRadius.circular(14),
+                                    borderSide: const BorderSide(color: Color(0xFF3B82F6), width: 1.5),
+                                  ),
+                                  filled: true,
+                                  fillColor: const Color(0xFFF8FAFC),
+                                  contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 13),
+                                ),
+                                validator: (v) {
+                                  if (v?.isEmpty == true) return 'Please enter advance amount (0 if none)';
+                                  final advance = double.tryParse(v!) ?? 0;
+                                  if (advance < 0) return 'Cannot be negative';
+                                  if (advance > _bookingAmount) return 'Cannot exceed booking amount';
+                                  return null;
+                                },
+                                onChanged: (_) => setState(() {}),
+                              ),
+                              const SizedBox(height: 10),
+
+                              // Payment info
+                              Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+                                decoration: BoxDecoration(
+                                  color: const Color(0xFFEEF4FF),
+                                  borderRadius: BorderRadius.circular(12),
+                                ),
+                                child: Row(
+                                  children: [
+                                    const Icon(Icons.info_outline_rounded, size: 14, color: Color(0xFF2563EB)),
+                                    const SizedBox(width: 8),
+                                    Expanded(
+                                      child: Text(
+                                        _advanceAmount >= _bookingAmount
+                                            ? 'Full payment: ₹${_advanceAmount.toInt()} (pending confirmation)'
+                                            : _advanceAmount > 0
+                                                ? 'Advance: ₹${_advanceAmount.toInt()} | Remaining: ₹${(_bookingAmount - _advanceAmount).toInt()}'
+                                                : 'Payment: ₹${_bookingAmount.toInt()} (Pay at Turf)',
+                                        style: const TextStyle(
+                                          color: Color(0xFF2563EB),
+                                          fontWeight: FontWeight.w500,
+                                          fontSize: 11,
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              const SizedBox(height: 18),
+
+                              // ── Source ──
+                              Text('Booking Source', style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w500, color: Color(0xFF64748B))),
+                              const SizedBox(height: 10),
+                              _buildSegmentedSource(),
+                              const SizedBox(height: 22),
+
+                              // ── Confirm button ──
+                              SizedBox(
+                                width: double.infinity,
+                                height: 48,
+                                child: ElevatedButton(
+                                  onPressed: _isLoading ? null : _createBooking,
+                                  style: ElevatedButton.styleFrom(
+                                    backgroundColor: const Color(0xFF3B82F6),
+                                    foregroundColor: Colors.white,
+                                    elevation: 0,
+                                    shadowColor: const Color(0xFF3B82F6).withOpacity(0.18),
+                                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                                  ).copyWith(
+                                    elevation: WidgetStateProperty.all(4),
+                                  ),
+                                  child: _isLoading
+                                      ? const SizedBox(
+                                          width: 22,
+                                          height: 22,
+                                          child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2),
+                                        )
+                                      : const Text(
+                                          'Confirm Booking',
+                                          style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600, letterSpacing: 0.3),
+                                        ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
             ),
           ),
         ),
       ),
+    );
+  }
+
+  Widget _ticketField(String label, String value) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(label, style: TextStyle(fontSize: 12, fontWeight: FontWeight.w500, color: Colors.white.withOpacity(0.78))),
+        const SizedBox(height: 4),
+        Text(
+          value,
+          style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: Colors.white),
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+        ),
+      ],
     );
   }
 
@@ -2079,31 +2558,109 @@ class _BookingDialogState extends State<_BookingDialog> {
     return hour >= 18 || hour < 6; // Evening and night are peak
   }
 
-  Widget _buildSourceChip(BookingSource source, IconData icon, String label) {
-    final isSelected = _bookingSource == source;
-    return GestureDetector(
-      onTap: () => setState(() => _bookingSource = source),
-      child: Container(
-        padding: const EdgeInsets.symmetric(vertical: 12),
-        decoration: BoxDecoration(
-          color: isSelected ? AppColors.primary : Colors.grey.shade50,
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: isSelected ? AppColors.primary : Colors.grey.shade300),
-        ),
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(icon, color: isSelected ? Colors.white : AppColors.textSecondary, size: 18),
-            const SizedBox(width: 6),
-            Text(
-              label,
-              style: TextStyle(
-                fontWeight: FontWeight.w600,
-                color: isSelected ? Colors.white : AppColors.textPrimary,
+  Widget _buildSegmentedSource() {
+    final isPhone = _bookingSource == BookingSource.phone;
+    return Container(
+      height: 44,
+      decoration: BoxDecoration(
+        color: const Color(0xFFF1F5F9),
+        borderRadius: BorderRadius.circular(22),
+        border: Border.all(color: const Color(0xFFE2E8F0)),
+      ),
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final halfWidth = constraints.maxWidth / 2;
+          return Stack(
+            children: [
+              // Sliding thumb
+              AnimatedPositioned(
+                duration: const Duration(milliseconds: 220),
+                curve: Curves.easeInOut,
+                left: isPhone ? 0 : halfWidth,
+                top: 0,
+                bottom: 0,
+                width: halfWidth,
+                child: Padding(
+                  padding: const EdgeInsets.all(3),
+                  child: DecoratedBox(
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF3B82F6),
+                      borderRadius: BorderRadius.circular(20),
+                      boxShadow: [
+                        BoxShadow(
+                          color: const Color(0xFF3B82F6).withOpacity(0.25),
+                          blurRadius: 6,
+                          offset: const Offset(0, 2),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
               ),
-            ),
-          ],
-        ),
+              // Tap targets
+              Row(
+                children: [
+                  Expanded(
+                    child: GestureDetector(
+                      behavior: HitTestBehavior.opaque,
+                      onTap: () => setState(() => _bookingSource = BookingSource.phone),
+                      child: Center(
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          crossAxisAlignment: CrossAxisAlignment.center,
+                          children: [
+                            AnimatedSwitcher(
+                              duration: const Duration(milliseconds: 220),
+                              child: Icon(Icons.phone, key: ValueKey(isPhone), size: 15, color: isPhone ? Colors.white : const Color(0xFF475569)),
+                            ),
+                            const SizedBox(width: 5),
+                            AnimatedDefaultTextStyle(
+                              duration: const Duration(milliseconds: 220),
+                              style: TextStyle(
+                                fontSize: 13,
+                                fontWeight: FontWeight.w600,
+                                color: isPhone ? Colors.white : const Color(0xFF475569),
+                              ),
+                              child: const Text('Phone'),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                  Expanded(
+                    child: GestureDetector(
+                      behavior: HitTestBehavior.opaque,
+                      onTap: () => setState(() => _bookingSource = BookingSource.walkIn),
+                      child: Center(
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          crossAxisAlignment: CrossAxisAlignment.center,
+                          children: [
+                            AnimatedSwitcher(
+                              duration: const Duration(milliseconds: 220),
+                              child: Icon(Icons.directions_walk, key: ValueKey(!isPhone), size: 15, color: !isPhone ? Colors.white : const Color(0xFF475569)),
+                            ),
+                            const SizedBox(width: 5),
+                            AnimatedDefaultTextStyle(
+                              duration: const Duration(milliseconds: 220),
+                              style: TextStyle(
+                                fontSize: 13,
+                                fontWeight: FontWeight.w600,
+                                color: !isPhone ? Colors.white : const Color(0xFF475569),
+                              ),
+                              child: const Text('Walk-In'),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          );
+        },
       ),
     );
   }
@@ -2147,9 +2704,7 @@ class _BookingDialogState extends State<_BookingDialog> {
       final owner = authProvider.currentOwner;
       _showPaymentConfirmation(bookingId, owner);
     } else {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Failed to create booking'), backgroundColor: Colors.red),
-      );
+      _showPremiumToast(context, 'Failed to create booking', type: _ToastType.error);
     }
   }
 
@@ -2218,16 +2773,12 @@ Thank you for choosing $appName! 🏏''';
         await launchUrl(uri, mode: LaunchMode.externalApplication);
       } else {
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Could not open WhatsApp')),
-          );
+          _showPremiumToast(context, 'Could not open WhatsApp', type: _ToastType.error);
         }
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error: $e')),
-        );
+        _showPremiumToast(context, 'Error: $e', type: _ToastType.error);
       }
     }
   }
@@ -2315,15 +2866,15 @@ class _BookingSuccessPopupState extends State<_BookingSuccessPopup> with TickerP
   @override
   Widget build(BuildContext context) {
     return Dialog(
-      backgroundColor: Colors.transparent,
+      backgroundColor: AppColors.background,
       insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 20),
       child: SlideTransition(
         position: _slideAnimation,
         child: Container(
           constraints: const BoxConstraints(maxWidth: 400),
           decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(28),
+            color: AppColors.surface,
+            borderRadius: BorderRadius.circular(20),
             boxShadow: [
               BoxShadow(
                 color: AppColors.primary.withOpacity(0.2),
@@ -2332,12 +2883,64 @@ class _BookingSuccessPopupState extends State<_BookingSuccessPopup> with TickerP
               ),
             ],
           ),
-          child: SingleChildScrollView(
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(20),
+            child: SingleChildScrollView(
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
                 // Success Header
                 _buildSuccessHeader(),
+                
+                // Ticket Tear — cutouts + dashed line
+                SizedBox(
+                  height: 28,
+                  child: Stack(
+                    clipBehavior: Clip.none,
+                    children: [
+                      Positioned.fill(child: Container(color: Colors.white)),
+                      Center(
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 20),
+                          child: CustomPaint(
+                            size: const Size(double.infinity, 1),
+                            painter: _TicketDashedLinePainter(),
+                          ),
+                        ),
+                      ),
+                      Positioned(
+                        left: -14,
+                        top: 0,
+                        bottom: 0,
+                        child: Center(
+                          child: Container(
+                            width: 28,
+                            height: 28,
+                            decoration: BoxDecoration(
+                              shape: BoxShape.circle,
+                              color: Colors.black.withOpacity(0.55),
+                            ),
+                          ),
+                        ),
+                      ),
+                      Positioned(
+                        right: -14,
+                        top: 0,
+                        bottom: 0,
+                        child: Center(
+                          child: Container(
+                            width: 28,
+                            height: 28,
+                            decoration: BoxDecoration(
+                              shape: BoxShape.circle,
+                              color: Colors.black.withOpacity(0.55),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
                 
                 // Content
                 Padding(
@@ -2360,6 +2963,7 @@ class _BookingSuccessPopupState extends State<_BookingSuccessPopup> with TickerP
               ],
             ),
           ),
+          ),
         ),
       ),
     );
@@ -2378,7 +2982,7 @@ class _BookingSuccessPopupState extends State<_BookingSuccessPopup> with TickerP
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
         ),
-        borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
       ),
       child: Column(
         children: [
@@ -2694,7 +3298,7 @@ class _BookingSuccessPopupState extends State<_BookingSuccessPopup> with TickerP
         _buildMainActionButton(
           icon: _confirmationSent ? Icons.check_circle : Icons.send,
           label: _confirmationSent ? 'Confirmation Sent!' : 'Send Booking Confirmation',
-          sublabel: _confirmationSent ? null : 'via TurfBook WhatsApp',
+          sublabel: _confirmationSent ? null : 'Via FieldPass Business',
           color: _confirmationSent ? AppColors.success : const Color(0xFF25D366),
           isLoading: _isSendingConfirmation,
           onTap: _confirmationSent ? null : _sendBookingConfirmation,
@@ -2803,7 +3407,7 @@ class _BookingSuccessPopupState extends State<_BookingSuccessPopup> with TickerP
                 Icon(icon, color: Colors.white, size: 22),
               const SizedBox(width: 10),
               Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
+                crossAxisAlignment: CrossAxisAlignment.center,
                 children: [
                   Text(
                     isLoading ? 'Sending...' : label,
@@ -2951,9 +3555,7 @@ See you at the turf! 🏏
     } catch (e) {
       if (mounted) {
         setState(() => _isSendingConfirmation = false);
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error: $e'), backgroundColor: Colors.red),
-        );
+        _showPremiumToast(context, 'Error: $e', type: _ToastType.error);
       }
     }
   }
@@ -2986,16 +3588,12 @@ See you at the turf! 🏏
         await launchUrl(uri, mode: LaunchMode.externalApplication);
       } else {
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Could not open WhatsApp')),
-          );
+          _showPremiumToast(context, 'Could not open WhatsApp', type: _ToastType.error);
         }
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error: $e')),
-        );
+        _showPremiumToast(context, 'Error: $e', type: _ToastType.error);
       }
     }
   }
@@ -3009,20 +3607,13 @@ See you at the turf! 🏏
       await bookingProvider.markPaymentReceived(widget.bookingId);
       
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Payment marked as confirmed!'),
-            backgroundColor: AppColors.success,
-          ),
-        );
+        _showPremiumToast(context, 'Payment marked as confirmed!', type: _ToastType.success);
         Navigator.pop(context);
       }
     } catch (e) {
       if (mounted) {
         setState(() => _isMarkingPayment = false);
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error: $e'), backgroundColor: Colors.red),
-        );
+        _showPremiumToast(context, 'Error: $e', type: _ToastType.error);
       }
     }
   }
@@ -3049,12 +3640,7 @@ ${!_isFullPayment && _hasAdvance ? 'Balance: ₹${_remainingAmount.toInt()}' : '
     '''.trim();
     
     Clipboard.setData(ClipboardData(text: details));
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('Booking details copied!'),
-        duration: Duration(seconds: 2),
-      ),
-    );
+    _showPremiumToast(context, 'Booking details copied!', type: _ToastType.success);
   }
 
   /// Share booking details
@@ -3073,11 +3659,137 @@ ${!_isFullPayment && _hasAdvance ? 'Balance: ₹${_remainingAmount.toInt()}' : '
     
     // Use clipboard as fallback for sharing
     Clipboard.setData(ClipboardData(text: shareText));
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('Booking details copied for sharing!'),
-        duration: Duration(seconds: 2),
+    _showPremiumToast(context, 'Booking details copied for sharing!', type: _ToastType.success);
+  }
+}
+
+/// Lightweight scale-on-press wrapper for slot tiles
+class _SlotTapWrapper extends StatefulWidget {
+  final Widget child;
+  final bool enabled;
+  final VoidCallback? onTap;
+
+  const _SlotTapWrapper({
+    required this.child,
+    required this.enabled,
+    this.onTap,
+  });
+
+  @override
+  State<_SlotTapWrapper> createState() => _SlotTapWrapperState();
+}
+
+class _SlotTapWrapperState extends State<_SlotTapWrapper> {
+  bool _pressed = false;
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTapDown: widget.enabled ? (_) => setState(() => _pressed = true) : null,
+      onTapUp: widget.enabled ? (_) => setState(() => _pressed = false) : null,
+      onTapCancel: widget.enabled ? () => setState(() => _pressed = false) : null,
+      onTap: widget.onTap,
+      child: AnimatedScale(
+        scale: _pressed ? 0.97 : 1.0,
+        duration: const Duration(milliseconds: 120),
+        curve: Curves.easeInOut,
+        child: widget.child,
       ),
     );
   }
+}
+
+/// Custom painter that draws a dashed line for the ticket tear divider
+class _TicketDashedLinePainter extends CustomPainter {
+  @override
+  void paint(Canvas canvas, Size size) {
+    final paint = Paint()
+      ..color = const Color(0xFFCBD5E1)
+      ..strokeWidth = 1.2
+      ..strokeCap = StrokeCap.round;
+
+    const dashWidth = 5.0;
+    const dashSpace = 4.0;
+    double x = 0;
+    final y = size.height / 2;
+
+    while (x < size.width) {
+      canvas.drawLine(Offset(x, y), Offset(x + dashWidth, y), paint);
+      x += dashWidth + dashSpace;
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
+}
+
+/// Custom painter that draws abstract cricket stumps as a faded watermark
+class _StumpsPainter extends CustomPainter {
+  final Color color;
+  _StumpsPainter({required this.color});
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final paint = Paint()
+      ..color = color
+      ..strokeWidth = 4.0
+      ..strokeCap = StrokeCap.round
+      ..style = PaintingStyle.stroke;
+
+    final w = size.width;
+    final h = size.height;
+
+    // Three stumps — evenly spaced
+    final stumpSpacing = w * 0.28;
+    final stumpStartX = w * 0.22;
+    final stumpTop = h * 0.08;
+    final stumpBottom = h * 0.82;
+
+    for (int i = 0; i < 3; i++) {
+      final x = stumpStartX + (i * stumpSpacing);
+      canvas.drawLine(Offset(x, stumpTop), Offset(x, stumpBottom), paint);
+    }
+
+    // Two bails — resting on top of stumps
+    final bailPaint = Paint()
+      ..color = color
+      ..strokeWidth = 3.5
+      ..strokeCap = StrokeCap.round;
+
+    // Bail 1: between stump 1 and 2
+    final bail1Left = stumpStartX;
+    final bail1Right = stumpStartX + stumpSpacing;
+    final bail1Y = stumpTop - 1;
+    canvas.drawLine(Offset(bail1Left - 3, bail1Y), Offset(bail1Right + 3, bail1Y), bailPaint);
+
+    // Bail 2: between stump 2 and 3
+    final bail2Left = stumpStartX + stumpSpacing;
+    final bail2Right = stumpStartX + 2 * stumpSpacing;
+    final bail2Y = stumpTop - 1;
+    canvas.drawLine(Offset(bail2Left - 3, bail2Y), Offset(bail2Right + 3, bail2Y), bailPaint);
+  }
+
+  @override
+  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
+}
+
+/// Custom painter for diagonal stripe accents on ticket edges
+class _TicketEdgePainter extends CustomPainter {
+  @override
+  void paint(Canvas canvas, Size size) {
+    final paint = Paint()
+      ..color = Colors.white.withOpacity(0.12)
+      ..strokeWidth = 2.0
+      ..strokeCap = StrokeCap.butt;
+
+    const gap = 8.0;
+    double y = 0;
+    while (y < size.height + size.width) {
+      canvas.drawLine(Offset(0, y), Offset(size.width, y - size.width), paint);
+      y += gap;
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
 }

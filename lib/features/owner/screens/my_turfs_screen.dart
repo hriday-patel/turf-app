@@ -1,12 +1,14 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../../config/colors.dart';
+import '../../../config/glass_widgets.dart';
 import '../../../core/constants/strings.dart';
 import '../../../app/routes.dart';
 import '../providers/turf_provider.dart';
 import '../../../data/models/turf_model.dart';
 import '../../../core/constants/enums.dart';
 import '../../auth/providers/auth_provider.dart';
+import '../../../core/utils/app_toast.dart';
 import 'add_turf_screen.dart';
 
 /// My Turfs Screen
@@ -65,47 +67,58 @@ class _MyTurfsScreenState extends State<MyTurfsScreen>
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: AppColors.background,
-      appBar: AppBar(
-        title: const Text(AppStrings.myTurfs),
-        backgroundColor: AppColors.primary,
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.add),
-            onPressed: () => Navigator.pushNamed(context, AppRoutes.addTurf),
-          ),
-        ],
-        bottom: TabBar(
-          controller: _tabController,
-          indicatorColor: Colors.white,
-          indicatorWeight: 3,
-          labelColor: Colors.white,
-          unselectedLabelColor: Colors.white70,
-          tabs: const [
-            Tab(text: 'All Turfs'),
-            Tab(text: 'Pending'),
-            Tab(text: 'Approved'),
-          ],
-        ),
-      ),
-      body: Consumer<TurfProvider>(
-        builder: (context, turfProvider, _) {
-          final allTurfs = turfProvider.turfs;
-          final pendingTurfs = allTurfs
-              .where((t) => t.verificationStatus == VerificationStatus.pending)
-              .toList();
-          final approvedTurfs = allTurfs
-              .where((t) => t.verificationStatus == VerificationStatus.approved)
-              .toList();
-
-          return TabBarView(
-            controller: _tabController,
+      body: GlassScaffoldBackground(
+        child: SafeArea(
+          child: Column(
             children: [
-              _buildTurfList(context, allTurfs, 'No turfs yet'),
-              _buildTurfList(context, pendingTurfs, 'No pending turfs'),
-              _buildTurfList(context, approvedTurfs, 'No approved turfs'),
+              // Glass app bar
+              GlassAppBar(
+                title: AppStrings.myTurfs,
+                actions: [
+                  IconButton(
+                    icon: const Icon(Icons.add, color: AppColors.primary),
+                    onPressed: () => Navigator.pushNamed(context, AppRoutes.addTurf),
+                  ),
+                ],
+                bottom: TabBar(
+                  controller: _tabController,
+                  indicatorColor: AppColors.primary,
+                  indicatorWeight: 2,
+                  labelColor: AppColors.primary,
+                  unselectedLabelColor: AppColors.textSecondary,
+                  dividerColor: Colors.transparent,
+                  tabs: const [
+                    Tab(text: 'All Turfs'),
+                    Tab(text: 'Pending'),
+                    Tab(text: 'Approved'),
+                  ],
+                ),
+              ),
+              Expanded(
+                child: Consumer<TurfProvider>(
+                  builder: (context, turfProvider, _) {
+                    final allTurfs = turfProvider.turfs;
+                    final pendingTurfs = allTurfs
+                        .where((t) => t.verificationStatus == VerificationStatus.pending)
+                        .toList();
+                    final approvedTurfs = allTurfs
+                        .where((t) => t.verificationStatus == VerificationStatus.approved)
+                        .toList();
+
+                    return TabBarView(
+                      controller: _tabController,
+                      children: [
+                        _buildTurfList(context, allTurfs, 'No turfs yet'),
+                        _buildTurfList(context, pendingTurfs, 'No pending turfs'),
+                        _buildTurfList(context, approvedTurfs, 'No approved turfs'),
+                      ],
+                    );
+                  },
+                ),
+              ),
             ],
-          );
-        },
+          ),
+        ),
       ),
     );
   }
@@ -135,8 +148,10 @@ class _MyTurfsScreenState extends State<MyTurfsScreen>
             width: 100,
             height: 100,
             decoration: BoxDecoration(
-              color: AppColors.primary.withOpacity(0.1),
+              color: AppColors.glassFill,
               shape: BoxShape.circle,
+              border: Border.all(color: AppColors.glassBorder),
+              boxShadow: AppColors.neonGlow(color: AppColors.primary),
             ),
             child: const Icon(
               Icons.stadium_outlined,
@@ -163,16 +178,12 @@ class _MyTurfsScreenState extends State<MyTurfsScreen>
             textAlign: TextAlign.center,
           ),
           const SizedBox(height: 32),
-          ElevatedButton.icon(
-            onPressed: () => Navigator.pushNamed(context, AppRoutes.addTurf),
-            icon: const Icon(Icons.add),
-            label: const Text('Add Turf'),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: AppColors.primary,
-              padding: const EdgeInsets.symmetric(
-                horizontal: 24,
-                vertical: 14,
-              ),
+          SizedBox(
+            width: 180,
+            child: GlassButton(
+              label: 'Add Turf',
+              icon: Icons.add,
+              onPressed: () => Navigator.pushNamed(context, AppRoutes.addTurf),
             ),
           ),
         ],
@@ -183,19 +194,9 @@ class _MyTurfsScreenState extends State<MyTurfsScreen>
   Widget _buildTurfCard(BuildContext context, TurfModel turf) {
     final turfProvider = Provider.of<TurfProvider>(context, listen: false);
 
-    return Container(
+    return GlassCard(
       margin: const EdgeInsets.only(bottom: 16),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.08),
-            blurRadius: 10,
-            offset: const Offset(0, 4),
-          ),
-        ],
-      ),
+      padding: EdgeInsets.zero,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -337,8 +338,9 @@ class _MyTurfsScreenState extends State<MyTurfsScreen>
                   Container(
                     padding: const EdgeInsets.all(12),
                     decoration: BoxDecoration(
-                      color: AppColors.warningLight,
+                      color: AppColors.warning.withOpacity(0.1),
                       borderRadius: BorderRadius.circular(8),
+                      border: Border.all(color: AppColors.warning.withOpacity(0.3)),
                     ),
                     child: Row(
                       children: [
@@ -424,12 +426,7 @@ class _MyTurfsScreenState extends State<MyTurfsScreen>
         final turfProvider = Provider.of<TurfProvider>(context, listen: false);
         final success = await turfProvider.updateTurfStatus(turf.turfId, status);
         if (success && mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('Turf status updated to ${status.displayName}'),
-              backgroundColor: AppColors.success,
-            ),
-          );
+          showAppToast(context, 'Turf status updated to ${status.displayName}', type: ToastType.success);
         }
       },
       itemBuilder: (context) => TurfStatus.values.map((status) {
@@ -460,7 +457,7 @@ class _MyTurfsScreenState extends State<MyTurfsScreen>
         );
       }).toList(),
       child: Container(
-        padding: const EdgeInsets.symmetric(vertical: 12),
+        padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 6),
         decoration: BoxDecoration(
           color: isOpen ? AppColors.successLight : AppColors.warningLight,
           borderRadius: BorderRadius.circular(8),
@@ -477,12 +474,16 @@ class _MyTurfsScreenState extends State<MyTurfsScreen>
               color: isOpen ? AppColors.success : AppColors.warning,
             ),
             const SizedBox(width: 4),
-            Text(
-              turf.status.displayName,
-              style: TextStyle(
-                fontSize: 12,
-                fontWeight: FontWeight.w600,
-                color: isOpen ? AppColors.success : AppColors.warning,
+            Flexible(
+              child: Text(
+                turf.status.displayName,
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                  color: isOpen ? AppColors.success : AppColors.warning,
+                ),
+                overflow: TextOverflow.ellipsis,
+                maxLines: 1,
               ),
             ),
           ],
@@ -533,14 +534,9 @@ class _MyTurfsScreenState extends State<MyTurfsScreen>
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: AppColors.glassFill,
         borderRadius: BorderRadius.circular(12),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.1),
-            blurRadius: 4,
-          ),
-        ],
+        border: Border.all(color: AppColors.glassBorder),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,

@@ -1,9 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../../config/colors.dart';
+import '../../../config/glass_widgets.dart';
+import '../../../config/abstract_bg.dart';
 import '../providers/auth_provider.dart';
 import '../../../app/routes.dart';
 import '../../../core/constants/enums.dart';
+import '../../../core/utils/app_toast.dart';
 
 class OwnerAuthScreen extends StatefulWidget {
   const OwnerAuthScreen({super.key});
@@ -145,23 +148,11 @@ class _OwnerAuthScreenState extends State<OwnerAuthScreen> with SingleTickerProv
   }
 
   void _showError(String message) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(message),
-        backgroundColor: AppColors.error,
-        behavior: SnackBarBehavior.floating,
-      ),
-    );
+    showAppToast(context, message, type: ToastType.error);
   }
 
   void _showSuccess(String message) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(message),
-        backgroundColor: AppColors.success,
-        behavior: SnackBarBehavior.floating,
-      ),
-    );
+    showAppToast(context, message, type: ToastType.success);
   }
 
   // ==================== UI BUILDERS ====================
@@ -169,32 +160,94 @@ class _OwnerAuthScreenState extends State<OwnerAuthScreen> with SingleTickerProv
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: Colors.white,
-      appBar: AppBar(
-        title: const Text('Owner Portal', style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold)),
-        backgroundColor: Colors.white,
-        elevation: 0,
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back_ios, color: Colors.black),
-          onPressed: () => Navigator.pop(context),
-        ),
-        bottom: TabBar(
-          controller: _tabController,
-          labelColor: AppColors.primary,
-          unselectedLabelColor: Colors.grey,
-          indicatorColor: AppColors.primary,
-          tabs: const [
-            Tab(text: 'LOGIN'),
-            Tab(text: 'SIGN UP'),
+      backgroundColor: AppColors.background,
+      body: GlassScaffoldBackground(
+        child: Stack(
+          children: [
+            const AbstractBgShapes(),
+            SafeArea(
+          child: Column(
+            children: [
+              // Custom glass app bar
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+                child: Row(
+                  children: [
+                    IconButton(
+                      icon: const Icon(Icons.arrow_back_ios, color: AppColors.textPrimary, size: 20),
+                      onPressed: () => Navigator.pop(context),
+                    ),
+                    const Expanded(
+                      child: Text(
+                        'Owner Portal',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          color: AppColors.textPrimary,
+                          fontWeight: FontWeight.bold,
+                          fontSize: 18,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 48), // balance the back button
+                  ],
+                ),
+              ),
+              // Branding
+              const SizedBox(height: 8),
+              const Text(
+                'FieldPass Business',
+                style: TextStyle(
+                  fontSize: 24,
+                  fontWeight: FontWeight.bold,
+                  color: AppColors.textPrimary,
+                  letterSpacing: 0.5,
+                ),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                'Pitch Perfect Management',
+                style: TextStyle(
+                  fontSize: 14,
+                  color: AppColors.textSecondary,
+                ),
+              ),
+              const SizedBox(height: 16),
+              // Tab bar
+              Container(
+                margin: const EdgeInsets.symmetric(horizontal: 24),
+                decoration: BoxDecoration(
+                  color: AppColors.glassFill,
+                  borderRadius: BorderRadius.circular(16),
+                  border: Border.all(color: AppColors.glassBorder),
+                ),
+                child: TabBar(
+                  controller: _tabController,
+                  labelColor: AppColors.primary,
+                  unselectedLabelColor: AppColors.textSecondary,
+                  indicatorColor: AppColors.primary,
+                  indicatorSize: TabBarIndicatorSize.label,
+                  dividerColor: Colors.transparent,
+                  tabs: const [
+                    Tab(text: 'LOGIN'),
+                    Tab(text: 'SIGN UP'),
+                  ],
+                ),
+              ),
+              // Body
+              Expanded(
+                child: TabBarView(
+                  controller: _tabController,
+                  children: [
+                    _buildLoginTab(),
+                    _buildSignupTab(),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          ),
           ],
         ),
-      ),
-      body: TabBarView(
-        controller: _tabController,
-        children: [
-          _buildLoginTab(),
-          _buildSignupTab(),
-        ],
       ),
     );
   }
@@ -242,19 +295,20 @@ class _OwnerAuthScreenState extends State<OwnerAuthScreen> with SingleTickerProv
       child: Container(
         padding: const EdgeInsets.symmetric(vertical: 12),
         decoration: BoxDecoration(
-          color: isSelected ? AppColors.primary.withOpacity(0.1) : Colors.grey[100],
-          borderRadius: BorderRadius.circular(12),
+          color: isSelected ? AppColors.primary.withOpacity(0.1) : AppColors.glassFill,
+          borderRadius: BorderRadius.circular(14),
           border: Border.all(
-            color: isSelected ? AppColors.primary : Colors.transparent,
-            width: 2,
+            color: isSelected ? AppColors.primary.withOpacity(0.5) : AppColors.glassBorder,
+            width: 1.5,
           ),
+          boxShadow: isSelected ? AppColors.neonGlow(blur: 10) : null,
         ),
         alignment: Alignment.center,
         child: Text(
           title,
           style: TextStyle(
             fontWeight: FontWeight.bold,
-            color: isSelected ? AppColors.primary : Colors.grey[600],
+            color: isSelected ? AppColors.primary : AppColors.textSecondary,
           ),
         ),
       ),
@@ -285,7 +339,7 @@ class _OwnerAuthScreenState extends State<OwnerAuthScreen> with SingleTickerProv
             onPressed: () {
               // TODO: Implement Forgot Password
             },
-            child: const Text('Forgot Password?', style: TextStyle(color: Colors.grey)),
+            child: const Text('Forgot Password?', style: TextStyle(color: AppColors.textSecondary)),
           ),
         ],
       ),
@@ -317,14 +371,14 @@ class _OwnerAuthScreenState extends State<OwnerAuthScreen> with SingleTickerProv
               keyboardType: TextInputType.number,
               maxLength: 6,
               textAlign: TextAlign.center,
-              style: const TextStyle(letterSpacing: 8, fontWeight: FontWeight.bold),
+              style: const TextStyle(letterSpacing: 8, fontWeight: FontWeight.bold, color: AppColors.textPrimary),
             ),
             const SizedBox(height: 24),
             _buildSubmitButton('Verify & Login', _handlePhoneLoginVerifyOtp),
             const SizedBox(height: 16),
             TextButton(
               onPressed: () => setState(() => _otpSent = false),
-              child: const Text('Change Number', style: TextStyle(color: AppColors.primary)),
+              child: const Text('Change Number', style: TextStyle(color: AppColors.secondary)),
             ),
           ] else ...[
             const SizedBox(height: 24),
@@ -393,7 +447,7 @@ class _OwnerAuthScreenState extends State<OwnerAuthScreen> with SingleTickerProv
             const SizedBox(height: 24),
             const Text(
               'By signing up, you agree to our Terms & Conditions',
-              style: TextStyle(color: Colors.grey, fontSize: 12),
+              style: TextStyle(color: AppColors.textSecondary, fontSize: 12),
               textAlign: TextAlign.center,
             ),
           ],
@@ -405,53 +459,33 @@ class _OwnerAuthScreenState extends State<OwnerAuthScreen> with SingleTickerProv
   InputDecoration _inputDecoration(String label, IconData icon) {
     return InputDecoration(
       labelText: label,
-      prefixIcon: Icon(icon, color: Colors.grey),
+      prefixIcon: Icon(icon, color: AppColors.textSecondary, size: 20),
       filled: true,
-      fillColor: Colors.grey[50],
+      fillColor: AppColors.glassFill,
       border: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(12),
-        borderSide: BorderSide.none,
+        borderRadius: BorderRadius.circular(16),
+        borderSide: BorderSide(color: AppColors.glassBorder),
       ),
       enabledBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(12),
-        borderSide: const BorderSide(color: Colors.transparent),
+        borderRadius: BorderRadius.circular(16),
+        borderSide: BorderSide(color: AppColors.glassBorder),
       ),
       focusedBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(12),
-        borderSide: const BorderSide(color: AppColors.primary, width: 2),
+        borderRadius: BorderRadius.circular(16),
+        borderSide: const BorderSide(color: AppColors.primary, width: 1.5),
       ),
       contentPadding: const EdgeInsets.all(16),
+      labelStyle: const TextStyle(color: AppColors.textSecondary),
     );
   }
 
   Widget _buildSubmitButton(String text, VoidCallback onPressed) {
     return Consumer<AuthProvider>(
       builder: (context, auth, _) {
-        return SizedBox(
-          width: double.infinity,
-          height: 56,
-          child: ElevatedButton(
-            onPressed: auth.isLoading ? null : onPressed,
-            style: ElevatedButton.styleFrom(
-              backgroundColor: AppColors.primary,
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-              elevation: 4,
-            ),
-            child: auth.isLoading
-                ? const SizedBox(
-                    height: 24,
-                    width: 24,
-                    child: CircularProgressIndicator(color: Colors.white, strokeWidth: 3),
-                  )
-                : Text(
-                    text,
-                    style: const TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.bold,
-                      color: Colors.white,
-                    ),
-                  ),
-          ),
+        return GlassButton(
+          label: text,
+          onPressed: onPressed,
+          isLoading: auth.isLoading,
         );
       },
     );

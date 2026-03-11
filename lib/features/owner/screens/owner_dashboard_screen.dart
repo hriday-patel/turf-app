@@ -1,6 +1,10 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../../config/colors.dart';
+import '../../../config/glass_widgets.dart';
+import '../../../config/section_container.dart';
 import '../../../core/constants/strings.dart';
 import '../../../core/constants/enums.dart';
 import '../../../app/routes.dart';
@@ -19,11 +23,57 @@ class OwnerDashboardScreen extends StatefulWidget {
 }
 
 class _OwnerDashboardScreenState extends State<OwnerDashboardScreen>
-    with WidgetsBindingObserver, RouteAware {
+    with WidgetsBindingObserver, RouteAware, TickerProviderStateMixin {
+  late final PageController _carouselController;
+  double _carouselPage = 0;
+  Timer? _autoSlideTimer;
+
+  // Quick Actions staggered entrance animation
+  late final AnimationController _actionAnimController;
+  late final List<Animation<double>> _actionFadeAnims;
+  late final List<Animation<Offset>> _actionSlideAnims;
+  static const int _carouselRealCount = 4;
+  // Large multiplier for infinite loop illusion
+  static const int _carouselLoopMultiplier = 1000;
+  static const int _carouselInitialPage = _carouselLoopMultiplier ~/ 2 * _carouselRealCount;
+
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    _carouselController = PageController(
+      viewportFraction: 0.80,
+      initialPage: _carouselInitialPage,
+    );
+    _carouselPage = _carouselInitialPage.toDouble();
+    _carouselController.addListener(() {
+      setState(() {
+        _carouselPage = _carouselController.page ?? 0;
+      });
+    });
+    _startAutoSlide();
+
+    // Staggered animation for 4 Quick Action cards (350ms each, staggered)
+    _actionAnimController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 800),
+    );
+    _actionFadeAnims = List.generate(4, (i) {
+      final start = i * 0.15;
+      final end = (start + 0.45).clamp(0.0, 1.0);
+      return Tween<double>(begin: 0.0, end: 1.0).animate(
+        CurvedAnimation(parent: _actionAnimController, curve: Interval(start, end, curve: Curves.easeOut)),
+      );
+    });
+    _actionSlideAnims = List.generate(4, (i) {
+      final start = i * 0.15;
+      final end = (start + 0.45).clamp(0.0, 1.0);
+      return Tween<Offset>(begin: const Offset(0, 10), end: Offset.zero).animate(
+        CurvedAnimation(parent: _actionAnimController, curve: Interval(start, end, curve: Curves.easeOut)),
+      );
+    });
+    _actionAnimController.forward();
+
     _loadData();
   }
   
@@ -39,9 +89,32 @@ class _OwnerDashboardScreenState extends State<OwnerDashboardScreen>
   
   @override
   void dispose() {
+    _autoSlideTimer?.cancel();
+    _actionAnimController.dispose();
     WidgetsBinding.instance.removeObserver(this);
     AppRoutes.routeObserver.unsubscribe(this);
+    _carouselController.dispose();
     super.dispose();
+  }
+
+  void _startAutoSlide() {
+    _autoSlideTimer?.cancel();
+    _autoSlideTimer = Timer.periodic(const Duration(milliseconds: 3500), (_) {
+      if (_carouselController.hasClients) {
+        _carouselController.nextPage(
+          duration: const Duration(milliseconds: 600),
+          curve: Curves.easeInOut,
+        );
+      }
+    });
+  }
+
+  void _pauseAutoSlide() {
+    _autoSlideTimer?.cancel();
+    // Resume after 5 seconds of inactivity
+    Future.delayed(const Duration(seconds: 5), () {
+      if (mounted) _startAutoSlide();
+    });
   }
   
   @override
@@ -103,49 +176,60 @@ class _OwnerDashboardScreenState extends State<OwnerDashboardScreen>
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: AppColors.background,
-      body: SafeArea(
-        child: RefreshIndicator(
-          onRefresh: _forceRefreshData,
-          child: CustomScrollView(
-            slivers: [
-              // Header
-              SliverToBoxAdapter(
-                child: _buildHeader(),
-              ),
-              
-              // Quick Stats
-              SliverToBoxAdapter(
-                child: _buildQuickStats(),
-              ),
-              
-              // Action Cards
-              SliverToBoxAdapter(
-                child: _buildActionCards(),
-              ),
-              
-              // Recent Activity
-              SliverToBoxAdapter(
-                child: _buildRecentActivity(),
-              ),
-              
-              const SliverToBoxAdapter(
-                child: SizedBox(height: 100),
-              ),
-            ],
+      body: GlassScaffoldBackground(
+        child: SafeArea(
+          child: RefreshIndicator(
+            onRefresh: _forceRefreshData,
+            color: AppColors.primary,
+            backgroundColor: AppColors.surface,
+            child: CustomScrollView(
+              slivers: [
+                SliverToBoxAdapter(child: _buildHeader()),
+                SliverToBoxAdapter(child: _buildQuickStats()),
+                SliverToBoxAdapter(child: _buildActionCards()),
+                SliverToBoxAdapter(child: _buildRecentActivity()),
+                const SliverToBoxAdapter(child: SizedBox(height: 100)),
+              ],
+            ),
           ),
         ),
       ),
-      floatingActionButton: FloatingActionButton.extended(
-        onPressed: () {
-          Navigator.pushNamed(context, AppRoutes.addTurf);
-        },
-        backgroundColor: AppColors.primary,
-        icon: const Icon(Icons.add, color: Colors.white),
-        label: const Text(
-          'Add Turf',
-          style: TextStyle(
-            color: Colors.white,
-            fontWeight: FontWeight.w600,
+      floatingActionButton: Container(
+        height: 58,
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(30),
+          gradient: const LinearGradient(
+            colors: [Color(0xFF6E8FF7), Color(0xFF4F7DF3)],
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+          ),
+          boxShadow: [
+            BoxShadow(
+              color: const Color(0xFF4F7DF3).withOpacity(0.18),
+              blurRadius: 18,
+              offset: const Offset(0, 6),
+            ),
+          ],
+        ),
+        child: Material(
+          color: Colors.transparent,
+          child: InkWell(
+            borderRadius: BorderRadius.circular(30),
+            onTap: () => Navigator.pushNamed(context, AppRoutes.addTurf),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 22),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: const [
+                  Icon(Icons.add, color: Colors.white, size: 22),
+                  SizedBox(width: 8),
+                  Text(
+                    'Add Turf',
+                    style: TextStyle(color: Colors.white, fontWeight: FontWeight.w600, fontSize: 15),
+                  ),
+                ],
+              ),
+            ),
           ),
         ),
       ),
@@ -156,15 +240,8 @@ class _OwnerDashboardScreenState extends State<OwnerDashboardScreen>
     return Consumer<AuthProvider>(
       builder: (context, authProvider, _) {
         final owner = authProvider.currentOwner;
-        return Container(
-          padding: const EdgeInsets.all(20),
-          decoration: BoxDecoration(
-            gradient: AppColors.primaryGradient,
-            borderRadius: const BorderRadius.only(
-              bottomLeft: Radius.circular(30),
-              bottomRight: Radius.circular(30),
-            ),
-          ),
+        return Padding(
+          padding: const EdgeInsets.fromLTRB(20, 16, 20, 8),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -178,7 +255,7 @@ class _OwnerDashboardScreenState extends State<OwnerDashboardScreen>
                         'Welcome back,',
                         style: TextStyle(
                           fontSize: 14,
-                          color: Colors.white.withOpacity(0.8),
+                          color: AppColors.textSecondary,
                           letterSpacing: 0.5,
                         ),
                       ),
@@ -188,7 +265,7 @@ class _OwnerDashboardScreenState extends State<OwnerDashboardScreen>
                         style: const TextStyle(
                           fontSize: 26,
                           fontWeight: FontWeight.w800,
-                          color: Colors.white,
+                          color: AppColors.textPrimary,
                           letterSpacing: -0.5,
                         ),
                       ),
@@ -196,25 +273,24 @@ class _OwnerDashboardScreenState extends State<OwnerDashboardScreen>
                   ),
                   Row(
                     children: [
-                      IconButton(
-                        onPressed: () {
-                          // TODO: Notifications
-                        },
-                        icon: const Icon(
-                          Icons.notifications_outlined,
-                          color: Colors.white,
-                        ),
-                      ),
                       PopupMenuButton<String>(
-                        icon: CircleAvatar(
-                          backgroundColor: Colors.white,
-                          radius: 20,
-                          child: Text(
-                            (owner?.name ?? 'O').substring(0, 1).toUpperCase(),
-                            style: const TextStyle(
-                              color: AppColors.primary,
-                              fontWeight: FontWeight.bold,
-                              fontSize: 18,
+                        icon: Container(
+                          width: 40,
+                          height: 40,
+                          decoration: BoxDecoration(
+                            color: AppColors.glassFill,
+                            shape: BoxShape.circle,
+                            border: Border.all(color: AppColors.primary.withOpacity(0.3)),
+                            boxShadow: AppColors.neonGlow(blur: 8),
+                          ),
+                          child: Center(
+                            child: Text(
+                              (owner?.name ?? 'O').substring(0, 1).toUpperCase(),
+                              style: const TextStyle(
+                                color: AppColors.primary,
+                                fontWeight: FontWeight.bold,
+                                fontSize: 18,
+                              ),
                             ),
                           ),
                         ),
@@ -224,45 +300,19 @@ class _OwnerDashboardScreenState extends State<OwnerDashboardScreen>
                           } else if (value == 'logout') {
                             await authProvider.signOut();
                             if (mounted) {
-                              Navigator.pushReplacementNamed(
-                                context,
-                                AppRoutes.loginSelection,
-                              );
+                              Navigator.pushReplacementNamed(context, AppRoutes.loginSelection);
                             }
                           }
                         },
                         itemBuilder: (context) => [
                           const PopupMenuItem(
-                            value: 'profile',
-                            child: Row(
-                              children: [
-                                Icon(Icons.person_outline),
-                                SizedBox(width: 8),
-                                Text('Profile'),
-                              ],
-                            ),
-                          ),
-                          const PopupMenuItem(
                             value: 'settings',
-                            child: Row(
-                              children: [
-                                Icon(Icons.settings_outlined),
-                                SizedBox(width: 8),
-                                Text('Settings'),
-                              ],
-                            ),
+                            child: Row(children: [Icon(Icons.person_outline, color: AppColors.textSecondary), SizedBox(width: 8), Text('Profile', style: TextStyle(color: AppColors.textPrimary))]),
                           ),
                           const PopupMenuDivider(),
                           const PopupMenuItem(
                             value: 'logout',
-                            child: Row(
-                              children: [
-                                Icon(Icons.logout, color: AppColors.error),
-                                SizedBox(width: 8),
-                                Text('Logout', 
-                                    style: TextStyle(color: AppColors.error)),
-                              ],
-                            ),
+                            child: Row(children: [Icon(Icons.logout, color: AppColors.error), SizedBox(width: 8), Text('Logout', style: TextStyle(color: AppColors.error))]),
                           ),
                         ],
                       ),
@@ -270,33 +320,19 @@ class _OwnerDashboardScreenState extends State<OwnerDashboardScreen>
                   ),
                 ],
               ),
-              const SizedBox(height: 20),
-              
-              // Date & Time
-              Container(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 16,
-                  vertical: 10,
-                ),
-                decoration: BoxDecoration(
-                  color: Colors.white.withOpacity(0.2),
-                  borderRadius: BorderRadius.circular(12),
-                ),
+              const SizedBox(height: 16),
+              // Date pill
+              GlassCard(
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                borderRadius: 14,
                 child: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    const Icon(
-                      Icons.calendar_today,
-                      color: Colors.white,
-                      size: 18,
-                    ),
+                    const Icon(Icons.calendar_today, color: AppColors.primary, size: 18),
                     const SizedBox(width: 8),
                     Text(
                       _getFormattedDate(),
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontWeight: FontWeight.w500,
-                      ),
+                      style: const TextStyle(color: AppColors.textPrimary, fontWeight: FontWeight.w500),
                     ),
                   ],
                 ),
@@ -321,8 +357,8 @@ class _OwnerDashboardScreenState extends State<OwnerDashboardScreen>
           });
         }
 
-        return Padding(
-          padding: const EdgeInsets.all(20),
+        return SectionContainer(
+          margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -335,57 +371,147 @@ class _OwnerDashboardScreenState extends State<OwnerDashboardScreen>
                 ),
               ),
               const SizedBox(height: 16),
-              Row(
-                children: [
-                  Expanded(
-                    child: _buildStatCard(
-                      title: 'Total Turfs',
-                      value: '${turfProvider.totalTurfs}',
-                      icon: Icons.sports_soccer,
-                      color: AppColors.primary,
-                      subtitle: '${turfProvider.approvedCount} approved',
-                    ),
+              SizedBox(
+                height: 170,
+                child: NotificationListener<ScrollNotification>(
+                  onNotification: (notification) {
+                    if (notification is ScrollStartNotification &&
+                        notification.dragDetails != null) {
+                      _pauseAutoSlide();
+                    }
+                    return false;
+                  },
+                  child: PageView.builder(
+                    controller: _carouselController,
+                    itemCount: _carouselRealCount * _carouselLoopMultiplier,
+                    itemBuilder: (context, index) {
+                      final realIndex = index % _carouselRealCount;
+                      final cards = [
+                        _CarouselCardData(
+                          title: "Today's Bookings",
+                          value: '${bookingProvider.todaysCount}',
+                          icon: Icons.event_available,
+                          iconColor: const Color(0xFF1F9D57),
+                          bgColor: const Color(0xFFCFEED8),
+                          subtitle: 'Confirmed',
+                        ),
+                        _CarouselCardData(
+                          title: 'Pending Payments',
+                          value: '${bookingProvider.pendingPaymentsCount}',
+                          icon: Icons.currency_rupee,
+                          iconColor: const Color(0xFFEA6A1B),
+                          bgColor: const Color(0xFFFFD8BF),
+                          subtitle: 'Pay at turf',
+                        ),
+                        _CarouselCardData(
+                          title: 'Total Turfs',
+                          value: '${turfProvider.totalTurfs}',
+                          icon: Icons.sports_cricket,
+                          iconColor: const Color(0xFF5B47C7),
+                          bgColor: const Color(0xFFD9CCFF),
+                          subtitle: '${turfProvider.approvedCount} approved',
+                        ),
+                        _CarouselCardData(
+                          title: 'Pending Approval',
+                          value: '${turfProvider.pendingCount}',
+                          icon: Icons.pending_actions,
+                          iconColor: const Color(0xFFC69214),
+                          bgColor: const Color(0xFFFFE7A8),
+                          subtitle: 'Verification',
+                        ),
+                      ];
+
+                      // Scale: active = 1.0, neighbors shrink to 0.9
+                      final diff = (index - _carouselPage).abs();
+                      final scale = (1 - diff * 0.10).clamp(0.88, 1.0);
+                      final opacity = (1 - diff * 0.25).clamp(0.6, 1.0);
+
+                      return Transform.scale(
+                        scale: scale,
+                        child: Opacity(
+                          opacity: opacity,
+                          child: _buildCarouselCard(cards[realIndex]),
+                        ),
+                      );
+                    },
                   ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: _buildStatCard(
-                      title: "Today's Bookings",
-                      value: '${bookingProvider.todaysCount}',
-                      icon: Icons.event_available,
-                      color: AppColors.secondary,
-                      subtitle: 'Confirmed',
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 12),
-              Row(
-                children: [
-                  Expanded(
-                    child: _buildStatCard(
-                      title: 'Pending Payments',
-                      value: '${bookingProvider.pendingPaymentsCount}',
-                      icon: Icons.payments_outlined,
-                      color: AppColors.warning,
-                      subtitle: 'Pay at turf',
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: _buildStatCard(
-                      title: 'Pending Approval',
-                      value: '${turfProvider.pendingCount}',
-                      icon: Icons.pending_actions,
-                      color: AppColors.info,
-                      subtitle: 'Verification',
-                    ),
-                  ),
-                ],
+                ),
               ),
             ],
           ),
         );
       },
+    );
+  }
+
+  Widget _buildCarouselCard(_CarouselCardData data) {
+    return Container(
+      margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        color: data.bgColor,
+        borderRadius: BorderRadius.circular(24),
+      ),
+      child: Stack(
+        children: [
+          // Subtle decorative circle top-right
+          Positioned(
+            top: -14,
+            right: -14,
+            child: Container(
+              width: 64,
+              height: 64,
+              decoration: BoxDecoration(
+                color: data.iconColor.withOpacity(0.07),
+                shape: BoxShape.circle,
+              ),
+            ),
+          ),
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(10),
+                    decoration: BoxDecoration(
+                      color: data.iconColor.withOpacity(0.14),
+                      borderRadius: BorderRadius.circular(14),
+                    ),
+                    child: Icon(data.icon, color: data.iconColor, size: 24),
+                  ),
+                  Text(
+                    data.value,
+                    style: const TextStyle(
+                      fontSize: 32,
+                      fontWeight: FontWeight.bold,
+                      color: Color(0xFF1E293B),
+                    ),
+                  ),
+                ],
+              ),
+              const Spacer(),
+              Text(
+                data.title,
+                style: const TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w600,
+                  color: Color(0xFF1E293B),
+                ),
+              ),
+              const SizedBox(height: 2),
+              Text(
+                data.subtitle,
+                style: const TextStyle(
+                  fontSize: 12,
+                  color: Color(0xFF1E293B),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
     );
   }
 
@@ -396,19 +522,8 @@ class _OwnerDashboardScreenState extends State<OwnerDashboardScreen>
     required Color color,
     required String subtitle,
   }) {
-    return Container(
+    return GlassCard(
       padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
-        boxShadow: [
-          BoxShadow(
-            color: color.withOpacity(0.1),
-            blurRadius: 10,
-            offset: const Offset(0, 4),
-          ),
-        ],
-      ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -420,6 +535,7 @@ class _OwnerDashboardScreenState extends State<OwnerDashboardScreen>
                 decoration: BoxDecoration(
                   color: color.withOpacity(0.1),
                   borderRadius: BorderRadius.circular(10),
+                  border: Border.all(color: color.withOpacity(0.2)),
                 ),
                 child: Icon(icon, color: color, size: 22),
               ),
@@ -445,7 +561,7 @@ class _OwnerDashboardScreenState extends State<OwnerDashboardScreen>
           const SizedBox(height: 2),
           Text(
             subtitle,
-            style: TextStyle(
+            style: const TextStyle(
               fontSize: 11,
               color: AppColors.textSecondary,
             ),
@@ -456,8 +572,8 @@ class _OwnerDashboardScreenState extends State<OwnerDashboardScreen>
   }
 
   Widget _buildActionCards() {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 20),
+    return SectionContainer(
+      margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -470,111 +586,156 @@ class _OwnerDashboardScreenState extends State<OwnerDashboardScreen>
             ),
           ),
           const SizedBox(height: 16),
-          _buildFullWidthActionCard(
-            title: 'My Turfs',
-            subtitle: 'Manage your turfs, view status, and edit details',
-            icon: Icons.stadium_outlined,
-            color: AppColors.primary,
-            onTap: () => Navigator.pushNamed(context, AppRoutes.myTurfs),
-          ),
-          const SizedBox(height: 12),
-          _buildFullWidthActionCard(
-            title: 'History',
-            subtitle: 'View all bookings, manage payments and schedules',
-            icon: Icons.calendar_month_outlined,
-            color: AppColors.secondary,
-            onTap: () => Navigator.pushNamed(
-              context,
-              AppRoutes.bookingManagement,
+          // Row 1 + Row 2: Left tall card + two right cards stacked
+          IntrinsicHeight(
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                // Left tall card spanning two rows
+                Expanded(
+                  child: _animatedCard(
+                    index: 0,
+                    child: _buildDashCard(
+                      title: 'Booking Dashboard',
+                      subtitle: 'Create bookings and manage slot availability',
+                      icon: Icons.access_time_outlined,
+                      bgColor: const Color(0xFF1F2937),
+                      onTap: () => Navigator.pushNamed(context, AppRoutes.slotBooking),
+                      tall: true,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 20),
+                // Right column: two stacked cards
+                Expanded(
+                  child: Column(
+                    children: [
+                      Expanded(
+                        child: _animatedCard(
+                          index: 1,
+                          child: _buildDashCard(
+                            title: 'View Turfs',
+                            subtitle: 'Manage your turfs, view status and edit details',
+                            icon: Icons.stadium_outlined,
+                            bgColor: const Color(0xFF273445),
+                            onTap: () => Navigator.pushNamed(context, AppRoutes.myTurfs),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 16),
+                      Expanded(
+                        child: _animatedCard(
+                          index: 2,
+                          child: _buildDashCard(
+                            title: 'View History',
+                            subtitle: 'View all bookings and manage payments',
+                            icon: Icons.calendar_month_outlined,
+                            bgColor: const Color(0xFF334155),
+                            onTap: () => Navigator.pushNamed(context, AppRoutes.bookingManagement),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
             ),
           ),
-          const SizedBox(height: 12),
-          _buildFullWidthActionCard(
-            title: 'Booking',
-            subtitle: 'Manage slots and create manual bookings',
-            icon: Icons.access_time_outlined,
-            color: AppColors.success,
-            onTap: () => Navigator.pushNamed(context, AppRoutes.slotBooking),
-          ),
-          const SizedBox(height: 12),
-          _buildFullWidthActionCard(
-            title: 'Analytics',
-            subtitle: 'Revenue trends, peak hours, and utilization metrics',
-            icon: Icons.analytics_outlined,
-            color: AppColors.info,
-            onTap: () => Navigator.pushNamed(context, AppRoutes.analytics),
+          const SizedBox(height: 22),
+          // Row 3: Full width card
+          _animatedCard(
+            index: 3,
+            child: _buildDashCard(
+              title: 'Analytics Dashboard',
+              subtitle: 'View trends, analyse peak hours and utilisation metrics',
+              icon: Icons.analytics_outlined,
+              bgColor: const Color(0xFF3F4D63),
+              onTap: () => Navigator.pushNamed(context, AppRoutes.analytics),
+              fullWidth: true,
+            ),
           ),
         ],
       ),
     );
   }
 
-  Widget _buildFullWidthActionCard({
+  Widget _animatedCard({required int index, required Widget child}) {
+    return AnimatedBuilder(
+      animation: _actionAnimController,
+      builder: (context, _) {
+        return Transform.translate(
+          offset: _actionSlideAnims[index].value,
+          child: Opacity(
+            opacity: _actionFadeAnims[index].value,
+            child: child,
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildDashCard({
     required String title,
     required String subtitle,
     required IconData icon,
-    required Color color,
+    required Color bgColor,
     required VoidCallback onTap,
+    bool tall = false,
+    bool fullWidth = false,
   }) {
+    const iconColor = Color(0xFFE2E8F0);
+    const primaryText = Color(0xFFF8FAFC);
+    const secondaryText = Color(0xFFCBD5E1);
+    final iconBgColor = Color.lerp(bgColor, Colors.white, 0.12)!;
+
     return GestureDetector(
       onTap: onTap,
       child: Container(
-        width: double.infinity,
-        padding: const EdgeInsets.all(20),
+        constraints: tall ? const BoxConstraints(minHeight: 220) : null,
+        padding: const EdgeInsets.all(18),
         decoration: BoxDecoration(
-          gradient: LinearGradient(
-            colors: [color, color.withOpacity(0.8)],
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-          ),
-          borderRadius: BorderRadius.circular(16),
+          color: bgColor,
+          borderRadius: BorderRadius.circular(24),
           boxShadow: [
             BoxShadow(
-              color: color.withOpacity(0.3),
-              blurRadius: 8,
-              offset: const Offset(0, 4),
+              color: Colors.black.withOpacity(0.20),
+              blurRadius: 10,
+              offset: const Offset(0, 3),
             ),
           ],
         ),
-        child: Row(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: fullWidth ? MainAxisSize.min : MainAxisSize.max,
           children: [
             Container(
-              padding: const EdgeInsets.all(12),
+              padding: const EdgeInsets.all(10),
               decoration: BoxDecoration(
-                color: Colors.white.withOpacity(0.2),
-                borderRadius: BorderRadius.circular(12),
+                color: iconBgColor,
+                borderRadius: BorderRadius.circular(14),
               ),
-              child: Icon(icon, color: Colors.white, size: 28),
+              child: Icon(icon, color: iconColor, size: 24),
             ),
-            const SizedBox(width: 16),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    title,
-                    style: const TextStyle(
-                      fontSize: 18,
-                      fontWeight: FontWeight.bold,
-                      color: Colors.white,
-                    ),
-                  ),
-                  const SizedBox(height: 4),
-                  Text(
-                    subtitle,
-                    style: TextStyle(
-                      fontSize: 13,
-                      color: Colors.white.withOpacity(0.9),
-                    ),
-                  ),
-                ],
+            if (!fullWidth) const Spacer(),
+            if (fullWidth) const SizedBox(height: 14),
+            Text(
+              title,
+              style: const TextStyle(
+                fontSize: 15,
+                fontWeight: FontWeight.bold,
+                color: primaryText,
               ),
             ),
-            Icon(
-              Icons.arrow_forward_ios,
-              color: Colors.white.withOpacity(0.7),
-              size: 18,
+            const SizedBox(height: 4),
+            Text(
+              subtitle,
+              style: const TextStyle(
+                fontSize: 11,
+                color: secondaryText,
+                height: 1.3,
+              ),
             ),
+            if (tall) const Spacer(),
           ],
         ),
       ),
@@ -588,48 +749,31 @@ class _OwnerDashboardScreenState extends State<OwnerDashboardScreen>
     required Color color,
     required VoidCallback onTap,
   }) {
-    return GestureDetector(
+    return GlassCard(
       onTap: onTap,
-      child: Container(
-        padding: const EdgeInsets.all(16),
-        decoration: BoxDecoration(
-          gradient: LinearGradient(
-            colors: [color, color.withOpacity(0.8)],
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(icon, color: color, size: 32),
+          const SizedBox(height: 12),
+          Text(
+            title,
+            style: const TextStyle(
+              fontSize: 16,
+              fontWeight: FontWeight.bold,
+              color: AppColors.textPrimary,
+            ),
           ),
-          borderRadius: BorderRadius.circular(16),
-          boxShadow: [
-            BoxShadow(
-              color: color.withOpacity(0.3),
-              blurRadius: 8,
-              offset: const Offset(0, 4),
+          const SizedBox(height: 2),
+          Text(
+            subtitle,
+            style: const TextStyle(
+              fontSize: 12,
+              color: AppColors.textSecondary,
             ),
-          ],
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Icon(icon, color: Colors.white, size: 32),
-            const SizedBox(height: 12),
-            Text(
-              title,
-              style: const TextStyle(
-                fontSize: 16,
-                fontWeight: FontWeight.bold,
-                color: Colors.white,
-              ),
-            ),
-            const SizedBox(height: 2),
-            Text(
-              subtitle,
-              style: TextStyle(
-                fontSize: 12,
-                color: Colors.white.withOpacity(0.9),
-              ),
-            ),
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }
@@ -639,8 +783,8 @@ class _OwnerDashboardScreenState extends State<OwnerDashboardScreen>
       builder: (context, bookingProvider, _) {
         final recentBookings = bookingProvider.bookings.take(5).toList();
         
-        return Padding(
-          padding: const EdgeInsets.all(20),
+        return NotchedSectionContainer(
+          margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -667,7 +811,7 @@ class _OwnerDashboardScreenState extends State<OwnerDashboardScreen>
               if (recentBookings.isEmpty)
                 _buildEmptyState()
               else
-                ...recentBookings.map((booking) => _buildBookingItem(booking)),
+                _buildTimeline(recentBookings),
             ],
           ),
         );
@@ -676,12 +820,8 @@ class _OwnerDashboardScreenState extends State<OwnerDashboardScreen>
   }
 
   Widget _buildEmptyState() {
-    return Container(
+    return GlassCard(
       padding: const EdgeInsets.all(32),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
-      ),
       child: Center(
         child: Column(
           children: [
@@ -691,7 +831,7 @@ class _OwnerDashboardScreenState extends State<OwnerDashboardScreen>
               color: AppColors.textSecondary.withOpacity(0.5),
             ),
             const SizedBox(height: 12),
-            Text(
+            const Text(
               'No recent bookings',
               style: TextStyle(
                 color: AppColors.textSecondary,
@@ -704,58 +844,140 @@ class _OwnerDashboardScreenState extends State<OwnerDashboardScreen>
     );
   }
 
-  Widget _buildBookingItem(BookingModel booking) {
+  String _formatBookingDateShort(String bookingDate) {
+    try {
+      final parts = bookingDate.split('-');
+      if (parts.length == 3) {
+        final day = parts[2];
+        final monthIndex = int.parse(parts[1]);
+        const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+        return '$day\n${months[monthIndex - 1]}';
+      }
+    } catch (_) {}
+    return bookingDate;
+  }
+
+  String _formatStartTimeShort(String startTime) {
+    final parts = startTime.split(':');
+    final hour = int.parse(parts[0]);
+    final minute = parts[1];
+    final period = hour >= 12 ? 'PM' : 'AM';
+    final displayHour = hour > 12 ? hour - 12 : (hour == 0 ? 12 : hour);
+    return '$displayHour:$minute\n$period';
+  }
+
+  Widget _buildTimeline(List<BookingModel> bookings) {
+    return Column(
+      children: List.generate(bookings.length, (index) {
+        final booking = bookings[index];
+        final isLast = index == bookings.length - 1;
+        return IntrinsicHeight(
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // Left: date & time
+              SizedBox(
+                width: 48,
+                child: Padding(
+                  padding: const EdgeInsets.only(top: 4),
+                  child: Text(
+                    _formatBookingDateShort(booking.bookingDate),
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w600,
+                      color: Color(0xFF475569),
+                      height: 1.3,
+                    ),
+                  ),
+                ),
+              ),
+              // Timeline column: marker + line
+              SizedBox(
+                width: 28,
+                child: Column(
+                  children: [
+                    const SizedBox(height: 6),
+                    Container(
+                      width: 10,
+                      height: 10,
+                      decoration: const BoxDecoration(
+                        color: Color(0xFF6E8FF7),
+                        shape: BoxShape.circle,
+                      ),
+                    ),
+                    if (!isLast)
+                      Expanded(
+                        child: Container(
+                          width: 2,
+                          color: const Color(0xFF9FB7F0),
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+              // Right: booking card
+              Expanded(
+                child: Padding(
+                  padding: EdgeInsets.only(bottom: isLast ? 0 : 16),
+                  child: _buildTimelineCard(booking),
+                ),
+              ),
+            ],
+          ),
+        );
+      }),
+    );
+  }
+
+  Widget _buildTimelineCard(BookingModel booking) {
     return Container(
-      margin: const EdgeInsets.only(bottom: 12),
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
       decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: BorderRadius.circular(18),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.05),
-            blurRadius: 6,
-            offset: const Offset(0, 2),
+            color: const Color(0xFF0F172A).withOpacity(0.05),
+            blurRadius: 10,
+            offset: const Offset(0, 3),
           ),
         ],
       ),
       child: Row(
         children: [
-          Container(
-            width: 48,
-            height: 48,
-            decoration: BoxDecoration(
-              color: AppColors.primary.withOpacity(0.1),
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: const Icon(
-              Icons.sports_cricket,
-              color: AppColors.primary,
-            ),
-          ),
-          const SizedBox(width: 12),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
                   booking.customerName.isNotEmpty ? booking.customerName : 'Customer',
+                  overflow: TextOverflow.ellipsis,
+                  maxLines: 1,
                   style: const TextStyle(
+                    fontSize: 14,
                     fontWeight: FontWeight.w600,
                     color: AppColors.textPrimary,
                   ),
                 ),
-                const SizedBox(height: 4),
-                Text(
-                  '${booking.bookingDate} • ${booking.displayTimeRange}',
-                  style: TextStyle(
-                    fontSize: 12,
-                    color: AppColors.textSecondary,
-                  ),
+                const SizedBox(height: 6),
+                Row(
+                  children: [
+                    const Icon(Icons.access_time_outlined, size: 13, color: Color(0xFF475569)),
+                    const SizedBox(width: 5),
+                    Flexible(
+                      child: Text(
+                        booking.displayTimeRange,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(fontSize: 12, color: Color(0xFF475569)),
+                      ),
+                    ),
+                  ],
                 ),
               ],
             ),
           ),
+          const SizedBox(width: 8),
           _buildPaymentBadge(booking.paymentStatus.displayName),
         ],
       ),
@@ -763,22 +985,14 @@ class _OwnerDashboardScreenState extends State<OwnerDashboardScreen>
   }
 
   Widget _buildPaymentBadge(String status) {
-    Color color;
-    switch (status.toLowerCase()) {
-      case 'paid':
-        color = AppColors.success;
-        break;
-      case 'pay at turf':
-        color = AppColors.warning;
-        break;
-      default:
-        color = AppColors.textSecondary;
-    }
+    final bool isPaid = status.toLowerCase() == 'paid';
+    final Color bgColor = isPaid ? const Color(0xFFDCFCE7) : const Color(0xFFE2E8F0);
+    final Color textColor = isPaid ? const Color(0xFF166534) : const Color(0xFF475569);
 
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
       decoration: BoxDecoration(
-        color: color.withOpacity(0.1),
+        color: bgColor,
         borderRadius: BorderRadius.circular(20),
       ),
       child: Text(
@@ -786,7 +1000,7 @@ class _OwnerDashboardScreenState extends State<OwnerDashboardScreen>
         style: TextStyle(
           fontSize: 11,
           fontWeight: FontWeight.w600,
-          color: color,
+          color: textColor,
         ),
       ),
     );
@@ -802,4 +1016,22 @@ class _OwnerDashboardScreenState extends State<OwnerDashboardScreen>
     
     return '${days[now.weekday - 1]}, ${now.day} ${months[now.month - 1]} ${now.year}';
   }
+}
+
+class _CarouselCardData {
+  final String title;
+  final String value;
+  final IconData icon;
+  final Color iconColor;
+  final Color bgColor;
+  final String subtitle;
+
+  const _CarouselCardData({
+    required this.title,
+    required this.value,
+    required this.icon,
+    required this.iconColor,
+    required this.bgColor,
+    required this.subtitle,
+  });
 }

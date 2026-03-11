@@ -2,10 +2,13 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import '../../../config/colors.dart';
+import '../../../config/glass_widgets.dart';
+import '../../../config/abstract_bg.dart';
 import '../../../core/constants/strings.dart';
 import '../providers/auth_provider.dart';
 import '../../../app/routes.dart';
 import '../../../core/constants/enums.dart';
+import '../../../core/utils/app_toast.dart';
 
 enum AuthStep { phone, otp, profile }
 
@@ -88,48 +91,89 @@ class _PlayerAuthScreenState extends State<PlayerAuthScreen> {
   }
 
   void _showError(String message) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(message),
-        backgroundColor: AppColors.error,
-        behavior: SnackBarBehavior.floating,
-        margin: const EdgeInsets.all(16),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-      ),
-    );
+    showAppToast(context, message, type: ToastType.error);
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: Colors.white,
-      appBar: AppBar(
-        backgroundColor: Colors.transparent,
-        elevation: 0,
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back_ios, color: Colors.black),
-          onPressed: () {
-            if (_currentStep == AuthStep.otp) {
-              setState(() => _currentStep = AuthStep.phone);
-            } else {
-              Navigator.pop(context);
-            }
-          },
-        ),
-      ),
-      body: SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.all(24.0),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              _buildHeader(),
-              const SizedBox(height: 40),
-              Expanded(
-                child: _buildStepContent(),
+      backgroundColor: AppColors.background,
+      body: GlassScaffoldBackground(
+        child: Stack(
+          children: [
+            const AbstractBgShapes(),
+            SafeArea(
+              child: Column(
+                children: [
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+                    child: Row(
+                      children: [
+                        IconButton(
+                          icon: const Icon(Icons.arrow_back_ios, color: AppColors.textPrimary, size: 20),
+                          onPressed: () {
+                            if (_currentStep == AuthStep.otp) {
+                              setState(() => _currentStep = AuthStep.phone);
+                            } else {
+                              Navigator.pop(context);
+                            }
+                          },
+                        ),
+                      ],
+                    ),
+                  ),
+                  // Branding
+                  Container(
+                    width: 72,
+                    height: 72,
+                    decoration: BoxDecoration(
+                      color: AppColors.glassFill,
+                      borderRadius: BorderRadius.circular(20),
+                      border: Border.all(color: AppColors.primary.withOpacity(0.3)),
+                      boxShadow: AppColors.neonGlow(blur: 24, spread: 1),
+                    ),
+                    child: const Icon(
+                      Icons.sports_cricket,
+                      size: 36,
+                      color: AppColors.primary,
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  const Text(
+                    AppStrings.appName,
+                    style: TextStyle(
+                      fontSize: 24,
+                      fontWeight: FontWeight.bold,
+                      color: AppColors.textPrimary,
+                      letterSpacing: 1,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    AppStrings.appTagline,
+                    style: TextStyle(
+                      fontSize: 13,
+                      color: AppColors.textSecondary,
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  Expanded(
+                    child: Padding(
+                      padding: const EdgeInsets.all(24.0),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          _buildHeader(),
+                          const SizedBox(height: 40),
+                          Expanded(child: _buildStepContent()),
+                        ],
+                      ),
+                    ),
+                  ),
+                ],
               ),
-            ],
-          ),
+            ),
+          ],
         ),
       ),
     );
@@ -162,15 +206,15 @@ class _PlayerAuthScreenState extends State<PlayerAuthScreen> {
           style: const TextStyle(
             fontSize: 28,
             fontWeight: FontWeight.bold,
-            color: Colors.black,
+            color: AppColors.textPrimary,
           ),
         ),
         const SizedBox(height: 8),
         Text(
           subtitle,
-          style: TextStyle(
+          style: const TextStyle(
             fontSize: 16,
-            color: Colors.grey[600],
+            color: AppColors.textSecondary,
           ),
         ),
       ],
@@ -193,24 +237,14 @@ class _PlayerAuthScreenState extends State<PlayerAuthScreen> {
       key: _phoneFormKey,
       child: Column(
         children: [
-          TextFormField(
+          GlassTextField(
             controller: _phoneController,
+            hint: 'Phone Number',
+            prefixText: '+91 ',
+            prefixStyle: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: AppColors.textPrimary),
             keyboardType: TextInputType.phone,
             maxLength: 10,
-            style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold, letterSpacing: 2),
-            decoration: InputDecoration(
-              hintText: 'Phone Number',
-              prefixText: '+91 ',
-              prefixStyle: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-              counterText: '',
-              filled: true,
-              fillColor: Colors.grey[100],
-              border: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(12),
-                borderSide: BorderSide.none,
-              ),
-              contentPadding: const EdgeInsets.all(18),
-            ),
+            style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold, letterSpacing: 2, color: AppColors.textPrimary),
             validator: (value) {
               if (value == null || value.isEmpty) return 'Enter phone number';
               if (value.length < 10) return 'Enter a valid 10-digit number';
@@ -218,10 +252,7 @@ class _PlayerAuthScreenState extends State<PlayerAuthScreen> {
             },
           ),
           const SizedBox(height: 24),
-          _buildSubmitButton(
-            text: 'Continue',
-            onPressed: _sendOTP,
-          ),
+          _buildSubmitButton(text: 'Continue', onPressed: _sendOTP),
         ],
       ),
     );
@@ -232,38 +263,23 @@ class _PlayerAuthScreenState extends State<PlayerAuthScreen> {
       key: _otpFormKey,
       child: Column(
         children: [
-          TextFormField(
+          GlassTextField(
             controller: _otpController,
+            hint: '000000',
             keyboardType: TextInputType.number,
             maxLength: 6,
             textAlign: TextAlign.center,
-            style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold, letterSpacing: 10),
-            decoration: InputDecoration(
-              hintText: '000000',
-              counterText: '',
-              filled: true,
-              fillColor: Colors.grey[100],
-              border: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(12),
-                borderSide: BorderSide.none,
-              ),
-              contentPadding: const EdgeInsets.all(18),
-            ),
+            style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold, letterSpacing: 10, color: AppColors.textPrimary),
             validator: (value) {
               if (value == null || value.length < 6) return 'Enter 6-digit OTP';
               return null;
             },
           ),
           const SizedBox(height: 24),
-          _buildSubmitButton(
-            text: 'Verify Code',
-            onPressed: _verifyOTP,
-          ),
+          _buildSubmitButton(text: 'Verify Code', onPressed: _verifyOTP),
           TextButton(
-            onPressed: () {
-              setState(() => _currentStep = AuthStep.phone);
-            },
-            child: const Text('Change Number'),
+            onPressed: () => setState(() => _currentStep = AuthStep.phone),
+            child: const Text('Change Number', style: TextStyle(color: AppColors.primary)),
           ),
         ],
       ),
@@ -275,35 +291,18 @@ class _PlayerAuthScreenState extends State<PlayerAuthScreen> {
       key: _profileFormKey,
       child: Column(
         children: [
-          TextFormField(
+          GlassTextField(
             controller: _nameController,
-            textCapitalization: TextCapitalization.words,
-            decoration: InputDecoration(
-              hintText: 'Your Display Name',
-              prefixIcon: const Icon(Icons.person_outline),
-              filled: true,
-              fillColor: Colors.grey[100],
-              border: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(12),
-                borderSide: BorderSide.none,
-              ),
-            ),
+            hint: 'Your Display Name',
+            prefixIcon: Icons.person_outline,
             validator: (value) => (value == null || value.isEmpty) ? 'Enter name' : null,
           ),
           const SizedBox(height: 16),
-          TextFormField(
+          GlassTextField(
             controller: _emailController,
+            hint: 'Email Address',
+            prefixIcon: Icons.email_outlined,
             keyboardType: TextInputType.emailAddress,
-            decoration: InputDecoration(
-              hintText: 'Email Address',
-              prefixIcon: const Icon(Icons.email_outlined),
-              filled: true,
-              fillColor: Colors.grey[100],
-              border: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(12),
-                borderSide: BorderSide.none,
-              ),
-            ),
             validator: (value) {
               if (value == null || value.isEmpty) return 'Enter email';
               if (!value.contains('@')) return 'Enter valid email';
@@ -311,10 +310,7 @@ class _PlayerAuthScreenState extends State<PlayerAuthScreen> {
             },
           ),
           const SizedBox(height: 32),
-          _buildSubmitButton(
-            text: 'Get Started',
-            onPressed: _completeProfile,
-          ),
+          _buildSubmitButton(text: 'Get Started', onPressed: _completeProfile),
         ],
       ),
     );
@@ -323,29 +319,10 @@ class _PlayerAuthScreenState extends State<PlayerAuthScreen> {
   Widget _buildSubmitButton({required String text, required VoidCallback onPressed}) {
     return Consumer<AuthProvider>(
       builder: (context, auth, _) {
-        return SizedBox(
-          width: double.infinity,
-          height: 56,
-          child: ElevatedButton(
-            onPressed: auth.isLoading ? null : onPressed,
-            style: ElevatedButton.styleFrom(
-              backgroundColor: AppColors.primary,
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(12),
-              ),
-              elevation: 0,
-            ),
-            child: auth.isLoading
-                ? const CircularProgressIndicator(color: Colors.white)
-                : Text(
-                    text,
-                    style: const TextStyle(
-                      fontSize: 18,
-                      fontWeight: FontWeight.bold,
-                      color: Colors.white,
-                    ),
-                  ),
-          ),
+        return GlassButton(
+          label: text,
+          onPressed: onPressed,
+          isLoading: auth.isLoading,
         );
       },
     );

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:fl_chart/fl_chart.dart';
 import '../../../config/colors.dart';
+import '../../../config/glass_widgets.dart';
 import '../../../data/models/booking_model.dart';
 import '../../../core/constants/enums.dart';
 import '../../auth/providers/auth_provider.dart';
@@ -104,34 +105,43 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: AppColors.background,
-      appBar: AppBar(
-        title: const Text('Analytics'),
-        backgroundColor: AppColors.primary,
-        actions: [
-          Padding(
-            padding: const EdgeInsets.only(right: 8),
-            child: _buildPeriodSelector(),
+      body: GlassScaffoldBackground(
+        child: SafeArea(
+          child: Column(
+            children: [
+              GlassAppBar(
+                title: 'Analytics Dashboard',
+                actions: [
+                  Padding(
+                    padding: const EdgeInsets.only(right: 8),
+                    child: _buildPeriodSelector(),
+                  ),
+                ],
+              ),
+              Expanded(
+                child: _isLoading
+                    ? const Center(child: CircularProgressIndicator())
+                    : !_isProUnlocked
+                        ? _buildProGate()
+                        : _buildAnalyticsContent(),
+              ),
+            ],
           ),
-        ],
+        ),
       ),
-      body: _isLoading
-          ? const Center(child: CircularProgressIndicator())
-          : !_isProUnlocked
-              ? _buildProGate()
-              : _buildAnalyticsContent(),
     );
   }
 
   Widget _buildPeriodSelector() {
     return DropdownButton<String>(
       value: _selectedPeriod,
-      dropdownColor: Colors.white,
+      dropdownColor: AppColors.surface,
       underline: const SizedBox(),
-      icon: const Icon(Icons.arrow_drop_down, color: Colors.white),
+      icon: const Icon(Icons.arrow_drop_down, color: AppColors.textPrimary),
       items: const [
-        DropdownMenuItem(value: '7days', child: Text('7 Days', style: TextStyle(color: Colors.white))),
-        DropdownMenuItem(value: '30days', child: Text('30 Days', style: TextStyle(color: Colors.white))),
-        DropdownMenuItem(value: '90days', child: Text('90 Days', style: TextStyle(color: Colors.white))),
+        DropdownMenuItem(value: '7days', child: Text('7 Days', style: TextStyle(color: AppColors.textPrimary))),
+        DropdownMenuItem(value: '30days', child: Text('30 Days', style: TextStyle(color: AppColors.textPrimary))),
+        DropdownMenuItem(value: '90days', child: Text('90 Days', style: TextStyle(color: AppColors.textPrimary))),
       ],
       onChanged: (val) {
         if (val != null) {
@@ -250,9 +260,9 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
     return Container(
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: AppColors.glassFill,
         borderRadius: BorderRadius.circular(12),
-        boxShadow: [BoxShadow(color: color.withOpacity(0.1), blurRadius: 8, offset: const Offset(0, 2))],
+        border: Border.all(color: AppColors.glassBorder),
       ),
       child: Column(
         children: [
@@ -280,15 +290,23 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
     return Container(
       height: 200,
       padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(12)),
+      decoration: BoxDecoration(color: AppColors.glassFill, borderRadius: BorderRadius.circular(12), border: Border.all(color: AppColors.glassBorder)),
       child: LineChart(
         LineChartData(
           gridData: const FlGridData(show: false),
-          titlesData: const FlTitlesData(
-            topTitles: AxisTitles(sideTitles: SideTitles(showTitles: false)),
-            rightTitles: AxisTitles(sideTitles: SideTitles(showTitles: false)),
-            bottomTitles: AxisTitles(sideTitles: SideTitles(showTitles: false)),
-            leftTitles: AxisTitles(sideTitles: SideTitles(showTitles: false)),
+          titlesData: FlTitlesData(
+            topTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+            rightTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+            bottomTitles: AxisTitles(
+              axisNameWidget: Text('Days', style: TextStyle(fontSize: 10, color: AppColors.textSecondary)),
+              axisNameSize: 18,
+              sideTitles: const SideTitles(showTitles: false),
+            ),
+            leftTitles: AxisTitles(
+              axisNameWidget: Text('Revenue (₹)', style: TextStyle(fontSize: 10, color: AppColors.textSecondary)),
+              axisNameSize: 18,
+              sideTitles: const SideTitles(showTitles: false),
+            ),
           ),
           borderData: FlBorderData(show: false),
           lineBarsData: [
@@ -333,15 +351,21 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
     return Container(
       height: 200,
       padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(12)),
+      decoration: BoxDecoration(color: AppColors.glassFill, borderRadius: BorderRadius.circular(12), border: Border.all(color: AppColors.glassBorder)),
       child: BarChart(
         BarChartData(
           gridData: const FlGridData(show: false),
           titlesData: FlTitlesData(
             topTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
             rightTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
-            leftTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+            leftTitles: AxisTitles(
+              axisNameWidget: Text('Bookings', style: TextStyle(fontSize: 10, color: AppColors.textSecondary)),
+              axisNameSize: 18,
+              sideTitles: const SideTitles(showTitles: false),
+            ),
             bottomTitles: AxisTitles(
+              axisNameWidget: Text('Hour of Day', style: TextStyle(fontSize: 10, color: AppColors.textSecondary)),
+              axisNameSize: 18,
               sideTitles: SideTitles(
                 showTitles: true,
                 getTitlesWidget: (value, meta) {
@@ -376,7 +400,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
     
     return Container(
       padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(12)),
+      decoration: BoxDecoration(color: AppColors.glassFill, borderRadius: BorderRadius.circular(12), border: Border.all(color: AppColors.glassBorder)),
       child: Column(
         children: _netUtilization.entries.map((entry) {
           final pct = total > 0 ? (entry.value / total * 100) : 0.0;
@@ -417,7 +441,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
 
     return Container(
       padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(12)),
+      decoration: BoxDecoration(color: AppColors.glassFill, borderRadius: BorderRadius.circular(12), border: Border.all(color: AppColors.glassBorder)),
       child: Row(
         children: [
           Expanded(
@@ -480,7 +504,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
       height: 120,
       width: double.infinity,
       padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(12)),
+      decoration: BoxDecoration(color: AppColors.glassFill, borderRadius: BorderRadius.circular(12), border: Border.all(color: AppColors.glassBorder)),
       child: Center(
         child: Text(message, style: TextStyle(color: AppColors.textSecondary)),
       ),

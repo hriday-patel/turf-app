@@ -1,7 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../../config/colors.dart';
+import '../../../config/glass_widgets.dart';
+import '../../../config/abstract_bg.dart';
 import '../../auth/providers/auth_provider.dart';
+import '../../../core/utils/app_toast.dart';
 
 /// Settings Screen
 /// Change email, change password with validation
@@ -110,45 +113,52 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   void _showSnackBar(String message, {bool isError = false}) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(message),
-        backgroundColor: isError ? AppColors.error : AppColors.success,
-      ),
-    );
+    showAppToast(context, message, type: isError ? ToastType.error : ToastType.success);
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: AppColors.background,
-      appBar: AppBar(
-        title: const Text('Settings'),
-        backgroundColor: AppColors.primary,
-      ),
-      body: SingleChildScrollView(
-        padding: const EdgeInsets.all(20),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
+      body: GlassScaffoldBackground(
+        child: Stack(
           children: [
-            // Account Info
-            _buildSectionTitle('Account Information'),
-            _buildAccountInfo(),
-            const SizedBox(height: 32),
+            const AbstractBgShapes(),
+            SafeArea(
+          child: Column(
+            children: [
+              GlassAppBar(title: 'Profile Settings'),
+              Expanded(
+                child: SingleChildScrollView(
+                  padding: const EdgeInsets.all(20),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      // Account Info
+                      _buildSectionTitle('Account Information'),
+                      _buildAccountInfo(),
+                      const SizedBox(height: 32),
 
-            // Change Email
-            _buildSectionTitle('Change Email'),
-            _buildEmailSection(),
-            const SizedBox(height: 32),
+                      // Change Email
+                      _buildSectionTitle('Change Email'),
+                      _buildEmailSection(),
+                      const SizedBox(height: 32),
 
-            // Change Password
-            _buildSectionTitle('Change Password'),
-            _buildPasswordSection(),
-            const SizedBox(height: 32),
+                      // Change Password
+                      _buildSectionTitle('Change Password'),
+                      _buildPasswordSection(),
+                      const SizedBox(height: 32),
 
-            // Danger Zone
-            _buildSectionTitle('Account'),
-            _buildDangerZone(),
+                      // Danger Zone
+                      _buildSectionTitle('Account'),
+                      _buildDangerZone(),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
           ],
         ),
       ),
@@ -176,8 +186,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
         return Container(
           padding: const EdgeInsets.all(16),
           decoration: BoxDecoration(
-            color: Colors.white,
+            color: AppColors.glassFill,
             borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: AppColors.glassBorder),
           ),
           child: Column(
             children: [
@@ -213,8 +224,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: AppColors.glassFill,
         borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: AppColors.glassBorder),
       ),
       child: Column(
         children: [
@@ -251,8 +263,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: AppColors.glassFill,
         borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: AppColors.glassBorder),
       ),
       child: Column(
         children: [
@@ -309,8 +322,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: AppColors.glassFill,
         borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: AppColors.glassBorder),
       ),
       child: Column(
         children: [

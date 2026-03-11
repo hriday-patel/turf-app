@@ -1,6 +1,6 @@
 class AppStrings {
   // App Info
-  static const String appName = 'Turf Booking';
+  static const String appName = 'FieldPass';
   static const String appTagline = 'Book Your Game, Own Your Victory';
   
   // Auth Strings

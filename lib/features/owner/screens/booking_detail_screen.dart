@@ -1,11 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import '../../../config/colors.dart';
 import '../../../data/models/booking_model.dart';
 import '../../../data/services/database_service.dart';
 import '../../../core/constants/enums.dart';
 import '../../../app/routes.dart';
 import '../../auth/providers/auth_provider.dart';
+import '../../../core/utils/app_toast.dart';
 import '../providers/booking_provider.dart';
 
 /// Booking Detail Screen
@@ -19,16 +19,27 @@ class BookingDetailScreen extends StatefulWidget {
   State<BookingDetailScreen> createState() => _BookingDetailScreenState();
 }
 
-class _BookingDetailScreenState extends State<BookingDetailScreen> with RouteAware {
+class _BookingDetailScreenState extends State<BookingDetailScreen> with RouteAware, TickerProviderStateMixin {
   final DatabaseService _dbService = DatabaseService();
   BookingModel? _booking;
   bool _isLoading = true;
   bool _isProcessing = false;
   String? _errorMessage;
 
+  late final AnimationController _entranceCtrl;
+  late final Animation<double> _entranceOpacity;
+  late final Animation<Offset> _entranceSlide;
+
   @override
   void initState() {
     super.initState();
+    _entranceCtrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 300),
+    );
+    _entranceOpacity = CurvedAnimation(parent: _entranceCtrl, curve: Curves.easeOut);
+    _entranceSlide = Tween<Offset>(begin: const Offset(0, 0.03), end: Offset.zero)
+        .animate(CurvedAnimation(parent: _entranceCtrl, curve: Curves.easeOut));
     _loadBooking();
   }
   
@@ -43,6 +54,7 @@ class _BookingDetailScreenState extends State<BookingDetailScreen> with RouteAwa
   
   @override
   void dispose() {
+    _entranceCtrl.dispose();
     AppRoutes.routeObserver.unsubscribe(this);
     super.dispose();
   }
@@ -62,6 +74,7 @@ class _BookingDetailScreenState extends State<BookingDetailScreen> with RouteAwa
           _booking = BookingModel.fromMap(data);
           _isLoading = false;
         });
+        _entranceCtrl.forward();
       } else {
         setState(() {
           _errorMessage = 'Booking not found';
@@ -93,7 +106,7 @@ class _BookingDetailScreenState extends State<BookingDetailScreen> with RouteAwa
           ),
           TextButton(
             onPressed: () => Navigator.pop(context, true),
-            style: TextButton.styleFrom(foregroundColor: AppColors.error),
+            style: TextButton.styleFrom(foregroundColor: const Color(0xFFEF4444)),
             child: const Text('Cancel Booking'),
           ),
         ],
@@ -123,20 +136,10 @@ class _BookingDetailScreenState extends State<BookingDetailScreen> with RouteAwa
     setState(() => _isProcessing = false);
 
     if (success) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Booking cancelled successfully'),
-          backgroundColor: AppColors.success,
-        ),
-      );
+      showAppToast(context, 'Booking cancelled successfully', type: ToastType.success);
       Navigator.pop(context, true);
     } else {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(bookingProvider.errorMessage ?? 'Failed to cancel booking'),
-          backgroundColor: AppColors.error,
-        ),
-      );
+      showAppToast(context, bookingProvider.errorMessage ?? 'Failed to cancel booking', type: ToastType.error);
     }
   }
 
@@ -151,12 +154,7 @@ class _BookingDetailScreenState extends State<BookingDetailScreen> with RouteAwa
     if (success) {
       await _loadBooking();
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Payment marked as received'),
-            backgroundColor: AppColors.success,
-          ),
-        );
+        showAppToast(context, 'Payment marked as received', type: ToastType.success);
       }
     }
 
@@ -166,12 +164,33 @@ class _BookingDetailScreenState extends State<BookingDetailScreen> with RouteAwa
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: AppColors.background,
-      appBar: AppBar(
-        title: const Text('Booking Details'),
-        backgroundColor: AppColors.primary,
+      backgroundColor: const Color(0xFFF8FAFC),
+      body: SafeArea(
+        child: Column(
+          children: [
+            // App bar
+            Container(
+              color: Colors.white,
+              padding: const EdgeInsets.symmetric(vertical: 4),
+              child: Row(
+                children: [
+                  IconButton(
+                    icon: const Icon(Icons.arrow_back_ios, color: Color(0xFF0F172A), size: 20),
+                    onPressed: () => Navigator.pop(context),
+                  ),
+                  const Expanded(
+                    child: Center(
+                      child: Text('Booking Details', style: TextStyle(color: Color(0xFF0F172A), fontWeight: FontWeight.w600, fontSize: 18)),
+                    ),
+                  ),
+                  const SizedBox(width: 48),
+                ],
+              ),
+            ),
+            Expanded(child: _buildBody()),
+          ],
+        ),
       ),
-      body: _buildBody(),
     );
   }
 
@@ -182,13 +201,16 @@ class _BookingDetailScreenState extends State<BookingDetailScreen> with RouteAwa
 
     if (_errorMessage != null) {
       return Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            const Icon(Icons.error_outline, size: 64, color: AppColors.error),
-            const SizedBox(height: 16),
-            Text(_errorMessage!, style: const TextStyle(color: AppColors.error)),
-          ],
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              const Icon(Icons.error_outline, size: 64, color: Color(0xFFEF4444)),
+              const SizedBox(height: 16),
+              Text(_errorMessage!, style: const TextStyle(color: Color(0xFFEF4444)), textAlign: TextAlign.center),
+            ],
+          ),
         ),
       );
     }
@@ -197,8 +219,12 @@ class _BookingDetailScreenState extends State<BookingDetailScreen> with RouteAwa
       return const Center(child: Text('Booking not found'));
     }
 
-    return SingleChildScrollView(
-      padding: const EdgeInsets.all(20),
+    return FadeTransition(
+      opacity: _entranceOpacity,
+      child: SlideTransition(
+        position: _entranceSlide,
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.all(20),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -241,7 +267,7 @@ class _BookingDetailScreenState extends State<BookingDetailScreen> with RouteAwa
               if (_booking!.advanceAmount > 0)
                 _buildInfoRow('Advance Paid', '₹${_booking!.advanceAmount.toInt()}'),
               if (_booking!.isPartialPayment)
-                _buildInfoRow('Remaining', '₹${_booking!.remainingAmount.toInt()}', valueColor: AppColors.warning),
+                _buildInfoRow('Remaining', '₹${_booking!.remainingAmount.toInt()}', valueColor: const Color(0xFFF59E0B)),
               _buildInfoRow('Mode', _booking!.paymentMode.displayName),
               _buildInfoRow('Status', _booking!.paymentStatus.displayName),
               if (_booking!.transactionId != null)
@@ -254,47 +280,28 @@ class _BookingDetailScreenState extends State<BookingDetailScreen> with RouteAwa
           if (_booking!.isActive) ...[
             // Mark Payment Received (for pay at turf)
             if (_booking!.isPendingPayment)
-              SizedBox(
-                width: double.infinity,
-                child: ElevatedButton.icon(
-                  onPressed: _isProcessing ? null : _markPaymentReceived,
-                  icon: const Icon(Icons.check_circle_outline),
-                  label: _isProcessing
-                      ? const SizedBox(
-                          width: 20,
-                          height: 20,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        )
-                      : const Text('Mark Payment Received'),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: AppColors.success,
-                    padding: const EdgeInsets.symmetric(vertical: 14),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                  ),
-                ),
+              _SwipeToConfirm(
+                onConfirm: _isProcessing ? null : _markPaymentReceived,
+                isProcessing: _isProcessing,
+                label: 'Mark Payment Received',
+                icon: Icons.check_circle_outline,
+                trackColor: const Color(0xFFECFDF5),
+                borderColor: const Color(0xFF22C55E),
+                textColor: const Color(0xFF166534),
+                thumbColor: const Color(0xFFBBF7D0),
               ),
             const SizedBox(height: 12),
 
             // Cancel Booking
-            SizedBox(
-              width: double.infinity,
-              child: OutlinedButton.icon(
-                onPressed: _isProcessing ? null : _cancelBooking,
-                icon: const Icon(Icons.cancel_outlined, color: AppColors.error),
-                label: const Text(
-                  'Cancel Booking',
-                  style: TextStyle(color: AppColors.error),
-                ),
-                style: OutlinedButton.styleFrom(
-                  side: const BorderSide(color: AppColors.error),
-                  padding: const EdgeInsets.symmetric(vertical: 14),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                ),
-              ),
+            _SwipeToConfirm(
+              onConfirm: _isProcessing ? null : _cancelBooking,
+              isProcessing: _isProcessing,
+              label: 'Cancel Booking',
+              icon: Icons.cancel_outlined,
+              trackColor: const Color(0xFFFEF2F2),
+              borderColor: const Color(0xFFEF4444),
+              textColor: const Color(0xFF991B1B),
+              thumbColor: const Color(0xFFFECACA),
             ),
           ],
 
@@ -304,7 +311,6 @@ class _BookingDetailScreenState extends State<BookingDetailScreen> with RouteAwa
             _buildSection(
               title: 'Cancellation Details',
               icon: Icons.cancel_outlined,
-              color: AppColors.error,
               children: [
                 if (_booking!.cancelledBy != null)
                   _buildInfoRow('Cancelled By', _booking!.cancelledBy!),
@@ -315,45 +321,71 @@ class _BookingDetailScreenState extends State<BookingDetailScreen> with RouteAwa
           ],
         ],
       ),
+      ),
+      ),
     );
   }
 
   Widget _buildStatusBanner() {
+    final isCancelled = _booking!.bookingStatus == BookingStatus.cancelled;
     final isConfirmed = _booking!.bookingStatus == BookingStatus.confirmed;
-    final color = isConfirmed ? AppColors.success : AppColors.error;
-    final icon = isConfirmed ? Icons.check_circle : Icons.cancel;
-    final text = _booking!.bookingStatus.displayName;
+    final isPending = _booking!.isPendingPayment;
+
+    Color bg, border, textColor;
+    IconData icon;
+
+    if (isCancelled) {
+      bg = const Color(0xFFFEF2F2);
+      border = const Color(0xFFFCA5A5);
+      textColor = const Color(0xFF991B1B);
+      icon = Icons.cancel_rounded;
+    } else if (isPending) {
+      bg = const Color(0xFFFFFBEB);
+      border = const Color(0xFFFCD34D);
+      textColor = const Color(0xFF92400E);
+      icon = Icons.schedule_rounded;
+    } else {
+      bg = const Color(0xFFECFDF5);
+      border = const Color(0xFF86EFAC);
+      textColor = const Color(0xFF166534);
+      icon = Icons.check_circle_rounded;
+    }
 
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: color.withOpacity(0.1),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: color.withOpacity(0.3)),
+        color: bg,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: border),
       ),
       child: Row(
         children: [
-          Icon(icon, color: color, size: 32),
+          Icon(icon, color: textColor, size: 32),
           const SizedBox(width: 12),
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                'Booking $text',
-                style: TextStyle(
-                  fontSize: 18,
-                  fontWeight: FontWeight.bold,
-                  color: color,
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  isCancelled ? 'Booking Cancelled' : isPending ? 'Payment Pending' : 'Booking Confirmed',
+                  style: TextStyle(
+                    fontSize: 17,
+                    fontWeight: FontWeight.w600,
+                    color: textColor,
+                  ),
                 ),
-              ),
-              Text(
-                'ID: ${_booking!.bookingId}',
-                style: TextStyle(
-                  fontSize: 12,
-                  color: AppColors.textSecondary,
+                const SizedBox(height: 2),
+                Text(
+                  'ID: ${_booking!.bookingId}',
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: textColor.withOpacity(0.7),
+                  ),
+                  overflow: TextOverflow.ellipsis,
+                  maxLines: 1,
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
         ],
       ),
@@ -370,13 +402,10 @@ class _BookingDetailScreenState extends State<BookingDetailScreen> with RouteAwa
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: const Color(0xFFE2E8F0)),
         boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.05),
-            blurRadius: 6,
-            offset: const Offset(0, 2),
-          ),
+          BoxShadow(color: Colors.black.withOpacity(0.04), blurRadius: 8, offset: const Offset(0, 2)),
         ],
       ),
       child: Column(
@@ -384,19 +413,19 @@ class _BookingDetailScreenState extends State<BookingDetailScreen> with RouteAwa
         children: [
           Row(
             children: [
-              Icon(icon, color: color ?? AppColors.primary, size: 20),
+              Icon(icon, color: const Color(0xFF3B82F6), size: 20),
               const SizedBox(width: 8),
               Text(
                 title,
-                style: TextStyle(
-                  fontSize: 16,
+                style: const TextStyle(
+                  fontSize: 18,
                   fontWeight: FontWeight.w600,
-                  color: color ?? AppColors.textPrimary,
+                  color: Color(0xFF0F172A),
                 ),
               ),
             ],
           ),
-          const Divider(height: 20),
+          const Divider(height: 20, color: Color(0xFFE2E8F0)),
           ...children,
         ],
       ),
@@ -407,25 +436,295 @@ class _BookingDetailScreenState extends State<BookingDetailScreen> with RouteAwa
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 4),
       child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
             label,
-            style: TextStyle(
-              color: AppColors.textSecondary,
+            style: const TextStyle(
+              color: Color(0xFF64748B),
               fontSize: 14,
             ),
           ),
-          Text(
-            value,
-            style: TextStyle(
-              fontWeight: FontWeight.w500,
-              fontSize: 14,
-              color: valueColor,
+          const SizedBox(width: 12),
+          Expanded(
+            child: Text(
+              value,
+              style: TextStyle(
+                fontWeight: FontWeight.w500,
+                fontSize: 14,
+                color: valueColor ?? const Color(0xFF334155),
+              ),
+              textAlign: TextAlign.end,
+              overflow: TextOverflow.ellipsis,
+              maxLines: 2,
             ),
           ),
         ],
       ),
+    );
+  }
+}
+
+/// Scale-on-press wrapper for action buttons
+class _ScaleButton extends StatefulWidget {
+  final VoidCallback? onTap;
+  final Widget child;
+  const _ScaleButton({required this.onTap, required this.child});
+  @override
+  State<_ScaleButton> createState() => _ScaleButtonState();
+}
+
+class _ScaleButtonState extends State<_ScaleButton>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _ctrl;
+  late final Animation<double> _scale;
+
+  @override
+  void initState() {
+    super.initState();
+    _ctrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 110),
+      lowerBound: 0.0,
+      upperBound: 1.0,
+    );
+    _scale = Tween<double>(begin: 1.0, end: 0.98)
+        .animate(CurvedAnimation(parent: _ctrl, curve: Curves.easeInOut));
+  }
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTapDown: (_) => _ctrl.forward(),
+      onTapUp: (_) {
+        _ctrl.reverse();
+        widget.onTap?.call();
+      },
+      onTapCancel: () => _ctrl.reverse(),
+      child: ScaleTransition(
+        scale: _scale,
+        child: widget.child,
+      ),
+    );
+  }
+}
+
+/// Swipe-to-confirm pill slider control
+class _SwipeToConfirm extends StatefulWidget {
+  final VoidCallback? onConfirm;
+  final bool isProcessing;
+  final String label;
+  final IconData icon;
+  final Color trackColor;
+  final Color borderColor;
+  final Color textColor;
+  final Color thumbColor;
+
+  const _SwipeToConfirm({
+    required this.onConfirm,
+    required this.isProcessing,
+    required this.label,
+    required this.icon,
+    required this.trackColor,
+    required this.borderColor,
+    required this.textColor,
+    required this.thumbColor,
+  });
+
+  @override
+  State<_SwipeToConfirm> createState() => _SwipeToConfirmState();
+}
+
+class _SwipeToConfirmState extends State<_SwipeToConfirm>
+    with SingleTickerProviderStateMixin {
+  double _dragExtent = 0;
+  bool _confirmed = false;
+  late final AnimationController _resetCtrl;
+  late Animation<double> _resetAnim;
+
+  static const double _thumbSize = 48;
+  static const double _trackHeight = 58;
+  static const double _trackPadding = 5;
+
+  @override
+  void initState() {
+    super.initState();
+    _resetCtrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 300),
+    );
+  }
+
+  @override
+  void didUpdateWidget(covariant _SwipeToConfirm oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // Reset slider when processing finishes (action completed or dialog dismissed)
+    if (oldWidget.isProcessing && !widget.isProcessing && _confirmed) {
+      _animateReset();
+    }
+  }
+
+  @override
+  void dispose() {
+    _resetCtrl.dispose();
+    super.dispose();
+  }
+
+  void _animateReset() {
+    final startVal = _dragExtent;
+    if (startVal <= 0) {
+      setState(() { _confirmed = false; _dragExtent = 0; });
+      return;
+    }
+    _resetAnim = Tween<double>(begin: startVal, end: 0).animate(
+      CurvedAnimation(parent: _resetCtrl, curve: Curves.easeOut),
+    );
+    _resetCtrl.removeStatusListener(_onResetDone);
+    _resetCtrl.addStatusListener(_onResetDone);
+    _resetCtrl.forward(from: 0);
+    _resetCtrl.addListener(_onResetTick);
+  }
+
+  void _onResetTick() {
+    if (mounted) setState(() => _dragExtent = _resetAnim.value);
+  }
+
+  void _onResetDone(AnimationStatus status) {
+    if (status == AnimationStatus.completed && mounted) {
+      _resetCtrl.removeListener(_onResetTick);
+      _resetCtrl.removeStatusListener(_onResetDone);
+      setState(() { _confirmed = false; _dragExtent = 0; });
+    }
+  }
+
+  void _onDragUpdate(DragUpdateDetails details, double maxDrag) {
+    if (_confirmed || widget.isProcessing || widget.onConfirm == null) return;
+    setState(() {
+      _dragExtent = (_dragExtent + details.delta.dx).clamp(0.0, maxDrag);
+    });
+  }
+
+  void _onDragEnd(double maxDrag) {
+    if (_confirmed || widget.isProcessing) return;
+    if (_dragExtent >= maxDrag * 0.85) {
+      setState(() {
+        _confirmed = true;
+        _dragExtent = maxDrag;
+      });
+      widget.onConfirm?.call();
+      // Schedule reset in case the action doesn't trigger isProcessing
+      // (e.g. dialog dismissed without confirming)
+      Future.delayed(const Duration(milliseconds: 600), () {
+        if (mounted && _confirmed && !widget.isProcessing) {
+          _animateReset();
+        }
+      });
+    } else {
+      // Animate back to start
+      _animateReset();
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final trackWidth = constraints.maxWidth;
+        final maxDrag = trackWidth - _thumbSize - (_trackPadding * 2);
+        final progress = maxDrag > 0 ? (_dragExtent / maxDrag).clamp(0.0, 1.0) : 0.0;
+
+        return Container(
+          width: double.infinity,
+          height: _trackHeight,
+          decoration: BoxDecoration(
+            color: widget.trackColor,
+            borderRadius: BorderRadius.circular(28),
+            border: Border.all(color: widget.borderColor),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withOpacity(0.04),
+                blurRadius: 8,
+                offset: const Offset(0, 2),
+              ),
+            ],
+          ),
+          child: Stack(
+            alignment: Alignment.centerLeft,
+            children: [
+              // Label text (fades as thumb slides)
+              Center(
+                child: Opacity(
+                  opacity: widget.isProcessing ? 0.0 : (1.0 - progress * 1.5).clamp(0.0, 1.0),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Icon(widget.icon, color: widget.textColor, size: 20),
+                      const SizedBox(width: 8),
+                      Text(
+                        widget.label,
+                        style: TextStyle(
+                          color: widget.textColor,
+                          fontSize: 14,
+                          fontWeight: FontWeight.w600,
+                          letterSpacing: 0.2,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              // Processing indicator
+              if (widget.isProcessing)
+                Center(
+                  child: SizedBox(
+                    width: 20,
+                    height: 20,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      color: widget.textColor,
+                    ),
+                  ),
+                ),
+              // Draggable thumb
+              if (!widget.isProcessing)
+                Positioned(
+                  left: _trackPadding + _dragExtent,
+                  child: GestureDetector(
+                    onHorizontalDragUpdate: (d) => _onDragUpdate(d, maxDrag),
+                    onHorizontalDragEnd: (_) => _onDragEnd(maxDrag),
+                    child: Container(
+                      width: _thumbSize,
+                      height: _thumbSize,
+                      decoration: BoxDecoration(
+                        color: widget.thumbColor,
+                        borderRadius: BorderRadius.circular(24),
+                        border: Border.all(color: widget.borderColor.withOpacity(0.5)),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withOpacity(0.08),
+                            blurRadius: 6,
+                            offset: const Offset(0, 2),
+                          ),
+                        ],
+                      ),
+                      child: Icon(
+                        Icons.chevron_right_rounded,
+                        color: widget.textColor,
+                        size: 26,
+                      ),
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        );
+      },
     );
   }
 }

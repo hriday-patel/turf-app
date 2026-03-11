@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../../app/routes.dart';
-import '../../../config/colors.dart';
 import '../../../core/constants/enums.dart';
 import '../../../data/models/booking_model.dart';
 import '../providers/turf_provider.dart';
@@ -80,29 +79,96 @@ class _BookingManagementScreenState extends State<BookingManagementScreen>
 
   @override
   Widget build(BuildContext context) {
+    const tabLabels = ['All', 'Paid', 'Pending', 'Cancelled'];
+    const tabColors = [Color(0xFF3B82F6), Color(0xFF22C55E), Color(0xFFF59E0B), Color(0xFFEF4444)];
     return Scaffold(
-      backgroundColor: AppColors.background,
-      appBar: AppBar(
-        title: const Text('History'),
-        backgroundColor: AppColors.primary,
-        bottom: TabBar(
-          controller: _tabController,
-          indicatorColor: Colors.white,
-          indicatorWeight: 3,
-          labelColor: Colors.white,
-          unselectedLabelColor: Colors.white70,
-          labelStyle: const TextStyle(fontWeight: FontWeight.w600),
-          tabs: const [Tab(text: 'All'), Tab(text: 'Paid'), Tab(text: 'Pending'), Tab(text: 'Cancelled')],
+      backgroundColor: const Color(0xFFF8FAFC),
+      body: SafeArea(
+        child: Column(
+          children: [
+            // ── App Bar ──
+            Container(
+              color: Colors.white,
+              padding: const EdgeInsets.only(top: 4),
+              child: Column(
+                children: [
+                  Row(
+                    children: [
+                      IconButton(
+                        icon: const Icon(Icons.arrow_back_ios, color: Color(0xFF0F172A), size: 20),
+                        onPressed: () => Navigator.pop(context),
+                      ),
+                      const Expanded(
+                        child: Center(
+                          child: Text('Booking History', style: TextStyle(color: Color(0xFF0F172A), fontWeight: FontWeight.w600, fontSize: 18)),
+                        ),
+                      ),
+                      const SizedBox(width: 48),
+                    ],
+                  ),
+                  const SizedBox(height: 4),
+                  // ── Tabs ──
+                  AnimatedBuilder(
+                    animation: _tabController,
+                    builder: (context, _) {
+                      return Container(
+                        height: 42,
+                        margin: const EdgeInsets.symmetric(horizontal: 16),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFF1F5F9),
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: Row(
+                          children: List.generate(4, (i) {
+                            final selected = _tabController.index == i;
+                            return Expanded(
+                              child: GestureDetector(
+                                onTap: () => _tabController.animateTo(i),
+                                child: AnimatedContainer(
+                                  duration: const Duration(milliseconds: 200),
+                                  margin: const EdgeInsets.all(4),
+                                  decoration: BoxDecoration(
+                                    color: selected ? Colors.white : Colors.transparent,
+                                    borderRadius: BorderRadius.circular(9),
+                                    boxShadow: selected
+                                        ? [BoxShadow(color: Colors.black.withOpacity(0.06), blurRadius: 4, offset: const Offset(0, 1))]
+                                        : null,
+                                  ),
+                                  child: Center(
+                                    child: Text(
+                                      tabLabels[i],
+                                      style: TextStyle(
+                                        fontSize: 13,
+                                        fontWeight: selected ? FontWeight.w600 : FontWeight.w500,
+                                        color: selected ? tabColors[i] : const Color(0xFF64748B),
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            );
+                          }),
+                        ),
+                      );
+                    },
+                  ),
+                  const SizedBox(height: 8),
+                ],
+              ),
+            ),
+            Expanded(
+              child: TabBarView(
+                controller: _tabController,
+                children: [
+                    _buildList('all'),
+                    _buildList('paid'),
+                    _buildList('pending'),
+                    _buildList('cancelled'),
+                ],
+              ),
+            ),
+          ],
         ),
-      ),
-      body: TabBarView(
-        controller: _tabController,
-        children: [
-          _buildList('all'),
-          _buildList('paid'),
-          _buildList('pending'),
-          _buildList('cancelled'),
-        ],
       ),
     );
   }
@@ -129,8 +195,7 @@ class _BookingManagementScreenState extends State<BookingManagementScreen>
           // All cancelled bookings
           bookings = bookings.where((b) => b.bookingStatus == BookingStatus.cancelled).toList();
         } else if (filter == 'all') {
-          // All non-cancelled bookings
-          bookings = bookings.where((b) => b.bookingStatus != BookingStatus.cancelled).toList();
+          // All bookings (paid, pending, and cancelled)
         }
 
         if (bookings.isEmpty) {
@@ -138,9 +203,9 @@ class _BookingManagementScreenState extends State<BookingManagementScreen>
             child: Column(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                Icon(Icons.event_busy, size: 64, color: AppColors.textSecondary.withOpacity(0.5)),
+                Icon(Icons.event_busy, size: 64, color: const Color(0xFF64748B).withOpacity(0.5)),
                 const SizedBox(height: 16),
-                Text('No bookings', style: TextStyle(color: AppColors.textSecondary)),
+                const Text('No bookings', style: TextStyle(color: Color(0xFF64748B))),
               ],
             ),
           );
@@ -149,7 +214,10 @@ class _BookingManagementScreenState extends State<BookingManagementScreen>
         return ListView.builder(
           padding: const EdgeInsets.all(16),
           itemCount: bookings.length,
-          itemBuilder: (context, index) => _buildCard(bookings[index]),
+          itemBuilder: (context, index) => _AnimatedCardEntry(
+            index: index,
+            child: _buildCard(bookings[index]),
+          ),
         );
       },
     );
@@ -159,6 +227,20 @@ class _BookingManagementScreenState extends State<BookingManagementScreen>
     final hasAdvance = b.advanceAmount > 0;
     final isCancelled = b.bookingStatus == BookingStatus.cancelled;
     
+    // Status edge colors
+    final Color mainStrip;
+    final Color layerStrip;
+    if (isCancelled) {
+      mainStrip = const Color(0xFFEF4444);
+      layerStrip = const Color(0xFFFCA5A5);
+    } else if (b.paymentStatus == PaymentStatus.paid) {
+      mainStrip = const Color(0xFF22C55E);
+      layerStrip = const Color(0xFF86EFAC);
+    } else {
+      mainStrip = const Color(0xFFF59E0B);
+      layerStrip = const Color(0xFFFCD34D);
+    }
+
     return GestureDetector(
       onTap: () async {
         final result = await Navigator.pushNamed(
@@ -173,45 +255,57 @@ class _BookingManagementScreenState extends State<BookingManagementScreen>
       },
       child: Container(
         margin: const EdgeInsets.only(bottom: 12),
-        padding: const EdgeInsets.all(16),
         decoration: BoxDecoration(
-          color: isCancelled ? Colors.red.withOpacity(0.05) : Colors.white,
-          borderRadius: BorderRadius.circular(12),
-          border: isCancelled ? Border.all(color: Colors.red.withOpacity(0.2)) : null,
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(18),
+          border: Border.all(color: const Color(0xFFE2E8F0)),
+          boxShadow: [
+            BoxShadow(color: Colors.black.withOpacity(0.04), blurRadius: 8, offset: const Offset(0, 2)),
+          ],
         ),
-        child: Column(
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(18),
+          child: IntrinsicHeight(
+            child: Row(
+              children: [
+                // Layered left status edge
+                Row(
+                  children: [
+                    Container(width: 3.5, color: mainStrip),
+                    Container(width: 3.5, color: layerStrip),
+                  ],
+                ),
+              // Card content
+              Expanded(
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(12, 16, 16, 16),
+                  child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
                 Expanded(
-                  child: Text(b.customerName, style: const TextStyle(fontWeight: FontWeight.bold)),
+                  child: Text(b.customerName, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 16, color: Color(0xFF0F172A))),
                 ),
                 _statusBadge(b),
               ],
             ),
             const SizedBox(height: 8),
-            Text('${b.bookingDate} • ${b.displayTimeRange}', style: TextStyle(color: AppColors.textSecondary, fontSize: 13)),
-            Row(
-              children: [
-                Expanded(
-                  child: Text('${b.turfName} • ₹${b.amount.toInt()}', style: TextStyle(color: AppColors.textSecondary, fontSize: 13)),
-                ),
-              ],
-            ),
+            Text('${b.bookingDate} • ${b.displayTimeRange}', style: const TextStyle(color: Color(0xFF64748B), fontSize: 14)),
+            const SizedBox(height: 2),
+            Text('${b.turfName} • ₹${b.amount.toInt()}', style: const TextStyle(color: Color(0xFF64748B), fontSize: 14)),
             if (hasAdvance && !isCancelled) ...[
-              const SizedBox(height: 6),
+              const SizedBox(height: 8),
               Row(
                 children: [
                   Container(
                     padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
                     decoration: BoxDecoration(
-                      // All advance payments shown in orange until manually marked as paid
                       color: b.paymentStatus == PaymentStatus.paid 
-                          ? AppColors.success.withOpacity(0.1) 
-                          : Colors.orange.withOpacity(0.1),
-                      borderRadius: BorderRadius.circular(6),
+                          ? const Color(0xFFDCFCE7) 
+                          : const Color(0xFFFFF7ED),
+                      borderRadius: BorderRadius.circular(8),
                     ),
                     child: Text(
                       b.paymentStatus == PaymentStatus.paid
@@ -223,25 +317,31 @@ class _BookingManagementScreenState extends State<BookingManagementScreen>
                         fontSize: 11,
                         fontWeight: FontWeight.w600,
                         color: b.paymentStatus == PaymentStatus.paid 
-                            ? AppColors.success 
-                            : Colors.orange,
+                            ? const Color(0xFF166534) 
+                            : const Color(0xFFC2410C),
                       ),
                     ),
                   ),
                 ],
               ),
             ],
-            const SizedBox(height: 8),
+            const SizedBox(height: 10),
             Row(
               mainAxisAlignment: MainAxisAlignment.end,
               children: [
-                Text('Tap for details', style: TextStyle(color: AppColors.primary, fontSize: 12)),
+                Text('Tap for details', style: TextStyle(color: const Color(0xFF3B82F6), fontSize: 12, fontWeight: FontWeight.w500)),
                 const SizedBox(width: 4),
-                Icon(Icons.arrow_forward_ios, size: 12, color: AppColors.primary),
+                Icon(Icons.arrow_forward_ios, size: 12, color: const Color(0xFF3B82F6)),
               ],
             ),
           ],
         ),
+      ),
+              ),
+            ],
+          ),
+        ),
+      ),
       ),
     );
   }
@@ -251,35 +351,87 @@ class _BookingManagementScreenState extends State<BookingManagementScreen>
     if (booking.bookingStatus == BookingStatus.cancelled) {
       return Container(
         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-        decoration: BoxDecoration(color: Colors.red.withOpacity(0.1), borderRadius: BorderRadius.circular(20)),
-        child: const Text('Cancelled', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: Colors.red)),
+        decoration: BoxDecoration(color: const Color(0xFFFEE2E2), borderRadius: BorderRadius.circular(20)),
+        child: const Text('Cancelled', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: Color(0xFF991B1B))),
       );
     }
     
-    Color color;
+    Color bgColor;
+    Color textColor;
     String label;
     switch (booking.paymentStatus) {
       case PaymentStatus.paid:
-        color = AppColors.success;
+        bgColor = const Color(0xFFDCFCE7);
+        textColor = const Color(0xFF166534);
         label = 'Paid';
         break;
       case PaymentStatus.pending:
-        // Pending means has advance but not confirmed - show as Pending Payment
-        color = Colors.orange;
+        bgColor = const Color(0xFFFEF3C7);
+        textColor = const Color(0xFF92400E);
         label = 'Pending Payment';
         break;
       case PaymentStatus.payAtTurf:
-        color = AppColors.warning;
+        bgColor = const Color(0xFFFEF3C7);
+        textColor = const Color(0xFF92400E);
         label = 'Pay at Turf';
         break;
       default:
-        color = AppColors.textSecondary;
+        bgColor = const Color(0xFFF1F5F9);
+        textColor = const Color(0xFF64748B);
         label = booking.paymentStatus.displayName;
     }
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-      decoration: BoxDecoration(color: color.withOpacity(0.1), borderRadius: BorderRadius.circular(20)),
-      child: Text(label, style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: color)),
+      decoration: BoxDecoration(color: bgColor, borderRadius: BorderRadius.circular(20)),
+      child: Text(label, style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: textColor)),
+    );
+  }
+}
+
+/// Staggered fade + slide entrance for list cards
+class _AnimatedCardEntry extends StatefulWidget {
+  final int index;
+  final Widget child;
+  const _AnimatedCardEntry({required this.index, required this.child});
+  @override
+  State<_AnimatedCardEntry> createState() => _AnimatedCardEntryState();
+}
+
+class _AnimatedCardEntryState extends State<_AnimatedCardEntry>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _ctrl;
+  late final Animation<double> _opacity;
+  late final Animation<Offset> _slide;
+
+  @override
+  void initState() {
+    super.initState();
+    _ctrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 280),
+    );
+    _opacity = CurvedAnimation(parent: _ctrl, curve: Curves.easeOut);
+    _slide = Tween<Offset>(begin: const Offset(0, 0.04), end: Offset.zero)
+        .animate(CurvedAnimation(parent: _ctrl, curve: Curves.easeOut));
+    Future.delayed(Duration(milliseconds: 40 * widget.index.clamp(0, 8)), () {
+      if (mounted) _ctrl.forward();
+    });
+  }
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return FadeTransition(
+      opacity: _opacity,
+      child: SlideTransition(
+        position: _slide,
+        child: widget.child,
+      ),
     );
   }
 }

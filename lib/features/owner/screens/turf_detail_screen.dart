@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../../config/colors.dart';
+import '../../../config/glass_widgets.dart';
 import '../../../app/routes.dart';
 import '../../../data/models/turf_model.dart';
 import '../providers/turf_provider.dart';
@@ -72,30 +73,32 @@ class _TurfDetailScreenState extends State<TurfDetailScreen> with RouteAware {
 
         return Scaffold(
           backgroundColor: AppColors.background,
-          body: CustomScrollView(
-            slivers: [
-              // App Bar with Image
-              SliverAppBar(
-                expandedHeight: 200,
-                pinned: true,
-                backgroundColor: AppColors.primary,
-                flexibleSpace: FlexibleSpaceBar(
-                  title: Text(
-                    turf.turfName,
-                    style: const TextStyle(
-                      fontWeight: FontWeight.bold,
-                      shadows: [
-                        Shadow(
-                          color: Colors.black26,
-                          blurRadius: 4,
-                        ),
-                      ],
+          body: GlassScaffoldBackground(
+            child: CustomScrollView(
+              slivers: [
+                // App Bar with Image
+                SliverAppBar(
+                  expandedHeight: 200,
+                  pinned: true,
+                  backgroundColor: AppColors.surface,
+                  flexibleSpace: FlexibleSpaceBar(
+                    title: Text(
+                      turf.turfName,
+                      style: const TextStyle(
+                        fontWeight: FontWeight.bold,
+                        color: AppColors.textPrimary,
+                        shadows: [
+                          Shadow(
+                            color: Colors.black54,
+                            blurRadius: 4,
+                          ),
+                        ],
+                      ),
                     ),
-                  ),
-                  background: Container(
-                    decoration: BoxDecoration(
-                      gradient: AppColors.primaryGradient,
-                    ),
+                    background: Container(
+                      decoration: const BoxDecoration(
+                        gradient: AppColors.scaffoldGradient,
+                      ),
                     child: turf.primaryImageUrl != null
                         ? Image.network(
                             turf.primaryImageUrl!,
@@ -107,7 +110,7 @@ class _TurfDetailScreenState extends State<TurfDetailScreen> with RouteAware {
                               return Center(
                                 child: CircularProgressIndicator(
                                   strokeWidth: 2,
-                                  color: Colors.white,
+                                  color: AppColors.primary,
                                   value: loadingProgress.expectedTotalBytes != null
                                       ? loadingProgress.cumulativeBytesLoaded /
                                           loadingProgress.expectedTotalBytes!
@@ -120,7 +123,7 @@ class _TurfDetailScreenState extends State<TurfDetailScreen> with RouteAware {
                                 child: Icon(
                                   Icons.sports_cricket,
                                   size: 80,
-                                  color: Colors.white.withOpacity(0.5),
+                                  color: AppColors.primary.withOpacity(0.5),
                                 ),
                               );
                             },
@@ -129,14 +132,14 @@ class _TurfDetailScreenState extends State<TurfDetailScreen> with RouteAware {
                             child: Icon(
                               Icons.sports_cricket,
                               size: 80,
-                              color: Colors.white.withOpacity(0.5),
+                              color: AppColors.primary.withOpacity(0.5),
                             ),
                           ),
                   ),
                 ),
                 actions: [
                   IconButton(
-                    icon: const Icon(Icons.edit),
+                    icon: const Icon(Icons.edit, color: AppColors.textPrimary),
                     onPressed: () {
                       // TODO: Edit turf
                     },
@@ -176,6 +179,7 @@ class _TurfDetailScreenState extends State<TurfDetailScreen> with RouteAware {
               ),
             ],
           ),
+        ),
         );
       },
     );
@@ -218,15 +222,9 @@ class _TurfDetailScreenState extends State<TurfDetailScreen> with RouteAware {
       margin: const EdgeInsets.symmetric(horizontal: 4),
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: AppColors.glassFill,
         borderRadius: BorderRadius.circular(12),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.05),
-            blurRadius: 6,
-            offset: const Offset(0, 2),
-          ),
-        ],
+        border: Border.all(color: AppColors.glassBorder),
       ),
       child: Column(
         children: [
@@ -302,8 +300,9 @@ class _TurfDetailScreenState extends State<TurfDetailScreen> with RouteAware {
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: AppColors.glassFill,
         borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: AppColors.glassBorder),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -365,8 +364,9 @@ class _TurfDetailScreenState extends State<TurfDetailScreen> with RouteAware {
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: AppColors.glassFill,
         borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: AppColors.glassBorder),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -552,8 +552,9 @@ class _TurfDetailScreenState extends State<TurfDetailScreen> with RouteAware {
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: AppColors.glassFill,
         borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: AppColors.glassBorder),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,

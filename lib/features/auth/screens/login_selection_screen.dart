@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import '../../../config/colors.dart';
+import '../../../config/glass_widgets.dart';
+import '../../../config/abstract_bg.dart';
 import '../../../core/constants/strings.dart';
 import '../../../app/routes.dart';
 
@@ -11,17 +13,11 @@ class LoginSelectionScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      body: Container(
-        width: double.infinity,
-        height: double.infinity,
-        decoration: const BoxDecoration(
-          gradient: LinearGradient(
-            colors: [Color(0xFFF5F7FA), Color(0xFFE8F5E9)],
-            begin: Alignment.topCenter,
-            end: Alignment.bottomCenter,
-          ),
-        ),
-        child: SafeArea(
+      body: GlassScaffoldBackground(
+        child: Stack(
+          children: [
+            const AbstractBgShapes(),
+            SafeArea(
           child: Padding(
             padding: const EdgeInsets.symmetric(horizontal: 24),
             child: Column(
@@ -55,6 +51,8 @@ class LoginSelectionScreen extends StatelessWidget {
               ],
             ),
           ),
+          ),
+          ],
         ),
       ),
     );
@@ -63,25 +61,20 @@ class LoginSelectionScreen extends StatelessWidget {
   Widget _buildBranding() {
     return Column(
       children: [
-        // App Icon
+        // App Icon — glass + neon glow
         Container(
           width: 100,
           height: 100,
           decoration: BoxDecoration(
-            gradient: AppColors.primaryGradient,
+            color: AppColors.glassFill,
             borderRadius: BorderRadius.circular(25),
-            boxShadow: [
-              BoxShadow(
-                color: AppColors.primary.withOpacity(0.3),
-                blurRadius: 20,
-                offset: const Offset(0, 10),
-              ),
-            ],
+            border: Border.all(color: AppColors.primary.withOpacity(0.3)),
+            boxShadow: AppColors.neonGlow(blur: 24, spread: 1),
           ),
           child: const Icon(
             Icons.sports_cricket,
             size: 50,
-            color: Colors.white,
+            color: AppColors.primary,
           ),
         ),
         const SizedBox(height: 24),
@@ -112,44 +105,17 @@ class LoginSelectionScreen extends StatelessWidget {
   }
 
   Widget _buildPlayerButton(BuildContext context) {
-    return SizedBox(
-      width: double.infinity,
-      height: 56,
-      child: ElevatedButton(
-        onPressed: () {
-          Navigator.pushNamed(context, AppRoutes.playerAuth);
-        },
-        style: ElevatedButton.styleFrom(
-          backgroundColor: AppColors.primary,
-          foregroundColor: Colors.white,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(16),
-          ),
-          elevation: 4,
-          shadowColor: AppColors.primary.withOpacity(0.4),
-        ),
-        child: const Row(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(Icons.person_outline, size: 24),
-            SizedBox(width: 12),
-            Text(
-              AppStrings.loginAsPlayer,
-              style: TextStyle(
-                fontSize: 16,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-          ],
-        ),
-      ),
+    return GlassButton(
+      label: AppStrings.loginAsPlayer,
+      icon: Icons.person_outline,
+      onPressed: () => Navigator.pushNamed(context, AppRoutes.playerAuth),
     );
   }
 
   Widget _buildDivider() {
     return Row(
       children: [
-        const Expanded(child: Divider(color: AppColors.divider)),
+        Expanded(child: Container(height: 1, color: AppColors.divider)),
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 16),
           child: Text(
@@ -161,25 +127,14 @@ class LoginSelectionScreen extends StatelessWidget {
             ),
           ),
         ),
-        const Expanded(child: Divider(color: AppColors.divider)),
+        Expanded(child: Container(height: 1, color: AppColors.divider)),
       ],
     );
   }
 
   Widget _buildFeatureHighlights() {
-    return Container(
+    return GlassCard(
       padding: const EdgeInsets.all(20),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.05),
-            blurRadius: 10,
-            offset: const Offset(0, 4),
-          ),
-        ],
-      ),
       child: Column(
         children: [
           _buildFeatureRow(
@@ -213,12 +168,9 @@ class LoginSelectionScreen extends StatelessWidget {
           decoration: BoxDecoration(
             color: AppColors.primary.withOpacity(0.1),
             borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: AppColors.primary.withOpacity(0.15)),
           ),
-          child: Icon(
-            icon,
-            color: AppColors.primary,
-            size: 22,
-          ),
+          child: Icon(icon, color: AppColors.primary, size: 22),
         ),
         const SizedBox(width: 14),
         Expanded(
@@ -260,9 +212,7 @@ class LoginSelectionScreen extends StatelessWidget {
           ),
         ),
         TextButton(
-          onPressed: () {
-            Navigator.pushNamed(context, AppRoutes.ownerAuth);
-          },
+          onPressed: () => Navigator.pushNamed(context, AppRoutes.ownerAuth),
           style: TextButton.styleFrom(
             padding: const EdgeInsets.symmetric(horizontal: 8),
           ),

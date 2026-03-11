@@ -82,7 +82,7 @@ class _SplashScreenState extends State<SplashScreen>
         width: double.infinity,
         height: double.infinity,
         decoration: const BoxDecoration(
-          gradient: AppColors.splashGradient,
+          gradient: AppColors.scaffoldGradient,
         ),
         child: SafeArea(
           child: Column(
@@ -104,20 +104,15 @@ class _SplashScreenState extends State<SplashScreen>
                 },
                 child: Column(
                   children: [
-                    // App Icon
+                    // App Icon — glass card with neon glow
                     Container(
                       width: 120,
                       height: 120,
                       decoration: BoxDecoration(
-                        color: Colors.white,
+                        color: AppColors.glassFill,
                         borderRadius: BorderRadius.circular(30),
-                        boxShadow: [
-                          BoxShadow(
-                            color: Colors.black.withOpacity(0.2),
-                            blurRadius: 20,
-                            offset: const Offset(0, 10),
-                          ),
-                        ],
+                        border: Border.all(color: AppColors.primary.withOpacity(0.3)),
+                        boxShadow: AppColors.neonGlow(blur: 28, spread: 2),
                       ),
                       child: const Icon(
                         Icons.sports_cricket,
@@ -133,7 +128,7 @@ class _SplashScreenState extends State<SplashScreen>
                       style: TextStyle(
                         fontSize: 36,
                         fontWeight: FontWeight.bold,
-                        color: Colors.white,
+                        color: AppColors.textPrimary,
                         letterSpacing: 1.5,
                       ),
                     ),
@@ -144,7 +139,7 @@ class _SplashScreenState extends State<SplashScreen>
                       AppStrings.appTagline,
                       style: TextStyle(
                         fontSize: 16,
-                        color: Colors.white.withOpacity(0.9),
+                        color: AppColors.textSecondary,
                         letterSpacing: 0.5,
                       ),
                     ),
@@ -160,7 +155,7 @@ class _SplashScreenState extends State<SplashScreen>
                 height: 24,
                 child: CircularProgressIndicator(
                   strokeWidth: 2,
-                  valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                  valueColor: AlwaysStoppedAnimation<Color>(AppColors.primary),
                 ),
               ),
               

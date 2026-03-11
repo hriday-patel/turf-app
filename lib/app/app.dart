@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:google_fonts/google_fonts.dart';
+import 'package:flutter/services.dart';
 import '../config/theme.dart';
 import 'routes.dart';
 
@@ -8,11 +8,17 @@ class TurfApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    SystemChrome.setSystemUIOverlayStyle(const SystemUiOverlayStyle(
+      statusBarColor: Colors.transparent,
+      statusBarIconBrightness: Brightness.dark,
+      systemNavigationBarColor: Color(0xFFF5F7FB),
+      systemNavigationBarIconBrightness: Brightness.dark,
+    ));
+
     return MaterialApp(
       title: 'Turf Booking',
       debugShowCheckedModeBanner: false,
       theme: AppTheme.lightTheme,
-      darkTheme: AppTheme.darkTheme,
       themeMode: ThemeMode.light,
       initialRoute: AppRoutes.splash,
       routes: AppRoutes.routes,

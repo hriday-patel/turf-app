@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:table_calendar/table_calendar.dart';
 import '../../../config/colors.dart';
+import '../../../config/glass_widgets.dart';
 import '../../../core/constants/enums.dart';
 import '../../../data/models/turf_model.dart';
 import '../../../data/models/slot_model.dart';
@@ -181,37 +182,45 @@ class _SlotManagementScreenState extends State<SlotManagementScreen> with RouteA
 
         if (turf == null) {
           return Scaffold(
-            appBar: AppBar(title: const Text('Slot Management')),
-            body: const Center(child: Text('Turf not found')),
+            appBar: AppBar(title: const Text('Slot Management', style: TextStyle(color: AppColors.textPrimary)), backgroundColor: AppColors.background, elevation: 0),
+            backgroundColor: AppColors.background,
+            body: const Center(child: Text('Turf not found', style: TextStyle(color: AppColors.textPrimary))),
           );
         }
 
         return Scaffold(
           backgroundColor: AppColors.background,
-          appBar: AppBar(
-            title: Text(turf.turfName),
-            backgroundColor: AppColors.primary,
-          ),
-          body: Column(
-            children: [
-              // Calendar
-              _buildCalendar(),
-              
-              // Net Selector (only for multi-net turfs)
-              if (turf.numberOfNets > 1)
-                _buildNetSelector(turf.numberOfNets),
-              
-              // Day Controls (On/Off toggles)
-              _buildDayControls(),
-              
-              // Slot Status Legend
-              _buildLegend(),
-              
-              // Slots Grid — grouped by period, filtered by net
-              Expanded(
-                child: _buildSlotsGrid(),
+          body: GlassScaffoldBackground(
+            child: SafeArea(
+              child: Column(
+                children: [
+                  GlassAppBar(title: turf.turfName),
+                  // Calendar
+                  Expanded(
+                    child: Column(
+                      children: [
+                        _buildCalendar(),
+                        
+                        // Net Selector (only for multi-net turfs)
+                        if (turf.numberOfNets > 1)
+                          _buildNetSelector(turf.numberOfNets),
+                        
+                        // Day Controls (On/Off toggles)
+                        _buildDayControls(),
+                        
+                        // Slot Status Legend
+                        _buildLegend(),
+                        
+                        // Slots Grid — grouped by period, filtered by net
+                        Expanded(
+                          child: _buildSlotsGrid(),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
               ),
-            ],
+            ),
           ),
         );
       },
@@ -220,7 +229,7 @@ class _SlotManagementScreenState extends State<SlotManagementScreen> with RouteA
 
   Widget _buildCalendar() {
     return Container(
-      color: Colors.white,
+      color: AppColors.glassFill,
       child: TableCalendar(
         firstDay: DateTime.now().subtract(const Duration(days: 7)),
         lastDay: DateTime.now().add(const Duration(days: 60)),
@@ -253,7 +262,7 @@ class _SlotManagementScreenState extends State<SlotManagementScreen> with RouteA
   Widget _buildNetSelector(int numberOfNets) {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-      color: Colors.white,
+      color: AppColors.glassFill,
       child: Row(
         children: [
           const Icon(Icons.grid_view, size: 16, color: AppColors.textSecondary),
@@ -298,7 +307,7 @@ class _SlotManagementScreenState extends State<SlotManagementScreen> with RouteA
   Widget _buildLegend() {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-      color: Colors.white,
+      color: AppColors.glassFill,
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceAround,
         children: [
@@ -315,7 +324,7 @@ class _SlotManagementScreenState extends State<SlotManagementScreen> with RouteA
   Widget _buildDayControls() {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-      color: Colors.white,
+      color: AppColors.glassFill,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -413,10 +422,10 @@ class _SlotManagementScreenState extends State<SlotManagementScreen> with RouteA
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
         decoration: BoxDecoration(
-          color: isOpen ? AppColors.success.withOpacity(0.1) : Colors.grey.shade200,
+          color: isOpen ? AppColors.success.withOpacity(0.1) : AppColors.textSecondary.withOpacity(0.1),
           borderRadius: BorderRadius.circular(8),
           border: Border.all(
-            color: isOpen ? AppColors.success.withOpacity(0.3) : Colors.grey.shade300,
+            color: isOpen ? AppColors.success.withOpacity(0.3) : AppColors.textSecondary.withOpacity(0.3),
           ),
         ),
         child: Row(
@@ -431,14 +440,14 @@ class _SlotManagementScreenState extends State<SlotManagementScreen> with RouteA
                     style: TextStyle(
                       fontSize: 12,
                       fontWeight: FontWeight.w600,
-                      color: isOpen ? AppColors.textPrimary : Colors.grey.shade600,
+                      color: isOpen ? AppColors.textPrimary : AppColors.textSecondary,
                     ),
                   ),
                   Text(
                     timeRange,
                     style: TextStyle(
                       fontSize: 10,
-                      color: isOpen ? AppColors.textSecondary : Colors.grey.shade500,
+                      color: isOpen ? AppColors.textSecondary : AppColors.textSecondary.withOpacity(0.5),
                     ),
                   ),
                 ],
@@ -448,7 +457,7 @@ class _SlotManagementScreenState extends State<SlotManagementScreen> with RouteA
               width: 36,
               height: 20,
               decoration: BoxDecoration(
-                color: isOpen ? AppColors.success : Colors.grey.shade400,
+                color: isOpen ? AppColors.success : AppColors.textSecondary,
                 borderRadius: BorderRadius.circular(10),
               ),
               child: Stack(

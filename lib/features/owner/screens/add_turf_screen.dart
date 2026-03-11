@@ -6,6 +6,7 @@ import 'package:provider/provider.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:uuid/uuid.dart';
 import '../../../config/colors.dart';
+import '../../../config/glass_widgets.dart';
 import '../../../core/constants/strings.dart';
 import '../../../core/constants/enums.dart';
 import '../../../app/routes.dart';
@@ -13,6 +14,7 @@ import '../../../data/models/turf_model.dart';
 import '../../../data/services/storage_service.dart';
 import '../../auth/providers/auth_provider.dart';
 import '../providers/turf_provider.dart';
+import '../../../core/utils/app_toast.dart';
 
 /// Add Turf Screen
 /// Multi-step form to add a new turf with pricing rules
@@ -581,24 +583,12 @@ class _AddTurfScreenState extends State<AddTurfScreen> with RouteAware {
 
   void _showError(String message) {
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(message),
-        backgroundColor: AppColors.error,
-        behavior: SnackBarBehavior.floating,
-      ),
-    );
+    showAppToast(context, message, type: ToastType.error);
   }
 
   void _showSuccess(String message) {
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(message),
-        backgroundColor: AppColors.success,
-        behavior: SnackBarBehavior.floating,
-      ),
-    );
+    showAppToast(context, message, type: ToastType.success);
   }
 
   /// Refresh turf data in provider
@@ -622,34 +612,37 @@ class _AddTurfScreenState extends State<AddTurfScreen> with RouteAware {
       },
       child: Scaffold(
         backgroundColor: AppColors.background,
-        appBar: AppBar(
-          title: Text(isEditing ? 'Edit Turf' : 'Add New Turf'),
-          backgroundColor: AppColors.primary,
-          leading: IconButton(
-            icon: const Icon(Icons.arrow_back),
-            onPressed: () {
-              _refreshTurfData();
-              Navigator.pop(context);
-            },
-          ),
-        ),
-        body: Column(
-          children: [
-            _buildStepIndicator(),
-            Expanded(
-              child: PageView(
-                controller: _pageController,
-                physics: const NeverScrollableScrollPhysics(),
-                children: [
-                  _buildBasicInfoStep(),
-                  _buildScheduleStep(),
-                  _buildPricingStep(),
-                  _buildImagesStep(),
-                ],
-              ),
+        body: GlassScaffoldBackground(
+          child: SafeArea(
+            child: Column(
+              children: [
+                GlassAppBar(
+                  title: isEditing ? 'Edit Turf' : 'Add New Turf',
+                  leading: IconButton(
+                    icon: const Icon(Icons.arrow_back, color: AppColors.textPrimary),
+                    onPressed: () {
+                      _refreshTurfData();
+                      Navigator.pop(context);
+                    },
+                  ),
+                ),
+                _buildStepIndicator(),
+                Expanded(
+                  child: PageView(
+                    controller: _pageController,
+                    physics: const NeverScrollableScrollPhysics(),
+                    children: [
+                      _buildBasicInfoStep(),
+                      _buildScheduleStep(),
+                      _buildPricingStep(),
+                      _buildImagesStep(),
+                    ],
+                  ),
+                ),
+                _buildNavigationButtons(),
+              ],
             ),
-            _buildNavigationButtons(),
-          ],
+          ),
         ),
       ),
     );
@@ -660,7 +653,10 @@ class _AddTurfScreenState extends State<AddTurfScreen> with RouteAware {
     
     return Container(
       padding: const EdgeInsets.symmetric(vertical: 20, horizontal: 16),
-      color: Colors.white,
+      decoration: BoxDecoration(
+        color: AppColors.glassFill,
+        border: Border(bottom: BorderSide(color: AppColors.glassBorder)),
+      ),
       child: Row(
         children: List.generate(steps.length, (index) {
           final isActive = index <= _currentStep;
@@ -874,9 +870,9 @@ class _AddTurfScreenState extends State<AddTurfScreen> with RouteAware {
         const SizedBox(height: 8),
         Container(
           decoration: BoxDecoration(
-            color: Colors.white,
+            color: AppColors.glassFill,
             borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: AppColors.border),
+            border: Border.all(color: AppColors.glassBorder),
           ),
           child: DropdownButtonFormField<TurfType>(
             value: _selectedTurfType,
@@ -1045,7 +1041,7 @@ class _AddTurfScreenState extends State<AddTurfScreen> with RouteAware {
           ),
           if (_numberOfNets > 1)
             Container(
-              color: Colors.white,
+              color: AppColors.glassFill,
               child: TabBar(
                 labelColor: AppColors.primary,
                 unselectedLabelColor: AppColors.textSecondary,
@@ -1086,7 +1082,7 @@ class _AddTurfScreenState extends State<AddTurfScreen> with RouteAware {
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: AppColors.glassFill,
         borderRadius: BorderRadius.circular(16),
         border: Border.all(color: color.withOpacity(0.3)),
       ),
@@ -1439,8 +1435,9 @@ class _AddTurfScreenState extends State<AddTurfScreen> with RouteAware {
           Container(
             padding: const EdgeInsets.all(16),
             decoration: BoxDecoration(
-              color: AppColors.infoLight,
+              color: AppColors.info.withOpacity(0.1),
               borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: AppColors.info.withOpacity(0.3)),
             ),
             child: Row(
               children: [
@@ -1467,14 +1464,8 @@ class _AddTurfScreenState extends State<AddTurfScreen> with RouteAware {
     return Container(
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
-        color: Colors.white,
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.1),
-            blurRadius: 10,
-            offset: const Offset(0, -5),
-          ),
-        ],
+        color: AppColors.glassFill,
+        border: Border(top: BorderSide(color: AppColors.glassBorder)),
       ),
       child: Row(
         children: [
@@ -1554,14 +1545,14 @@ class _AddTurfScreenState extends State<AddTurfScreen> with RouteAware {
             hintText: hint,
             prefixIcon: Icon(prefixIcon, color: AppColors.primary),
             filled: true,
-            fillColor: Colors.white,
+            fillColor: AppColors.glassFill,
             border: OutlineInputBorder(
               borderRadius: BorderRadius.circular(12),
-              borderSide: const BorderSide(color: AppColors.border),
+              borderSide: const BorderSide(color: AppColors.glassBorder),
             ),
             enabledBorder: OutlineInputBorder(
               borderRadius: BorderRadius.circular(12),
-              borderSide: const BorderSide(color: AppColors.border),
+              borderSide: const BorderSide(color: AppColors.glassBorder),
             ),
             focusedBorder: OutlineInputBorder(
               borderRadius: BorderRadius.circular(12),
@@ -1601,9 +1592,9 @@ class _AddTurfScreenState extends State<AddTurfScreen> with RouteAware {
           child: Container(
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
             decoration: BoxDecoration(
-              color: Colors.white,
+              color: AppColors.glassFill,
               borderRadius: BorderRadius.circular(12),
-              border: Border.all(color: AppColors.border),
+              border: Border.all(color: AppColors.glassBorder),
             ),
             child: Row(
               children: [
