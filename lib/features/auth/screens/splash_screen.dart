@@ -77,12 +77,13 @@ class _SplashScreenState extends State<SplashScreen>
 
   @override
   Widget build(BuildContext context) {
+    final c = AppColors.of(context);
     return Scaffold(
       body: Container(
         width: double.infinity,
         height: double.infinity,
-        decoration: const BoxDecoration(
-          gradient: AppColors.scaffoldGradient,
+        decoration: BoxDecoration(
+          gradient: c.scaffoldGradient,
         ),
         child: SafeArea(
           child: Column(
@@ -109,26 +110,26 @@ class _SplashScreenState extends State<SplashScreen>
                       width: 120,
                       height: 120,
                       decoration: BoxDecoration(
-                        color: AppColors.glassFill,
+                        color: c.glassFill,
                         borderRadius: BorderRadius.circular(30),
-                        border: Border.all(color: AppColors.primary.withOpacity(0.3)),
+                        border: Border.all(color: c.primary.withValues(alpha: 0.3)),
                         boxShadow: AppColors.neonGlow(blur: 28, spread: 2),
                       ),
-                      child: const Icon(
+                      child: Icon(
                         Icons.sports_cricket,
                         size: 60,
-                        color: AppColors.primary,
+                        color: c.primary,
                       ),
                     ),
                     const SizedBox(height: 24),
                     
                     // App Name
-                    const Text(
+                    Text(
                       AppStrings.appName,
                       style: TextStyle(
                         fontSize: 36,
                         fontWeight: FontWeight.bold,
-                        color: AppColors.textPrimary,
+                        color: c.textPrimary,
                         letterSpacing: 1.5,
                       ),
                     ),
@@ -139,7 +140,7 @@ class _SplashScreenState extends State<SplashScreen>
                       AppStrings.appTagline,
                       style: TextStyle(
                         fontSize: 16,
-                        color: AppColors.textSecondary,
+                        color: c.textSecondary,
                         letterSpacing: 0.5,
                       ),
                     ),
@@ -150,12 +151,12 @@ class _SplashScreenState extends State<SplashScreen>
               const Spacer(),
               
               // Loading Indicator
-              const SizedBox(
+              SizedBox(
                 width: 24,
                 height: 24,
                 child: CircularProgressIndicator(
                   strokeWidth: 2,
-                  valueColor: AlwaysStoppedAnimation<Color>(AppColors.primary),
+                  valueColor: AlwaysStoppedAnimation<Color>(c.primary),
                 ),
               ),
               

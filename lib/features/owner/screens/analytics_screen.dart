@@ -103,8 +103,9 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final c = AppColors.of(context);
     return Scaffold(
-      backgroundColor: AppColors.background,
+      backgroundColor: c.background,
       body: GlassScaffoldBackground(
         child: SafeArea(
           child: Column(
@@ -133,15 +134,16 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
   }
 
   Widget _buildPeriodSelector() {
+    final c = AppColors.of(context);
     return DropdownButton<String>(
       value: _selectedPeriod,
-      dropdownColor: AppColors.surface,
+      dropdownColor: c.surface,
       underline: const SizedBox(),
-      icon: const Icon(Icons.arrow_drop_down, color: AppColors.textPrimary),
-      items: const [
-        DropdownMenuItem(value: '7days', child: Text('7 Days', style: TextStyle(color: AppColors.textPrimary))),
-        DropdownMenuItem(value: '30days', child: Text('30 Days', style: TextStyle(color: AppColors.textPrimary))),
-        DropdownMenuItem(value: '90days', child: Text('90 Days', style: TextStyle(color: AppColors.textPrimary))),
+      icon: Icon(Icons.arrow_drop_down, color: c.textPrimary),
+      items: [
+        DropdownMenuItem(value: '7days', child: Text('7 Days', style: TextStyle(color: c.textPrimary))),
+        DropdownMenuItem(value: '30days', child: Text('30 Days', style: TextStyle(color: c.textPrimary))),
+        DropdownMenuItem(value: '90days', child: Text('90 Days', style: TextStyle(color: c.textPrimary))),
       ],
       onChanged: (val) {
         if (val != null) {
@@ -153,13 +155,14 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
   }
 
   Widget _buildProGate() {
+    final c = AppColors.of(context);
     return Center(
       child: Padding(
         padding: const EdgeInsets.all(32),
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Icon(Icons.analytics_outlined, size: 80, color: AppColors.primary.withOpacity(0.5)),
+            Icon(Icons.analytics_outlined, size: 80, color: c.primary.withValues(alpha: 0.5)),
             const SizedBox(height: 24),
             const Text(
               'Unlock Analytics Pro',
@@ -169,7 +172,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
             Text(
               'Get access to revenue charts, peak hours analysis, net utilization metrics, and more.',
               textAlign: TextAlign.center,
-              style: TextStyle(fontSize: 14, color: AppColors.textSecondary),
+              style: TextStyle(fontSize: 14, color: c.textSecondary),
             ),
             const SizedBox(height: 32),
             SizedBox(
@@ -181,12 +184,12 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
                   _loadAnalytics();
                 },
                 style: ElevatedButton.styleFrom(
-                  backgroundColor: AppColors.primary,
+                  backgroundColor: c.primary,
                   shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
                 ),
-                child: const Text(
+                child: Text(
                   'Unlock for ₹100',
-                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.white),
+                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: c.onPrimary),
                 ),
               ),
             ),
@@ -231,38 +234,41 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
   }
 
   Widget _buildSectionTitle(String title) {
+    final c = AppColors.of(context);
     return Padding(
       padding: const EdgeInsets.only(bottom: 12),
       child: Text(
         title,
-        style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: AppColors.textPrimary),
+        style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: c.textPrimary),
       ),
     );
   }
 
   Widget _buildSummaryCards() {
+    final c = AppColors.of(context);
     final cancellationRate = (_totalBookings + _cancelledBookings) > 0
         ? (_cancelledBookings / (_totalBookings + _cancelledBookings) * 100)
         : 0.0;
 
     return Row(
       children: [
-        Expanded(child: _buildSummaryCard('Revenue', '₹${_totalRevenue.toInt()}', AppColors.success, Icons.currency_rupee)),
+        Expanded(child: _buildSummaryCard('Revenue', '₹${_totalRevenue.toInt()}', c.success, Icons.currency_rupee)),
         const SizedBox(width: 12),
-        Expanded(child: _buildSummaryCard('Bookings', '$_totalBookings', AppColors.primary, Icons.event_available)),
+        Expanded(child: _buildSummaryCard('Bookings', '$_totalBookings', c.primary, Icons.event_available)),
         const SizedBox(width: 12),
-        Expanded(child: _buildSummaryCard('Cancelled', '${cancellationRate.toStringAsFixed(1)}%', AppColors.error, Icons.cancel_outlined)),
+        Expanded(child: _buildSummaryCard('Cancelled', '${cancellationRate.toStringAsFixed(1)}%', c.error, Icons.cancel_outlined)),
       ],
     );
   }
 
   Widget _buildSummaryCard(String label, String value, Color color, IconData icon) {
+    final c = AppColors.of(context);
     return Container(
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
-        color: AppColors.glassFill,
+        color: c.glassFill,
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: AppColors.glassBorder),
+        border: Border.all(color: c.glassBorder),
       ),
       child: Column(
         children: [
@@ -270,7 +276,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
           const SizedBox(height: 8),
           Text(value, style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: color)),
           const SizedBox(height: 4),
-          Text(label, style: TextStyle(fontSize: 11, color: AppColors.textSecondary)),
+          Text(label, style: TextStyle(fontSize: 11, color: c.textSecondary)),
         ],
       ),
     );
@@ -287,10 +293,11 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
       return _buildEmptyChart('No revenue data for this period');
     }
 
+    final c = AppColors.of(context);
     return Container(
       height: 200,
       padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(color: AppColors.glassFill, borderRadius: BorderRadius.circular(12), border: Border.all(color: AppColors.glassBorder)),
+      decoration: BoxDecoration(color: c.glassFill, borderRadius: BorderRadius.circular(12), border: Border.all(color: c.glassBorder)),
       child: LineChart(
         LineChartData(
           gridData: const FlGridData(show: false),
@@ -298,12 +305,12 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
             topTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
             rightTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
             bottomTitles: AxisTitles(
-              axisNameWidget: Text('Days', style: TextStyle(fontSize: 10, color: AppColors.textSecondary)),
+              axisNameWidget: Text('Days', style: TextStyle(fontSize: 10, color: c.textSecondary)),
               axisNameSize: 18,
               sideTitles: const SideTitles(showTitles: false),
             ),
             leftTitles: AxisTitles(
-              axisNameWidget: Text('Revenue (₹)', style: TextStyle(fontSize: 10, color: AppColors.textSecondary)),
+              axisNameWidget: Text('Revenue (₹)', style: TextStyle(fontSize: 10, color: c.textSecondary)),
               axisNameSize: 18,
               sideTitles: const SideTitles(showTitles: false),
             ),
@@ -313,12 +320,12 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
             LineChartBarData(
               spots: spots,
               isCurved: true,
-              color: AppColors.primary,
+              color: c.primary,
               barWidth: 3,
               isStrokeCapRound: true,
               belowBarData: BarAreaData(
                 show: true,
-                color: AppColors.primary.withOpacity(0.1),
+                color: c.primary.withValues(alpha: 0.1),
               ),
               dotData: const FlDotData(show: false),
             ),
@@ -333,6 +340,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
       return _buildEmptyChart('No booking data for peak hours');
     }
 
+    final c = AppColors.of(context);
     final bars = <BarChartGroupData>[];
     for (int h = 0; h < 24; h++) {
       bars.add(BarChartGroupData(
@@ -351,7 +359,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
     return Container(
       height: 200,
       padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(color: AppColors.glassFill, borderRadius: BorderRadius.circular(12), border: Border.all(color: AppColors.glassBorder)),
+      decoration: BoxDecoration(color: c.glassFill, borderRadius: BorderRadius.circular(12), border: Border.all(color: c.glassBorder)),
       child: BarChart(
         BarChartData(
           gridData: const FlGridData(show: false),
@@ -359,18 +367,18 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
             topTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
             rightTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
             leftTitles: AxisTitles(
-              axisNameWidget: Text('Bookings', style: TextStyle(fontSize: 10, color: AppColors.textSecondary)),
+              axisNameWidget: Text('Bookings', style: TextStyle(fontSize: 10, color: c.textSecondary)),
               axisNameSize: 18,
               sideTitles: const SideTitles(showTitles: false),
             ),
             bottomTitles: AxisTitles(
-              axisNameWidget: Text('Hour of Day', style: TextStyle(fontSize: 10, color: AppColors.textSecondary)),
+              axisNameWidget: Text('Hour of Day', style: TextStyle(fontSize: 10, color: c.textSecondary)),
               axisNameSize: 18,
               sideTitles: SideTitles(
                 showTitles: true,
                 getTitlesWidget: (value, meta) {
                   if (value.toInt() % 4 == 0) {
-                    return Text('${value.toInt()}', style: TextStyle(fontSize: 10, color: AppColors.textSecondary));
+                    return Text('${value.toInt()}', style: TextStyle(fontSize: 10, color: c.textSecondary));
                   }
                   return const SizedBox();
                 },
@@ -385,9 +393,10 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
   }
 
   Color _getHourColor(int hour) {
-    if (hour >= 6 && hour < 12) return AppColors.warning; // Morning
-    if (hour >= 12 && hour < 18) return AppColors.secondary; // Afternoon
-    if (hour >= 18 && hour < 24) return AppColors.primary; // Evening
+    final c = AppColors.of(context);
+    if (hour >= 6 && hour < 12) return c.warning; // Morning
+    if (hour >= 12 && hour < 18) return c.secondary; // Afternoon
+    if (hour >= 18 && hour < 24) return c.primary; // Evening
     return Colors.blueGrey; // Night
   }
 
@@ -396,11 +405,12 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
       return _buildEmptyChart('No net utilization data');
     }
 
+    final c = AppColors.of(context);
     final total = _netUtilization.values.fold<int>(0, (a, b) => a + b);
-    
+
     return Container(
       padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(color: AppColors.glassFill, borderRadius: BorderRadius.circular(12), border: Border.all(color: AppColors.glassBorder)),
+      decoration: BoxDecoration(color: c.glassFill, borderRadius: BorderRadius.circular(12), border: Border.all(color: c.glassBorder)),
       child: Column(
         children: _netUtilization.entries.map((entry) {
           final pct = total > 0 ? (entry.value / total * 100) : 0.0;
@@ -413,7 +423,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
                     Text(entry.key, style: const TextStyle(fontWeight: FontWeight.w600)),
-                    Text('${entry.value} bookings (${pct.toStringAsFixed(1)}%)', style: TextStyle(color: AppColors.textSecondary, fontSize: 12)),
+                    Text('${entry.value} bookings (${pct.toStringAsFixed(1)}%)', style: TextStyle(color: c.textSecondary, fontSize: 12)),
                   ],
                 ),
                 const SizedBox(height: 6),
@@ -421,8 +431,8 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
                   borderRadius: BorderRadius.circular(4),
                   child: LinearProgressIndicator(
                     value: pct / 100,
-                    backgroundColor: AppColors.primary.withOpacity(0.1),
-                    valueColor: AlwaysStoppedAnimation<Color>(AppColors.primary),
+                    backgroundColor: c.primary.withValues(alpha: 0.1),
+                    valueColor: AlwaysStoppedAnimation<Color>(c.primary),
                     minHeight: 8,
                   ),
                 ),
@@ -435,13 +445,14 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
   }
 
   Widget _buildBookingStats() {
+    final c = AppColors.of(context);
     final total = _totalBookings + _cancelledBookings;
     final confirmedPct = total > 0 ? (_totalBookings / total * 100) : 0.0;
     final cancelledPct = total > 0 ? (_cancelledBookings / total * 100) : 0.0;
 
     return Container(
       padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(color: AppColors.glassFill, borderRadius: BorderRadius.circular(12), border: Border.all(color: AppColors.glassBorder)),
+      decoration: BoxDecoration(color: c.glassFill, borderRadius: BorderRadius.circular(12), border: Border.all(color: c.glassBorder)),
       child: Row(
         children: [
           Expanded(
@@ -453,32 +464,32 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
                         sections: [
                           PieChartSectionData(
                             value: _totalBookings.toDouble(),
-                            color: AppColors.success,
+                            color: c.success,
                             title: '${confirmedPct.toStringAsFixed(0)}%',
-                            titleStyle: const TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: Colors.white),
+                            titleStyle: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: c.onPrimary),
                             radius: 50,
                           ),
                           PieChartSectionData(
                             value: _cancelledBookings.toDouble(),
-                            color: AppColors.error,
+                            color: c.error,
                             title: '${cancelledPct.toStringAsFixed(0)}%',
-                            titleStyle: const TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: Colors.white),
+                            titleStyle: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: c.onPrimary),
                             radius: 50,
                           ),
                         ],
                         sectionsSpace: 2,
                       ),
                     )
-                  : Center(child: Text('No data', style: TextStyle(color: AppColors.textSecondary))),
+                  : Center(child: Text('No data', style: TextStyle(color: c.textSecondary))),
             ),
           ),
           const SizedBox(width: 24),
           Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              _buildLegendItem(AppColors.success, 'Confirmed', '$_totalBookings'),
+              _buildLegendItem(c.success, 'Confirmed', '$_totalBookings'),
               const SizedBox(height: 8),
-              _buildLegendItem(AppColors.error, 'Cancelled', '$_cancelledBookings'),
+              _buildLegendItem(c.error, 'Cancelled', '$_cancelledBookings'),
               const SizedBox(height: 8),
               _buildLegendItem(Colors.blueGrey, 'Total', '$total'),
             ],
@@ -489,24 +500,26 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
   }
 
   Widget _buildLegendItem(Color color, String label, String value) {
+    final c = AppColors.of(context);
     return Row(
       children: [
         Container(width: 12, height: 12, decoration: BoxDecoration(color: color, borderRadius: BorderRadius.circular(3))),
         const SizedBox(width: 8),
-        Text('$label: ', style: TextStyle(fontSize: 13, color: AppColors.textSecondary)),
+        Text('$label: ', style: TextStyle(fontSize: 13, color: c.textSecondary)),
         Text(value, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.bold)),
       ],
     );
   }
 
   Widget _buildEmptyChart(String message) {
+    final c = AppColors.of(context);
     return Container(
       height: 120,
       width: double.infinity,
       padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(color: AppColors.glassFill, borderRadius: BorderRadius.circular(12), border: Border.all(color: AppColors.glassBorder)),
+      decoration: BoxDecoration(color: c.glassFill, borderRadius: BorderRadius.circular(12), border: Border.all(color: c.glassBorder)),
       child: Center(
-        child: Text(message, style: TextStyle(color: AppColors.textSecondary)),
+        child: Text(message, style: TextStyle(color: c.textSecondary)),
       ),
     );
   }

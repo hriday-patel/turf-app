@@ -152,8 +152,9 @@ class _ManualBookingScreenState extends State<ManualBookingScreen> with RouteAwa
 
   @override
   Widget build(BuildContext context) {
+    final c = AppColors.of(context);
     return Scaffold(
-      backgroundColor: AppColors.background,
+      backgroundColor: c.background,
       body: GlassScaffoldBackground(
         child: SafeArea(
           child: Column(
@@ -207,11 +208,11 @@ class _ManualBookingScreenState extends State<ManualBookingScreen> with RouteAwa
                 child: ElevatedButton(
                   onPressed: _isLoading ? null : _submitBooking,
                   style: ElevatedButton.styleFrom(
-                    backgroundColor: AppColors.primary,
+                    backgroundColor: c.primary,
                     shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
                   ),
                   child: _isLoading
-                      ? const CircularProgressIndicator(color: Colors.white, strokeWidth: 2)
+                      ? CircularProgressIndicator(color: c.onPrimary, strokeWidth: 2)
                       : const Text('Confirm Booking', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
                 ),
               ),
@@ -228,15 +229,17 @@ class _ManualBookingScreenState extends State<ManualBookingScreen> with RouteAwa
   }
 
   Widget _buildSectionTitle(String title) {
+    final c = AppColors.of(context);
     return Padding(
       padding: const EdgeInsets.only(bottom: 12),
-      child: Text(title, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: AppColors.textPrimary)),
+      child: Text(title, style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: c.textPrimary)),
     );
   }
 
   Widget _buildDatePicker() {
+    final c = AppColors.of(context);
     return Container(
-      decoration: BoxDecoration(color: AppColors.glassFill, borderRadius: BorderRadius.circular(12)),
+      decoration: BoxDecoration(color: c.glassFill, borderRadius: BorderRadius.circular(12)),
       child: TableCalendar(
         firstDay: DateTime.now(),
         lastDay: DateTime.now().add(const Duration(days: 60)),
@@ -251,14 +254,15 @@ class _ManualBookingScreenState extends State<ManualBookingScreen> with RouteAwa
           _loadSlots();
         },
         calendarStyle: CalendarStyle(
-          selectedDecoration: const BoxDecoration(color: AppColors.primary, shape: BoxShape.circle),
-          todayDecoration: BoxDecoration(color: AppColors.primary.withOpacity(0.3), shape: BoxShape.circle),
+          selectedDecoration: BoxDecoration(color: c.primary, shape: BoxShape.circle),
+          todayDecoration: BoxDecoration(color: c.primary.withValues(alpha: 0.3), shape: BoxShape.circle),
         ),
       ),
     );
   }
 
   Widget _buildSlotGrid() {
+    final c = AppColors.of(context);
     return Consumer<SlotProvider>(
       builder: (context, provider, _) {
         final available = provider.slots.where((s) => s.status == SlotStatus.available).toList();
@@ -282,14 +286,14 @@ class _ManualBookingScreenState extends State<ManualBookingScreen> with RouteAwa
               child: Container(
                 padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
                 decoration: BoxDecoration(
-                  color: isSelected ? AppColors.primary : AppColors.glassFill,
+                  color: isSelected ? c.primary : c.glassFill,
                   borderRadius: BorderRadius.circular(10),
-                  border: Border.all(color: isSelected ? AppColors.primary : AppColors.divider),
+                  border: Border.all(color: isSelected ? c.primary : c.divider),
                 ),
                 child: Column(
                   children: [
-                    Text(slot.displayTimeRange.split(' - ')[0], style: TextStyle(fontWeight: FontWeight.w600, color: isSelected ? Colors.white : AppColors.textPrimary)),
-                    Text('₹${slot.price.toInt()}', style: TextStyle(fontSize: 11, color: isSelected ? Colors.white.withOpacity(0.7) : AppColors.textSecondary)),
+                    Text(slot.displayTimeRange.split(' - ')[0], style: TextStyle(fontWeight: FontWeight.w600, color: isSelected ? c.onPrimary : c.textPrimary)),
+                    Text('₹${slot.price.toInt()}', style: TextStyle(fontSize: 11, color: isSelected ? c.onPrimary.withValues(alpha: 0.7) : c.textSecondary)),
                   ],
                 ),
               ),
@@ -301,6 +305,7 @@ class _ManualBookingScreenState extends State<ManualBookingScreen> with RouteAwa
   }
 
   Widget _buildTextField(TextEditingController controller, String label, IconData icon, {bool isPhone = false}) {
+    final c = AppColors.of(context);
     return TextFormField(
       controller: controller,
       keyboardType: isPhone ? TextInputType.phone : TextInputType.name,
@@ -310,8 +315,8 @@ class _ManualBookingScreenState extends State<ManualBookingScreen> with RouteAwa
         labelText: label,
         prefixIcon: Icon(icon),
         filled: true,
-        fillColor: AppColors.glassFill,
-        border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: const BorderSide(color: AppColors.glassBorder)),
+        fillColor: c.glassFill,
+        border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide(color: c.glassBorder)),
       ),
     );
   }
@@ -327,6 +332,7 @@ class _ManualBookingScreenState extends State<ManualBookingScreen> with RouteAwa
   }
 
   Widget _sourceChip(BookingSource source, IconData icon, String label) {
+    final c = AppColors.of(context);
     final isSelected = _bookingSource == source;
     return Expanded(
       child: GestureDetector(
@@ -334,16 +340,16 @@ class _ManualBookingScreenState extends State<ManualBookingScreen> with RouteAwa
         child: Container(
           padding: const EdgeInsets.symmetric(vertical: 14),
           decoration: BoxDecoration(
-            color: isSelected ? AppColors.primary : AppColors.glassFill,
+            color: isSelected ? c.primary : c.glassFill,
             borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: isSelected ? AppColors.primary : AppColors.divider),
+            border: Border.all(color: isSelected ? c.primary : c.divider),
           ),
           child: Row(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              Icon(icon, color: isSelected ? Colors.white : AppColors.textSecondary, size: 20),
+              Icon(icon, color: isSelected ? c.onPrimary : c.textSecondary, size: 20),
               const SizedBox(width: 8),
-              Text(label, style: TextStyle(fontWeight: FontWeight.w600, color: isSelected ? Colors.white : AppColors.textPrimary)),
+              Text(label, style: TextStyle(fontWeight: FontWeight.w600, color: isSelected ? c.onPrimary : c.textPrimary)),
             ],
           ),
         ),
@@ -352,6 +358,7 @@ class _ManualBookingScreenState extends State<ManualBookingScreen> with RouteAwa
   }
 
   Widget _buildPriceField() {
+    final c = AppColors.of(context);
     return TextFormField(
       controller: _priceController,
       keyboardType: TextInputType.number,
@@ -365,13 +372,14 @@ class _ManualBookingScreenState extends State<ManualBookingScreen> with RouteAwa
         labelText: 'Slot Price (₹)',
         prefixIcon: const Icon(Icons.currency_rupee),
         filled: true,
-        fillColor: AppColors.glassFill,
-        border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: const BorderSide(color: AppColors.glassBorder)),
+        fillColor: c.glassFill,
+        border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide(color: c.glassBorder)),
       ),
     );
   }
 
   Widget _buildAdvanceField() {
+    final c = AppColors.of(context);
     return TextFormField(
       controller: _advanceController,
       keyboardType: TextInputType.number,
@@ -381,14 +389,15 @@ class _ManualBookingScreenState extends State<ManualBookingScreen> with RouteAwa
         hintText: '0',
         prefixIcon: const Icon(Icons.account_balance_wallet),
         filled: true,
-        fillColor: AppColors.glassFill,
-        border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: const BorderSide(color: AppColors.glassBorder)),
+        fillColor: c.glassFill,
+        border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide(color: c.glassBorder)),
       ),
       onChanged: (_) => setState(() {}),
     );
   }
 
   Widget _buildBalanceDisplay() {
+    final c = AppColors.of(context);
     final total = double.tryParse(_priceController.text) ?? _selectedPrice;
     final advance = double.tryParse(_advanceController.text) ?? 0;
     final balance = (total - advance).clamp(0, double.infinity);
@@ -396,20 +405,20 @@ class _ManualBookingScreenState extends State<ManualBookingScreen> with RouteAwa
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
       decoration: BoxDecoration(
-        color: balance > 0 ? AppColors.warning.withOpacity(0.1) : AppColors.success.withOpacity(0.1),
+        color: balance > 0 ? c.warning.withValues(alpha: 0.1) : c.success.withValues(alpha: 0.1),
         borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: balance > 0 ? AppColors.warning.withOpacity(0.3) : AppColors.success.withOpacity(0.3)),
+        border: Border.all(color: balance > 0 ? c.warning.withValues(alpha: 0.3) : c.success.withValues(alpha: 0.3)),
       ),
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
-          Text('Balance Due', style: TextStyle(fontWeight: FontWeight.w600, color: AppColors.textPrimary)),
+          Text('Balance Due', style: TextStyle(fontWeight: FontWeight.w600, color: c.textPrimary)),
           Text(
             '₹${balance.toInt()}',
             style: TextStyle(
               fontWeight: FontWeight.bold,
               fontSize: 16,
-              color: balance > 0 ? AppColors.warning : AppColors.success,
+              color: balance > 0 ? c.warning : c.success,
             ),
           ),
         ],

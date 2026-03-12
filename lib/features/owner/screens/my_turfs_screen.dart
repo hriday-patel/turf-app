@@ -65,8 +65,9 @@ class _MyTurfsScreenState extends State<MyTurfsScreen>
 
   @override
   Widget build(BuildContext context) {
+    final c = AppColors.of(context);
     return Scaffold(
-      backgroundColor: AppColors.background,
+      backgroundColor: c.background,
       body: GlassScaffoldBackground(
         child: SafeArea(
           child: Column(
@@ -76,16 +77,16 @@ class _MyTurfsScreenState extends State<MyTurfsScreen>
                 title: AppStrings.myTurfs,
                 actions: [
                   IconButton(
-                    icon: const Icon(Icons.add, color: AppColors.primary),
+                    icon: Icon(Icons.add, color: c.primary),
                     onPressed: () => Navigator.pushNamed(context, AppRoutes.addTurf),
                   ),
                 ],
                 bottom: TabBar(
                   controller: _tabController,
-                  indicatorColor: AppColors.primary,
+                  indicatorColor: c.primary,
                   indicatorWeight: 2,
-                  labelColor: AppColors.primary,
-                  unselectedLabelColor: AppColors.textSecondary,
+                  labelColor: c.primary,
+                  unselectedLabelColor: c.textSecondary,
                   dividerColor: Colors.transparent,
                   tabs: const [
                     Tab(text: 'All Turfs'),
@@ -140,6 +141,7 @@ class _MyTurfsScreenState extends State<MyTurfsScreen>
   }
 
   Widget _buildEmptyState(BuildContext context, String message) {
+    final c = AppColors.of(context);
     return Center(
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
@@ -148,24 +150,24 @@ class _MyTurfsScreenState extends State<MyTurfsScreen>
             width: 100,
             height: 100,
             decoration: BoxDecoration(
-              color: AppColors.glassFill,
+              color: c.glassFill,
               shape: BoxShape.circle,
-              border: Border.all(color: AppColors.glassBorder),
-              boxShadow: AppColors.neonGlow(color: AppColors.primary),
+              border: Border.all(color: c.glassBorder),
+              boxShadow: AppColors.neonGlow(color: c.primary),
             ),
-            child: const Icon(
+            child: Icon(
               Icons.stadium_outlined,
               size: 50,
-              color: AppColors.primary,
+              color: c.primary,
             ),
           ),
           const SizedBox(height: 24),
           Text(
             message,
-            style: const TextStyle(
+            style: TextStyle(
               fontSize: 20,
               fontWeight: FontWeight.bold,
-              color: AppColors.textPrimary,
+              color: c.textPrimary,
             ),
           ),
           const SizedBox(height: 8),
@@ -173,7 +175,7 @@ class _MyTurfsScreenState extends State<MyTurfsScreen>
             'Add a turf to start accepting bookings',
             style: TextStyle(
               fontSize: 14,
-              color: AppColors.textSecondary,
+              color: c.textSecondary,
             ),
             textAlign: TextAlign.center,
           ),
@@ -192,6 +194,7 @@ class _MyTurfsScreenState extends State<MyTurfsScreen>
   }
 
   Widget _buildTurfCard(BuildContext context, TurfModel turf) {
+    final c = AppColors.of(context);
     final turfProvider = Provider.of<TurfProvider>(context, listen: false);
 
     return GlassCard(
@@ -207,7 +210,7 @@ class _MyTurfsScreenState extends State<MyTurfsScreen>
                 height: 140,
                 width: double.infinity,
                 decoration: BoxDecoration(
-                  color: AppColors.primary.withOpacity(0.1),
+                  color: c.primary.withValues(alpha: 0.1),
                   borderRadius: const BorderRadius.only(
                     topLeft: Radius.circular(16),
                     topRight: Radius.circular(16),
@@ -241,7 +244,7 @@ class _MyTurfsScreenState extends State<MyTurfsScreen>
                               child: Icon(
                                 Icons.sports_cricket,
                                 size: 50,
-                                color: AppColors.primary.withOpacity(0.5),
+                                color: c.primary.withValues(alpha: 0.5),
                               ),
                             );
                           },
@@ -251,7 +254,7 @@ class _MyTurfsScreenState extends State<MyTurfsScreen>
                         child: Icon(
                           Icons.sports_cricket,
                           size: 50,
-                          color: AppColors.primary.withOpacity(0.5),
+                          color: c.primary.withValues(alpha: 0.5),
                         ),
                       ),
               ),
@@ -277,10 +280,10 @@ class _MyTurfsScreenState extends State<MyTurfsScreen>
                     Expanded(
                       child: Text(
                         turf.turfName,
-                        style: const TextStyle(
+                        style: TextStyle(
                           fontSize: 18,
                           fontWeight: FontWeight.bold,
-                          color: AppColors.textPrimary,
+                          color: c.textPrimary,
                         ),
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
@@ -293,10 +296,10 @@ class _MyTurfsScreenState extends State<MyTurfsScreen>
 
                 Row(
                   children: [
-                    const Icon(
+                    Icon(
                       Icons.location_on_outlined,
                       size: 16,
-                      color: AppColors.textSecondary,
+                      color: c.textSecondary,
                     ),
                     const SizedBox(width: 4),
                     Expanded(
@@ -304,7 +307,7 @@ class _MyTurfsScreenState extends State<MyTurfsScreen>
                         '${turf.address}, ${turf.city}',
                         style: TextStyle(
                           fontSize: 13,
-                          color: AppColors.textSecondary,
+                          color: c.textSecondary,
                         ),
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
@@ -338,16 +341,16 @@ class _MyTurfsScreenState extends State<MyTurfsScreen>
                   Container(
                     padding: const EdgeInsets.all(12),
                     decoration: BoxDecoration(
-                      color: AppColors.warning.withOpacity(0.1),
+                      color: c.warning.withValues(alpha: 0.1),
                       borderRadius: BorderRadius.circular(8),
-                      border: Border.all(color: AppColors.warning.withOpacity(0.3)),
+                      border: Border.all(color: c.warning.withValues(alpha: 0.3)),
                     ),
                     child: Row(
                       children: [
-                        const Icon(
+                        Icon(
                           Icons.info_outline,
                           size: 18,
-                          color: AppColors.warning,
+                          color: c.warning,
                         ),
                         const SizedBox(width: 8),
                         Expanded(
@@ -355,9 +358,9 @@ class _MyTurfsScreenState extends State<MyTurfsScreen>
                             turf.verificationStatus == VerificationStatus.pending
                                 ? 'Awaiting admin verification'
                                 : 'Turf rejected: ${turf.rejectionReason ?? "Contact support"}',
-                            style: const TextStyle(
+                            style: TextStyle(
                               fontSize: 12,
-                              color: AppColors.warning,
+                              color: c.warning,
                             ),
                           ),
                         ),
@@ -377,8 +380,8 @@ class _MyTurfsScreenState extends State<MyTurfsScreen>
                         icon: const Icon(Icons.edit_outlined, size: 18),
                         label: const Text('Edit'),
                         style: OutlinedButton.styleFrom(
-                          foregroundColor: AppColors.primary,
-                          side: const BorderSide(color: AppColors.primary),
+                          foregroundColor: c.primary,
+                          side: BorderSide(color: c.primary),
                           padding: const EdgeInsets.symmetric(vertical: 12),
                         ),
                       ),
@@ -402,8 +405,8 @@ class _MyTurfsScreenState extends State<MyTurfsScreen>
                         icon: const Icon(Icons.visibility_outlined, size: 18),
                         label: const Text('View'),
                         style: ElevatedButton.styleFrom(
-                          backgroundColor: AppColors.primary,
-                          foregroundColor: Colors.white,
+                          backgroundColor: c.primary,
+                          foregroundColor: c.onPrimary,
                           padding: const EdgeInsets.symmetric(vertical: 12),
                         ),
                       ),
@@ -419,6 +422,7 @@ class _MyTurfsScreenState extends State<MyTurfsScreen>
   }
 
   Widget _buildStatusToggleButton(BuildContext context, TurfModel turf) {
+    final c = AppColors.of(context);
     final isOpen = turf.status == TurfStatus.open;
 
     return PopupMenuButton<TurfStatus>(
@@ -441,7 +445,7 @@ class _MyTurfsScreenState extends State<MyTurfsScreen>
                     : status == TurfStatus.closed
                         ? Icons.cancel
                         : Icons.construction,
-                color: isSelected ? AppColors.primary : AppColors.textSecondary,
+                color: isSelected ? c.primary : c.textSecondary,
                 size: 20,
               ),
               const SizedBox(width: 8),
@@ -449,7 +453,7 @@ class _MyTurfsScreenState extends State<MyTurfsScreen>
                 status.displayName,
                 style: TextStyle(
                   fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
-                  color: isSelected ? AppColors.primary : null,
+                  color: isSelected ? c.primary : null,
                 ),
               ),
             ],
@@ -459,10 +463,10 @@ class _MyTurfsScreenState extends State<MyTurfsScreen>
       child: Container(
         padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 6),
         decoration: BoxDecoration(
-          color: isOpen ? AppColors.successLight : AppColors.warningLight,
+          color: isOpen ? c.successLight : c.warningLight,
           borderRadius: BorderRadius.circular(8),
           border: Border.all(
-            color: isOpen ? AppColors.success : AppColors.warning,
+            color: isOpen ? c.success : c.warning,
           ),
         ),
         child: Row(
@@ -471,7 +475,7 @@ class _MyTurfsScreenState extends State<MyTurfsScreen>
             Icon(
               isOpen ? Icons.toggle_on : Icons.toggle_off,
               size: 18,
-              color: isOpen ? AppColors.success : AppColors.warning,
+              color: isOpen ? c.success : c.warning,
             ),
             const SizedBox(width: 4),
             Flexible(
@@ -480,7 +484,7 @@ class _MyTurfsScreenState extends State<MyTurfsScreen>
                 style: TextStyle(
                   fontSize: 12,
                   fontWeight: FontWeight.w600,
-                  color: isOpen ? AppColors.success : AppColors.warning,
+                  color: isOpen ? c.success : c.warning,
                 ),
                 overflow: TextOverflow.ellipsis,
                 maxLines: 1,
@@ -513,20 +517,21 @@ class _MyTurfsScreenState extends State<MyTurfsScreen>
   }
 
   Widget _buildTurfStatusBadge(TurfStatus status) {
+    final c = AppColors.of(context);
     Color color;
     IconData icon;
 
     switch (status) {
       case TurfStatus.open:
-        color = AppColors.success;
+        color = c.success;
         icon = Icons.check_circle;
         break;
       case TurfStatus.closed:
-        color = AppColors.error;
+        color = c.error;
         icon = Icons.cancel;
         break;
       case TurfStatus.renovation:
-        color = AppColors.warning;
+        color = c.warning;
         icon = Icons.construction;
         break;
     }
@@ -534,9 +539,9 @@ class _MyTurfsScreenState extends State<MyTurfsScreen>
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
       decoration: BoxDecoration(
-        color: AppColors.glassFill,
+        color: c.glassFill,
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: AppColors.glassBorder),
+        border: Border.all(color: c.glassBorder),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
@@ -557,20 +562,21 @@ class _MyTurfsScreenState extends State<MyTurfsScreen>
   }
 
   Widget _buildVerificationStatusBadge(VerificationStatus status) {
+    final c = AppColors.of(context);
     Color color;
     String text;
 
     switch (status) {
       case VerificationStatus.approved:
-        color = AppColors.success;
+        color = c.success;
         text = 'Approved';
         break;
       case VerificationStatus.pending:
-        color = AppColors.warning;
+        color = c.warning;
         text = 'Pending';
         break;
       case VerificationStatus.rejected:
-        color = AppColors.error;
+        color = c.error;
         text = 'Rejected';
         break;
     }
@@ -578,7 +584,7 @@ class _MyTurfsScreenState extends State<MyTurfsScreen>
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
       decoration: BoxDecoration(
-        color: color.withOpacity(0.1),
+        color: color.withValues(alpha: 0.1),
         borderRadius: BorderRadius.circular(20),
       ),
       child: Text(
@@ -593,16 +599,17 @@ class _MyTurfsScreenState extends State<MyTurfsScreen>
   }
 
   Widget _buildInfoChip({required IconData icon, required String text}) {
+    final c = AppColors.of(context);
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
-        Icon(icon, size: 14, color: AppColors.textSecondary),
+        Icon(icon, size: 14, color: c.textSecondary),
         const SizedBox(width: 4),
         Text(
           text,
           style: TextStyle(
             fontSize: 12,
-            color: AppColors.textSecondary,
+            color: c.textSecondary,
           ),
         ),
       ],

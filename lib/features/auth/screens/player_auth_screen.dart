@@ -96,8 +96,9 @@ class _PlayerAuthScreenState extends State<PlayerAuthScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final c = AppColors.of(context);
     return Scaffold(
-      backgroundColor: AppColors.background,
+      backgroundColor: c.background,
       body: GlassScaffoldBackground(
         child: Stack(
           children: [
@@ -110,7 +111,7 @@ class _PlayerAuthScreenState extends State<PlayerAuthScreen> {
                     child: Row(
                       children: [
                         IconButton(
-                          icon: const Icon(Icons.arrow_back_ios, color: AppColors.textPrimary, size: 20),
+                          icon: Icon(Icons.arrow_back_ios, color: c.textPrimary, size: 20),
                           onPressed: () {
                             if (_currentStep == AuthStep.otp) {
                               setState(() => _currentStep = AuthStep.phone);
@@ -127,24 +128,24 @@ class _PlayerAuthScreenState extends State<PlayerAuthScreen> {
                     width: 72,
                     height: 72,
                     decoration: BoxDecoration(
-                      color: AppColors.glassFill,
+                      color: c.glassFill,
                       borderRadius: BorderRadius.circular(20),
-                      border: Border.all(color: AppColors.primary.withOpacity(0.3)),
+                      border: Border.all(color: c.primary.withValues(alpha: 0.3)),
                       boxShadow: AppColors.neonGlow(blur: 24, spread: 1),
                     ),
-                    child: const Icon(
+                    child: Icon(
                       Icons.sports_cricket,
                       size: 36,
-                      color: AppColors.primary,
+                      color: c.primary,
                     ),
                   ),
                   const SizedBox(height: 12),
-                  const Text(
+                  Text(
                     AppStrings.appName,
                     style: TextStyle(
                       fontSize: 24,
                       fontWeight: FontWeight.bold,
-                      color: AppColors.textPrimary,
+                      color: c.textPrimary,
                       letterSpacing: 1,
                     ),
                   ),
@@ -153,7 +154,7 @@ class _PlayerAuthScreenState extends State<PlayerAuthScreen> {
                     AppStrings.appTagline,
                     style: TextStyle(
                       fontSize: 13,
-                      color: AppColors.textSecondary,
+                      color: c.textSecondary,
                     ),
                   ),
                   const SizedBox(height: 16),
@@ -180,6 +181,7 @@ class _PlayerAuthScreenState extends State<PlayerAuthScreen> {
   }
 
   Widget _buildHeader() {
+    final c = AppColors.of(context);
     String title = '';
     String subtitle = '';
 
@@ -203,18 +205,18 @@ class _PlayerAuthScreenState extends State<PlayerAuthScreen> {
       children: [
         Text(
           title,
-          style: const TextStyle(
+          style: TextStyle(
             fontSize: 28,
             fontWeight: FontWeight.bold,
-            color: AppColors.textPrimary,
+            color: c.textPrimary,
           ),
         ),
         const SizedBox(height: 8),
         Text(
           subtitle,
-          style: const TextStyle(
+          style: TextStyle(
             fontSize: 16,
-            color: AppColors.textSecondary,
+            color: c.textSecondary,
           ),
         ),
       ],
@@ -233,6 +235,7 @@ class _PlayerAuthScreenState extends State<PlayerAuthScreen> {
   }
 
   Widget _buildPhoneInput() {
+    final c = AppColors.of(context);
     return Form(
       key: _phoneFormKey,
       child: Column(
@@ -241,10 +244,10 @@ class _PlayerAuthScreenState extends State<PlayerAuthScreen> {
             controller: _phoneController,
             hint: 'Phone Number',
             prefixText: '+91 ',
-            prefixStyle: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: AppColors.textPrimary),
+            prefixStyle: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: c.textPrimary),
             keyboardType: TextInputType.phone,
             maxLength: 10,
-            style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold, letterSpacing: 2, color: AppColors.textPrimary),
+            style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, letterSpacing: 2, color: c.textPrimary),
             validator: (value) {
               if (value == null || value.isEmpty) return 'Enter phone number';
               if (value.length < 10) return 'Enter a valid 10-digit number';
@@ -259,6 +262,7 @@ class _PlayerAuthScreenState extends State<PlayerAuthScreen> {
   }
 
   Widget _buildOTPInput() {
+    final c = AppColors.of(context);
     return Form(
       key: _otpFormKey,
       child: Column(
@@ -269,7 +273,7 @@ class _PlayerAuthScreenState extends State<PlayerAuthScreen> {
             keyboardType: TextInputType.number,
             maxLength: 6,
             textAlign: TextAlign.center,
-            style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold, letterSpacing: 10, color: AppColors.textPrimary),
+            style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold, letterSpacing: 10, color: c.textPrimary),
             validator: (value) {
               if (value == null || value.length < 6) return 'Enter 6-digit OTP';
               return null;
@@ -279,7 +283,7 @@ class _PlayerAuthScreenState extends State<PlayerAuthScreen> {
           _buildSubmitButton(text: 'Verify Code', onPressed: _verifyOTP),
           TextButton(
             onPressed: () => setState(() => _currentStep = AuthStep.phone),
-            child: const Text('Change Number', style: TextStyle(color: AppColors.primary)),
+            child: Text('Change Number', style: TextStyle(color: c.primary)),
           ),
         ],
       ),

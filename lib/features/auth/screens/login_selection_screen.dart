@@ -25,7 +25,7 @@ class LoginSelectionScreen extends StatelessWidget {
                 const Spacer(flex: 1),
                 
                 // App Branding
-                _buildBranding(),
+                _buildBranding(context),
                 
                 const Spacer(flex: 1),
                 
@@ -35,12 +35,12 @@ class LoginSelectionScreen extends StatelessWidget {
                 const SizedBox(height: 16),
                 
                 // OR Divider
-                _buildDivider(),
+                _buildDivider(context),
                 
                 const SizedBox(height: 16),
                 
                 // Feature Highlights
-                _buildFeatureHighlights(),
+                _buildFeatureHighlights(context),
                 
                 const Spacer(flex: 2),
                 
@@ -58,7 +58,8 @@ class LoginSelectionScreen extends StatelessWidget {
     );
   }
 
-  Widget _buildBranding() {
+  Widget _buildBranding(BuildContext context) {
+    final c = AppColors.of(context);
     return Column(
       children: [
         // App Icon — glass + neon glow
@@ -66,26 +67,26 @@ class LoginSelectionScreen extends StatelessWidget {
           width: 100,
           height: 100,
           decoration: BoxDecoration(
-            color: AppColors.glassFill,
+            color: c.glassFill,
             borderRadius: BorderRadius.circular(25),
-            border: Border.all(color: AppColors.primary.withOpacity(0.3)),
+            border: Border.all(color: c.primary.withValues(alpha: 0.3)),
             boxShadow: AppColors.neonGlow(blur: 24, spread: 1),
           ),
-          child: const Icon(
+          child: Icon(
             Icons.sports_cricket,
             size: 50,
-            color: AppColors.primary,
+            color: c.primary,
           ),
         ),
         const SizedBox(height: 24),
         
         // App Name
-        const Text(
+        Text(
           AppStrings.appName,
           style: TextStyle(
             fontSize: 32,
             fontWeight: FontWeight.bold,
-            color: AppColors.textPrimary,
+            color: c.textPrimary,
             letterSpacing: 1,
           ),
         ),
@@ -96,7 +97,7 @@ class LoginSelectionScreen extends StatelessWidget {
           AppStrings.appTagline,
           style: TextStyle(
             fontSize: 14,
-            color: AppColors.textSecondary,
+            color: c.textSecondary,
           ),
           textAlign: TextAlign.center,
         ),
@@ -112,44 +113,48 @@ class LoginSelectionScreen extends StatelessWidget {
     );
   }
 
-  Widget _buildDivider() {
+  Widget _buildDivider(BuildContext context) {
+    final c = AppColors.of(context);
     return Row(
       children: [
-        Expanded(child: Container(height: 1, color: AppColors.divider)),
+        Expanded(child: Container(height: 1, color: c.divider)),
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 16),
           child: Text(
             'Quick Features',
             style: TextStyle(
               fontSize: 12,
-              color: AppColors.textSecondary,
+              color: c.textSecondary,
               fontWeight: FontWeight.w500,
             ),
           ),
         ),
-        Expanded(child: Container(height: 1, color: AppColors.divider)),
+        Expanded(child: Container(height: 1, color: c.divider)),
       ],
     );
   }
 
-  Widget _buildFeatureHighlights() {
+  Widget _buildFeatureHighlights(BuildContext context) {
     return GlassCard(
       padding: const EdgeInsets.all(20),
       child: Column(
         children: [
           _buildFeatureRow(
+            context,
             Icons.calendar_today_outlined,
             'Easy Slot Booking',
             'Book your favorite turf in seconds',
           ),
           const SizedBox(height: 16),
           _buildFeatureRow(
+            context,
             Icons.payments_outlined,
             'Flexible Payments',
             'Pay online or at the turf',
           ),
           const SizedBox(height: 16),
           _buildFeatureRow(
+            context,
             Icons.location_on_outlined,
             'Nearby Turfs',
             'Find turfs near your location',
@@ -159,18 +164,19 @@ class LoginSelectionScreen extends StatelessWidget {
     );
   }
 
-  Widget _buildFeatureRow(IconData icon, String title, String subtitle) {
+  Widget _buildFeatureRow(BuildContext context, IconData icon, String title, String subtitle) {
+    final c = AppColors.of(context);
     return Row(
       children: [
         Container(
           width: 44,
           height: 44,
           decoration: BoxDecoration(
-            color: AppColors.primary.withOpacity(0.1),
+            color: c.primary.withValues(alpha: 0.1),
             borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: AppColors.primary.withOpacity(0.15)),
+            border: Border.all(color: c.primary.withValues(alpha: 0.15)),
           ),
-          child: Icon(icon, color: AppColors.primary, size: 22),
+          child: Icon(icon, color: c.primary, size: 22),
         ),
         const SizedBox(width: 14),
         Expanded(
@@ -179,10 +185,10 @@ class LoginSelectionScreen extends StatelessWidget {
             children: [
               Text(
                 title,
-                style: const TextStyle(
+                style: TextStyle(
                   fontSize: 14,
                   fontWeight: FontWeight.w600,
-                  color: AppColors.textPrimary,
+                  color: c.textPrimary,
                 ),
               ),
               const SizedBox(height: 2),
@@ -190,7 +196,7 @@ class LoginSelectionScreen extends StatelessWidget {
                 subtitle,
                 style: TextStyle(
                   fontSize: 12,
-                  color: AppColors.textSecondary,
+                  color: c.textSecondary,
                 ),
               ),
             ],
@@ -201,6 +207,7 @@ class LoginSelectionScreen extends StatelessWidget {
   }
 
   Widget _buildOwnerLink(BuildContext context) {
+    final c = AppColors.of(context);
     return Row(
       mainAxisAlignment: MainAxisAlignment.center,
       children: [
@@ -208,7 +215,7 @@ class LoginSelectionScreen extends StatelessWidget {
           'Are you a turf owner? ',
           style: TextStyle(
             fontSize: 14,
-            color: AppColors.textSecondary,
+            color: c.textSecondary,
           ),
         ),
         TextButton(
@@ -216,12 +223,12 @@ class LoginSelectionScreen extends StatelessWidget {
           style: TextButton.styleFrom(
             padding: const EdgeInsets.symmetric(horizontal: 8),
           ),
-          child: const Text(
+          child: Text(
             AppStrings.loginAsOwner,
             style: TextStyle(
               fontSize: 14,
               fontWeight: FontWeight.w600,
-              color: AppColors.primary,
+              color: c.primary,
             ),
           ),
         ),

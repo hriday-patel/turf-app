@@ -7,6 +7,7 @@ import '../../../app/routes.dart';
 import '../../auth/providers/auth_provider.dart';
 import '../../../core/utils/app_toast.dart';
 import '../providers/booking_provider.dart';
+import '../../../config/colors.dart';
 
 /// Booking Detail Screen
 /// Shows complete booking information with cancel and payment actions
@@ -91,6 +92,7 @@ class _BookingDetailScreenState extends State<BookingDetailScreen> with RouteAwa
   }
 
   Future<void> _cancelBooking() async {
+    final c = AppColors.of(context);
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
@@ -106,7 +108,7 @@ class _BookingDetailScreenState extends State<BookingDetailScreen> with RouteAwa
           ),
           TextButton(
             onPressed: () => Navigator.pop(context, true),
-            style: TextButton.styleFrom(foregroundColor: const Color(0xFFEF4444)),
+            style: TextButton.styleFrom(foregroundColor: c.error),
             child: const Text('Cancel Booking'),
           ),
         ],
@@ -163,24 +165,25 @@ class _BookingDetailScreenState extends State<BookingDetailScreen> with RouteAwa
 
   @override
   Widget build(BuildContext context) {
+    final c = AppColors.of(context);
     return Scaffold(
-      backgroundColor: const Color(0xFFF8FAFC),
+      backgroundColor: c.inputBackground,
       body: SafeArea(
         child: Column(
           children: [
             // App bar
             Container(
-              color: Colors.white,
+              color: c.surface,
               padding: const EdgeInsets.symmetric(vertical: 4),
               child: Row(
                 children: [
                   IconButton(
-                    icon: const Icon(Icons.arrow_back_ios, color: Color(0xFF0F172A), size: 20),
+                    icon: Icon(Icons.arrow_back_ios, color: c.textPrimary, size: 20),
                     onPressed: () => Navigator.pop(context),
                   ),
-                  const Expanded(
+                  Expanded(
                     child: Center(
-                      child: Text('Booking Details', style: TextStyle(color: Color(0xFF0F172A), fontWeight: FontWeight.w600, fontSize: 18)),
+                      child: Text('Booking Details', style: TextStyle(color: c.textPrimary, fontWeight: FontWeight.w600, fontSize: 18)),
                     ),
                   ),
                   const SizedBox(width: 48),
@@ -195,6 +198,7 @@ class _BookingDetailScreenState extends State<BookingDetailScreen> with RouteAwa
   }
 
   Widget _buildBody() {
+    final c = AppColors.of(context);
     if (_isLoading) {
       return const Center(child: CircularProgressIndicator());
     }
@@ -206,9 +210,9 @@ class _BookingDetailScreenState extends State<BookingDetailScreen> with RouteAwa
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              const Icon(Icons.error_outline, size: 64, color: Color(0xFFEF4444)),
+              Icon(Icons.error_outline, size: 64, color: c.error),
               const SizedBox(height: 16),
-              Text(_errorMessage!, style: const TextStyle(color: Color(0xFFEF4444)), textAlign: TextAlign.center),
+              Text(_errorMessage!, style: TextStyle(color: c.error), textAlign: TextAlign.center),
             ],
           ),
         ),
@@ -267,7 +271,7 @@ class _BookingDetailScreenState extends State<BookingDetailScreen> with RouteAwa
               if (_booking!.advanceAmount > 0)
                 _buildInfoRow('Advance Paid', '₹${_booking!.advanceAmount.toInt()}'),
               if (_booking!.isPartialPayment)
-                _buildInfoRow('Remaining', '₹${_booking!.remainingAmount.toInt()}', valueColor: const Color(0xFFF59E0B)),
+                _buildInfoRow('Remaining', '₹${_booking!.remainingAmount.toInt()}', valueColor: c.warning),
               _buildInfoRow('Mode', _booking!.paymentMode.displayName),
               _buildInfoRow('Status', _booking!.paymentStatus.displayName),
               if (_booking!.transactionId != null)
@@ -285,10 +289,10 @@ class _BookingDetailScreenState extends State<BookingDetailScreen> with RouteAwa
                 isProcessing: _isProcessing,
                 label: 'Mark Payment Received',
                 icon: Icons.check_circle_outline,
-                trackColor: const Color(0xFFECFDF5),
-                borderColor: const Color(0xFF22C55E),
-                textColor: const Color(0xFF166534),
-                thumbColor: const Color(0xFFBBF7D0),
+                trackColor: c.successLight,
+                borderColor: c.success,
+                textColor: c.success,
+                thumbColor: c.successLight,
               ),
             const SizedBox(height: 12),
 
@@ -298,10 +302,10 @@ class _BookingDetailScreenState extends State<BookingDetailScreen> with RouteAwa
               isProcessing: _isProcessing,
               label: 'Cancel Booking',
               icon: Icons.cancel_outlined,
-              trackColor: const Color(0xFFFEF2F2),
-              borderColor: const Color(0xFFEF4444),
-              textColor: const Color(0xFF991B1B),
-              thumbColor: const Color(0xFFFECACA),
+              trackColor: c.errorLight,
+              borderColor: c.error,
+              textColor: c.error,
+              thumbColor: c.errorLight,
             ),
           ],
 
@@ -327,6 +331,7 @@ class _BookingDetailScreenState extends State<BookingDetailScreen> with RouteAwa
   }
 
   Widget _buildStatusBanner() {
+    final c = AppColors.of(context);
     final isCancelled = _booking!.bookingStatus == BookingStatus.cancelled;
     final isConfirmed = _booking!.bookingStatus == BookingStatus.confirmed;
     final isPending = _booking!.isPendingPayment;
@@ -335,19 +340,19 @@ class _BookingDetailScreenState extends State<BookingDetailScreen> with RouteAwa
     IconData icon;
 
     if (isCancelled) {
-      bg = const Color(0xFFFEF2F2);
-      border = const Color(0xFFFCA5A5);
-      textColor = const Color(0xFF991B1B);
+      bg = c.errorLight;
+      border = c.error.withValues(alpha: 0.4);
+      textColor = c.error;
       icon = Icons.cancel_rounded;
     } else if (isPending) {
-      bg = const Color(0xFFFFFBEB);
-      border = const Color(0xFFFCD34D);
-      textColor = const Color(0xFF92400E);
+      bg = c.warningLight;
+      border = c.warning;
+      textColor = c.warning;
       icon = Icons.schedule_rounded;
     } else {
-      bg = const Color(0xFFECFDF5);
-      border = const Color(0xFF86EFAC);
-      textColor = const Color(0xFF166534);
+      bg = c.successLight;
+      border = c.success.withValues(alpha: 0.4);
+      textColor = c.success;
       icon = Icons.check_circle_rounded;
     }
 
@@ -379,7 +384,7 @@ class _BookingDetailScreenState extends State<BookingDetailScreen> with RouteAwa
                   'ID: ${_booking!.bookingId}',
                   style: TextStyle(
                     fontSize: 12,
-                    color: textColor.withOpacity(0.7),
+                    color: textColor.withValues(alpha: 0.7),
                   ),
                   overflow: TextOverflow.ellipsis,
                   maxLines: 1,
@@ -398,14 +403,15 @@ class _BookingDetailScreenState extends State<BookingDetailScreen> with RouteAwa
     required List<Widget> children,
     Color? color,
   }) {
+    final c = AppColors.of(context);
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: c.surface,
         borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: const Color(0xFFE2E8F0)),
+        border: Border.all(color: c.border),
         boxShadow: [
-          BoxShadow(color: Colors.black.withOpacity(0.04), blurRadius: 8, offset: const Offset(0, 2)),
+          BoxShadow(color: Colors.black.withValues(alpha: 0.04), blurRadius: 8, offset: const Offset(0, 2)),
         ],
       ),
       child: Column(
@@ -413,19 +419,19 @@ class _BookingDetailScreenState extends State<BookingDetailScreen> with RouteAwa
         children: [
           Row(
             children: [
-              Icon(icon, color: const Color(0xFF3B82F6), size: 20),
+              Icon(icon, color: c.primary, size: 20),
               const SizedBox(width: 8),
               Text(
                 title,
-                style: const TextStyle(
+                style: TextStyle(
                   fontSize: 18,
                   fontWeight: FontWeight.w600,
-                  color: Color(0xFF0F172A),
+                  color: c.textPrimary,
                 ),
               ),
             ],
           ),
-          const Divider(height: 20, color: Color(0xFFE2E8F0)),
+          Divider(height: 20, color: c.border),
           ...children,
         ],
       ),
@@ -433,6 +439,7 @@ class _BookingDetailScreenState extends State<BookingDetailScreen> with RouteAwa
   }
 
   Widget _buildInfoRow(String label, String value, {Color? valueColor}) {
+    final c = AppColors.of(context);
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 4),
       child: Row(
@@ -440,8 +447,8 @@ class _BookingDetailScreenState extends State<BookingDetailScreen> with RouteAwa
         children: [
           Text(
             label,
-            style: const TextStyle(
-              color: Color(0xFF64748B),
+            style: TextStyle(
+              color: c.textSecondary,
               fontSize: 14,
             ),
           ),
@@ -452,7 +459,7 @@ class _BookingDetailScreenState extends State<BookingDetailScreen> with RouteAwa
               style: TextStyle(
                 fontWeight: FontWeight.w500,
                 fontSize: 14,
-                color: valueColor ?? const Color(0xFF334155),
+                color: valueColor ?? c.textPrimary,
               ),
               textAlign: TextAlign.end,
               overflow: TextOverflow.ellipsis,
@@ -648,7 +655,7 @@ class _SwipeToConfirmState extends State<_SwipeToConfirm>
             border: Border.all(color: widget.borderColor),
             boxShadow: [
               BoxShadow(
-                color: Colors.black.withOpacity(0.04),
+                color: Colors.black.withValues(alpha: 0.04),
                 blurRadius: 8,
                 offset: const Offset(0, 2),
               ),
@@ -704,10 +711,10 @@ class _SwipeToConfirmState extends State<_SwipeToConfirm>
                       decoration: BoxDecoration(
                         color: widget.thumbColor,
                         borderRadius: BorderRadius.circular(24),
-                        border: Border.all(color: widget.borderColor.withOpacity(0.5)),
+                        border: Border.all(color: widget.borderColor.withValues(alpha: 0.5)),
                         boxShadow: [
                           BoxShadow(
-                            color: Colors.black.withOpacity(0.08),
+                            color: Colors.black.withValues(alpha: 0.08),
                             blurRadius: 6,
                             offset: const Offset(0, 2),
                           ),

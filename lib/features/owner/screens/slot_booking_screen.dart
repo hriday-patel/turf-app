@@ -502,29 +502,20 @@ class _SlotBookingScreenState extends State<SlotBookingScreen> with RouteAware, 
 
   @override
   Widget build(BuildContext context) {
+    final c = AppColors.of(context);
     final turfProvider = Provider.of<TurfProvider>(context);
     final approvedTurfs = turfProvider.turfs.where((t) => t.verificationStatus == VerificationStatus.approved).toList();
 
     return Scaffold(
-      backgroundColor: const Color(0xFFF8FAFC),
+      backgroundColor: c.surface,
       body: SafeArea(
           child: Stack(
             children: [
               // Single smooth gradient wash from blue to page background
               Positioned.fill(
                 child: Container(
-                  decoration: const BoxDecoration(
-                    gradient: LinearGradient(
-                      begin: Alignment.topCenter,
-                      end: Alignment.bottomCenter,
-                      stops: [0.0, 0.15, 0.35, 0.5],
-                      colors: [
-                        Color(0xFFAFC6FF),
-                        Color(0xFFCBDBFF),
-                        Color(0xFFE8EFFE),
-                        Color(0xFFF8FAFC),
-                      ],
-                    ),
+                  decoration: BoxDecoration(
+                    gradient: c.scaffoldGradient,
                   ),
                 ),
               ),
@@ -590,6 +581,7 @@ class _SlotBookingScreenState extends State<SlotBookingScreen> with RouteAware, 
   }
 
   Widget _buildCollapsedInfoBar(List<TurfModel> turfs) {
+    final c = AppColors.of(context);
     final venueName = _selectedTurf?.turfName ?? 'Select Venue';
     final netLabel = (_selectedTurf != null && _selectedTurf!.numberOfNets > 1)
         ? ' · Net $_selectedNetNumber'
@@ -600,12 +592,12 @@ class _SlotBookingScreenState extends State<SlotBookingScreen> with RouteAware, 
         margin: const EdgeInsets.fromLTRB(16, 8, 16, 12),
         padding: const EdgeInsets.all(16),
         decoration: BoxDecoration(
-          color: Colors.white,
+          color: c.surface,
           borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: const Color(0xFFE2E8F0)),
+          border: Border.all(color: c.border),
           boxShadow: [
             BoxShadow(
-              color: Colors.black.withOpacity(0.04),
+              color: Colors.black.withValues(alpha: 0.04),
               blurRadius: 8,
               offset: const Offset(0, 2),
             ),
@@ -613,15 +605,15 @@ class _SlotBookingScreenState extends State<SlotBookingScreen> with RouteAware, 
         ),
         child: Row(
           children: [
-            Icon(Icons.stadium, color: AppColors.primary, size: 20),
+            Icon(Icons.stadium, color: c.primary, size: 20),
             const SizedBox(width: 10),
             Expanded(
               child: Text(
                 '$venueName$netLabel',
-                style: const TextStyle(
+                style: TextStyle(
                   fontWeight: FontWeight.w600,
                   fontSize: 14,
-                  color: Color(0xFF0F172A),
+                  color: c.textPrimary,
                 ),
                 overflow: TextOverflow.ellipsis,
               ),
@@ -629,20 +621,20 @@ class _SlotBookingScreenState extends State<SlotBookingScreen> with RouteAware, 
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
               decoration: BoxDecoration(
-                color: AppColors.primary.withOpacity(0.1),
+                color: c.primary.withValues(alpha: 0.1),
                 borderRadius: BorderRadius.circular(8),
               ),
               child: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  Icon(Icons.swap_horiz, size: 16, color: AppColors.primary),
+                  Icon(Icons.swap_horiz, size: 16, color: c.primary),
                   const SizedBox(width: 4),
                   Text(
                     'Change',
                     style: TextStyle(
                       fontSize: 12,
                       fontWeight: FontWeight.w600,
-                      color: AppColors.primary,
+                      color: c.primary,
                     ),
                   ),
                 ],
@@ -655,20 +647,21 @@ class _SlotBookingScreenState extends State<SlotBookingScreen> with RouteAware, 
   }
 
   Widget _buildEmptyState() {
+    final c = AppColors.of(context);
     return Center(
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Icon(Icons.stadium_outlined, size: 64, color: AppColors.textSecondary.withOpacity(0.5)),
+          Icon(Icons.stadium_outlined, size: 64, color: c.textSecondary.withValues(alpha: 0.5)),
           const SizedBox(height: 16),
-          const Text(
+          Text(
             'No Approved Turfs',
-            style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600, color: AppColors.textPrimary),
+            style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600, color: c.textPrimary),
           ),
           const SizedBox(height: 8),
           Text(
             'Add a turf and get it approved to manage slots',
-            style: TextStyle(color: AppColors.textSecondary),
+            style: TextStyle(color: c.textSecondary),
           ),
           const SizedBox(height: 24),
           ElevatedButton.icon(
@@ -676,7 +669,7 @@ class _SlotBookingScreenState extends State<SlotBookingScreen> with RouteAware, 
             icon: const Icon(Icons.add),
             label: const Text('Add Turf'),
             style: ElevatedButton.styleFrom(
-              backgroundColor: AppColors.primary,
+              backgroundColor: c.primary,
               padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
             ),
           ),
@@ -686,31 +679,32 @@ class _SlotBookingScreenState extends State<SlotBookingScreen> with RouteAware, 
   }
 
   Widget _buildSidebar(List<TurfModel> turfs) {
+    final c = AppColors.of(context);
     return Align(
       alignment: Alignment.centerLeft,
       child: Container(
         width: 260,
-        color: AppColors.surface,
+        color: c.surface,
         child: SafeArea(
           child: Column(
             children: [
               // Header with close button
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                color: AppColors.primary.withOpacity(0.1),
+                color: c.primary.withValues(alpha: 0.1),
                 child: Row(
                   children: [
-                    Icon(Icons.stadium, color: AppColors.primary, size: 20),
+                    Icon(Icons.stadium, color: c.primary, size: 20),
                     const SizedBox(width: 8),
-                    const Expanded(
+                    Expanded(
                       child: Text(
                         'Select Venue',
-                        style: TextStyle(fontWeight: FontWeight.bold, color: AppColors.textPrimary),
+                        style: TextStyle(fontWeight: FontWeight.bold, color: c.textPrimary),
                       ),
                     ),
                     GestureDetector(
                       onTap: () => setState(() => _isSidebarVisible = false),
-                      child: Icon(Icons.close, color: AppColors.textSecondary, size: 22),
+                      child: Icon(Icons.close, color: c.textSecondary, size: 22),
                     ),
                   ],
                 ),
@@ -729,10 +723,10 @@ class _SlotBookingScreenState extends State<SlotBookingScreen> with RouteAware, 
                   child: Container(
                     padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
                     decoration: BoxDecoration(
-                      color: isSelected ? AppColors.primary.withOpacity(0.15) : null,
+                      color: isSelected ? c.primary.withValues(alpha: 0.15) : null,
                       border: Border(
                         left: BorderSide(
-                          color: isSelected ? AppColors.primary : Colors.transparent,
+                          color: isSelected ? c.primary : Colors.transparent,
                           width: 3,
                         ),
                       ),
@@ -744,7 +738,7 @@ class _SlotBookingScreenState extends State<SlotBookingScreen> with RouteAware, 
                           turf.turfName,
                           style: TextStyle(
                             fontWeight: isSelected ? FontWeight.bold : FontWeight.w500,
-                            color: isSelected ? AppColors.primary : AppColors.textPrimary,
+                            color: isSelected ? c.primary : c.textPrimary,
                             fontSize: 13,
                           ),
                           maxLines: 2,
@@ -755,7 +749,7 @@ class _SlotBookingScreenState extends State<SlotBookingScreen> with RouteAware, 
                           '${turf.numberOfNets} net${turf.numberOfNets > 1 ? 's' : ''}',
                           style: TextStyle(
                             fontSize: 11,
-                            color: AppColors.textSecondary,
+                            color: c.textSecondary,
                           ),
                         ),
                       ],
@@ -771,22 +765,22 @@ class _SlotBookingScreenState extends State<SlotBookingScreen> with RouteAware, 
             Container(
               padding: const EdgeInsets.all(16),
               decoration: BoxDecoration(
-                color: AppColors.primary.withOpacity(0.05),
-                border: Border(top: BorderSide(color: AppColors.divider)),
+                color: c.primary.withValues(alpha: 0.05),
+                border: Border(top: BorderSide(color: c.divider)),
               ),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Row(
                     children: [
-                      Icon(Icons.sports_cricket, size: 16, color: AppColors.primary),
+                      Icon(Icons.sports_cricket, size: 16, color: c.primary),
                       const SizedBox(width: 6),
                       Text(
                         'Select Net for ${_selectedTurf!.turfName}',
                         style: TextStyle(
                           fontWeight: FontWeight.bold,
                           fontSize: 13,
-                          color: AppColors.primary,
+                          color: c.primary,
                         ),
                         overflow: TextOverflow.ellipsis,
                       ),
@@ -805,16 +799,16 @@ class _SlotBookingScreenState extends State<SlotBookingScreen> with RouteAware, 
                           child: Container(
                             padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
                             decoration: BoxDecoration(
-                              color: AppColors.glassFill,
+                              color: c.glassFill,
                               borderRadius: BorderRadius.circular(10),
-                              border: Border.all(color: AppColors.primary.withOpacity(0.4)),
+                              border: Border.all(color: c.primary.withValues(alpha: 0.4)),
                             ),
                             child: Text(
                               'Net $netNumber',
                               style: TextStyle(
                                 fontSize: 13,
                                 fontWeight: FontWeight.w600,
-                                color: AppColors.primary,
+                                color: c.primary,
                               ),
                             ),
                           ),
@@ -833,16 +827,17 @@ class _SlotBookingScreenState extends State<SlotBookingScreen> with RouteAware, 
   }
 
   Widget _buildDatePicker() {
+    final c = AppColors.of(context);
     return Container(
       margin: const EdgeInsets.fromLTRB(16, 8, 16, 14),
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: c.surface,
         borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: const Color(0xFFE2E8F0)),
+        border: Border.all(color: c.border),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.04),
+            color: Colors.black.withValues(alpha: 0.04),
             blurRadius: 8,
             offset: const Offset(0, 2),
           ),
@@ -860,15 +855,15 @@ class _SlotBookingScreenState extends State<SlotBookingScreen> with RouteAware, 
           titleCentered: true,
           headerPadding: EdgeInsets.symmetric(vertical: 8),
         ),
-        calendarStyle: const CalendarStyle(
+        calendarStyle: CalendarStyle(
           // Hide default decorations — custom builders handle selected/today
-          selectedDecoration: BoxDecoration(color: Colors.transparent),
-          selectedTextStyle: TextStyle(color: Colors.transparent),
-          todayDecoration: BoxDecoration(color: Colors.transparent),
-          todayTextStyle: TextStyle(color: Colors.transparent),
-          defaultTextStyle: TextStyle(color: Color(0xFF64748B)),
-          weekendTextStyle: TextStyle(color: Color(0xFF64748B)),
-          cellPadding: EdgeInsets.symmetric(horizontal: 2, vertical: 2),
+          selectedDecoration: const BoxDecoration(color: Colors.transparent),
+          selectedTextStyle: const TextStyle(color: Colors.transparent),
+          todayDecoration: const BoxDecoration(color: Colors.transparent),
+          todayTextStyle: const TextStyle(color: Colors.transparent),
+          defaultTextStyle: TextStyle(color: c.textSecondary),
+          weekendTextStyle: TextStyle(color: c.textSecondary),
+          cellPadding: const EdgeInsets.symmetric(horizontal: 2, vertical: 2),
         ),
         daysOfWeekVisible: false,
         calendarBuilders: CalendarBuilders(
@@ -880,7 +875,7 @@ class _SlotBookingScreenState extends State<SlotBookingScreen> with RouteAware, 
                 curve: Curves.easeInOut,
                 padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
                 decoration: BoxDecoration(
-                  color: const Color(0xFF4F7DF3),
+                  color: c.primary,
                   borderRadius: BorderRadius.circular(22),
                 ),
                 child: Column(
@@ -888,8 +883,8 @@ class _SlotBookingScreenState extends State<SlotBookingScreen> with RouteAware, 
                   children: [
                     Text(
                       dayLabel,
-                      style: const TextStyle(
-                        color: Colors.white,
+                      style: TextStyle(
+                        color: c.onPrimary,
                         fontSize: 11,
                         fontWeight: FontWeight.w500,
                       ),
@@ -897,8 +892,8 @@ class _SlotBookingScreenState extends State<SlotBookingScreen> with RouteAware, 
                     const SizedBox(height: 2),
                     Text(
                       '${day.day}',
-                      style: const TextStyle(
-                        color: Colors.white,
+                      style: TextStyle(
+                        color: c.onPrimary,
                         fontWeight: FontWeight.bold,
                         fontSize: 15,
                       ),
@@ -918,8 +913,8 @@ class _SlotBookingScreenState extends State<SlotBookingScreen> with RouteAware, 
                 padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
                 decoration: BoxDecoration(
                   color: isSelected
-                      ? const Color(0xFF4F7DF3)
-                      : const Color(0xFF4F7DF3).withOpacity(0.12),
+                      ? c.primary
+                      : c.primary.withValues(alpha: 0.12),
                   borderRadius: BorderRadius.circular(22),
                 ),
                 child: Column(
@@ -928,7 +923,7 @@ class _SlotBookingScreenState extends State<SlotBookingScreen> with RouteAware, 
                     Text(
                       dayLabel,
                       style: TextStyle(
-                        color: isSelected ? Colors.white : const Color(0xFF4F7DF3),
+                        color: isSelected ? c.onPrimary : c.primary,
                         fontSize: 11,
                         fontWeight: FontWeight.w500,
                       ),
@@ -937,7 +932,7 @@ class _SlotBookingScreenState extends State<SlotBookingScreen> with RouteAware, 
                     Text(
                       '${day.day}',
                       style: TextStyle(
-                        color: isSelected ? Colors.white : const Color(0xFF4F7DF3),
+                        color: isSelected ? c.onPrimary : c.primary,
                         fontWeight: FontWeight.w600,
                         fontSize: 15,
                       ),
@@ -957,8 +952,8 @@ class _SlotBookingScreenState extends State<SlotBookingScreen> with RouteAware, 
                   children: [
                     Text(
                       dayLabel,
-                      style: const TextStyle(
-                        color: Color(0xFF94A3B8),
+                      style: TextStyle(
+                        color: c.textHint,
                         fontSize: 11,
                         fontWeight: FontWeight.w500,
                       ),
@@ -966,8 +961,8 @@ class _SlotBookingScreenState extends State<SlotBookingScreen> with RouteAware, 
                     const SizedBox(height: 2),
                     Text(
                       '${day.day}',
-                      style: const TextStyle(
-                        color: Color(0xFF64748B),
+                      style: TextStyle(
+                        color: c.textSecondary,
                         fontSize: 15,
                       ),
                     ),
@@ -983,15 +978,16 @@ class _SlotBookingScreenState extends State<SlotBookingScreen> with RouteAware, 
 
   // Inline toggle widget for period headers
   Widget _buildInlinePeriodToggle(String period, bool isOpen) {
+    final c = AppColors.of(context);
     return GestureDetector(
       onTap: () => _togglePeriod(period.toLowerCase(), !isOpen),
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
         decoration: BoxDecoration(
-          color: isOpen ? AppColors.success.withOpacity(0.15) : AppColors.error.withOpacity(0.15),
+          color: isOpen ? c.success.withValues(alpha: 0.15) : c.error.withValues(alpha: 0.15),
           borderRadius: BorderRadius.circular(16),
           border: Border.all(
-            color: isOpen ? AppColors.success : AppColors.error,
+            color: isOpen ? c.success : c.error,
             width: 1,
           ),
         ),
@@ -1001,7 +997,7 @@ class _SlotBookingScreenState extends State<SlotBookingScreen> with RouteAware, 
             Icon(
               isOpen ? Icons.lock_open : Icons.lock,
               size: 12,
-              color: isOpen ? AppColors.success : AppColors.error,
+              color: isOpen ? c.success : c.error,
             ),
             const SizedBox(width: 4),
             Text(
@@ -1009,7 +1005,7 @@ class _SlotBookingScreenState extends State<SlotBookingScreen> with RouteAware, 
               style: TextStyle(
                 fontSize: 10,
                 fontWeight: FontWeight.bold,
-                color: isOpen ? AppColors.success : AppColors.error,
+                color: isOpen ? c.success : c.error,
               ),
             ),
           ],
@@ -1020,15 +1016,16 @@ class _SlotBookingScreenState extends State<SlotBookingScreen> with RouteAware, 
 
   // Day toggle widget for net header
   Widget _buildDayToggle() {
+    final c = AppColors.of(context);
     return GestureDetector(
       onTap: () => _toggleDay(!_isDayOpen),
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
         decoration: BoxDecoration(
-          color: _isDayOpen ? AppColors.success.withOpacity(0.15) : AppColors.error.withOpacity(0.15),
+          color: _isDayOpen ? c.success.withValues(alpha: 0.15) : c.error.withValues(alpha: 0.15),
           borderRadius: BorderRadius.circular(20),
           border: Border.all(
-            color: _isDayOpen ? AppColors.success : AppColors.error,
+            color: _isDayOpen ? c.success : c.error,
             width: 1.5,
           ),
         ),
@@ -1046,7 +1043,7 @@ class _SlotBookingScreenState extends State<SlotBookingScreen> with RouteAware, 
               style: TextStyle(
                 fontSize: 11,
                 fontWeight: FontWeight.bold,
-                color: _isDayOpen ? AppColors.success : AppColors.error,
+                color: _isDayOpen ? c.success : c.error,
               ),
             ),
             const SizedBox(width: 6),
@@ -1054,7 +1051,7 @@ class _SlotBookingScreenState extends State<SlotBookingScreen> with RouteAware, 
               width: 32,
               height: 18,
               decoration: BoxDecoration(
-                color: _isDayOpen ? AppColors.success : Colors.grey.shade400,
+                color: _isDayOpen ? c.success : Colors.grey.shade400,
                 borderRadius: BorderRadius.circular(9),
               ),
               child: Stack(
@@ -1102,6 +1099,7 @@ class _SlotBookingScreenState extends State<SlotBookingScreen> with RouteAware, 
   Widget _buildSlotsContent() {
     return Consumer<SlotProvider>(
       builder: (context, slotProvider, _) {
+        final c = AppColors.of(context);
         if (slotProvider.isLoading) {
           return const Center(child: CircularProgressIndicator());
         }
@@ -1112,10 +1110,10 @@ class _SlotBookingScreenState extends State<SlotBookingScreen> with RouteAware, 
             child: Column(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                Icon(Icons.event_busy, size: 48, color: const Color(0xFF94A3B8)),
+                Icon(Icons.event_busy, size: 48, color: c.textHint),
                 const SizedBox(height: 16),
-                const Text('No slots available for this date',
-                    style: TextStyle(color: Color(0xFF64748B))),
+                Text('No slots available for this date',
+                    style: TextStyle(color: c.textSecondary)),
               ],
             ),
           );
@@ -1129,10 +1127,10 @@ class _SlotBookingScreenState extends State<SlotBookingScreen> with RouteAware, 
             child: Column(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                Icon(Icons.event_busy, size: 48, color: const Color(0xFF94A3B8)),
+                Icon(Icons.event_busy, size: 48, color: c.textHint),
                 const SizedBox(height: 16),
                 Text('No slots for Net $_selectedNetNumber',
-                    style: const TextStyle(color: Color(0xFF64748B))),
+                    style: TextStyle(color: c.textSecondary)),
               ],
             ),
           );
@@ -1160,12 +1158,12 @@ class _SlotBookingScreenState extends State<SlotBookingScreen> with RouteAware, 
                   margin: const EdgeInsets.fromLTRB(16, 0, 16, 16),
                   padding: const EdgeInsets.all(16),
                   decoration: BoxDecoration(
-                    color: const Color(0xFFF8FAFC),
+                    color: c.surface,
                     borderRadius: BorderRadius.circular(18),
-                    border: Border.all(color: const Color(0xFFE2E8F0)),
+                    border: Border.all(color: c.border),
                     boxShadow: [
                       BoxShadow(
-                        color: Colors.black.withOpacity(0.04),
+                        color: Colors.black.withValues(alpha: 0.04),
                         blurRadius: 8,
                         offset: const Offset(0, 2),
                       ),
@@ -1186,15 +1184,15 @@ class _SlotBookingScreenState extends State<SlotBookingScreen> with RouteAware, 
                                     ? Icons.sports_cricket
                                     : Icons.calendar_today,
                                 size: 18,
-                                color: const Color(0xFF4F7DF3),
+                                color: c.primary,
                               ),
                               const SizedBox(width: 8),
                               Text(
                                 (_selectedTurf != null && _selectedTurf!.numberOfNets > 1)
                                     ? 'Net $_selectedNetNumber Slots'
                                     : 'Today\'s Slots',
-                                style: const TextStyle(
-                                  color: Color(0xFF0F172A),
+                                style: TextStyle(
+                                  color: c.textPrimary,
                                   fontWeight: FontWeight.w600,
                                   fontSize: 15,
                                 ),
@@ -1223,12 +1221,12 @@ class _SlotBookingScreenState extends State<SlotBookingScreen> with RouteAware, 
               _animatedSection(
                 index: 4,
                 child: _buildTimePeriodSection('Morning', '6 AM - 12 PM', morning, Icons.wb_sunny, 'morning', _isMorningOpen,
-                    iconColor: const Color(0xFFF59E0B), iconBgColor: const Color(0xFFFFF7ED)),
+                    iconColor: c.warning, iconBgColor: c.warningLight),
               ),
               _animatedSection(
                 index: 5,
                 child: _buildTimePeriodSection('Afternoon', '12 PM - 6 PM', afternoon, Icons.wb_cloudy, 'afternoon', _isAfternoonOpen,
-                    iconColor: const Color(0xFFFB923C), iconBgColor: const Color(0xFFFFF7ED)),
+                    iconColor: c.warning, iconBgColor: c.warningLight),
               ),
               _animatedSection(
                 index: 6,
@@ -1256,24 +1254,25 @@ class _SlotBookingScreenState extends State<SlotBookingScreen> with RouteAware, 
   }
 
   Widget _buildLegend() {
+    final c = AppColors.of(context);
     return Container(
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: AppColors.glassFill,
+        color: c.glassFill,
         borderRadius: BorderRadius.circular(12),
       ),
       child: Column(
         children: [
           Row(
             children: [
-              Expanded(child: _buildLegendItem('Available', AppColors.success)),
-              Expanded(child: _buildLegendItem('Pending', Colors.orange)),
+              Expanded(child: _buildLegendItem('Available', c.success)),
+              Expanded(child: _buildLegendItem('Pending', c.warning)),
             ],
           ),
           const SizedBox(height: 8),
           Row(
             children: [
-              Expanded(child: _buildLegendItem('Booked', AppColors.error)),
+              Expanded(child: _buildLegendItem('Booked', c.error)),
               Expanded(child: _buildLegendItem('Closed', Colors.grey.shade400)),
             ],
           ),
@@ -1283,6 +1282,7 @@ class _SlotBookingScreenState extends State<SlotBookingScreen> with RouteAware, 
   }
 
   Widget _buildLegendItem(String label, Color color) {
+    final c = AppColors.of(context);
     return Row(
       children: [
         Container(
@@ -1294,7 +1294,7 @@ class _SlotBookingScreenState extends State<SlotBookingScreen> with RouteAware, 
           ),
         ),
         const SizedBox(width: 6),
-        Text(label, style: TextStyle(fontSize: 12, color: AppColors.textSecondary)),
+        Text(label, style: TextStyle(fontSize: 12, color: c.textSecondary)),
       ],
     );
   }
@@ -1303,16 +1303,17 @@ class _SlotBookingScreenState extends State<SlotBookingScreen> with RouteAware, 
     required Color iconColor,
     required Color iconBgColor,
   }) {
+    final c = AppColors.of(context);
     return Container(
       margin: const EdgeInsets.fromLTRB(16, 0, 16, 18),
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: c.surface,
         borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: const Color(0xFFE2E8F0)),
+        border: Border.all(color: c.border),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.04),
+            color: Colors.black.withValues(alpha: 0.04),
             blurRadius: 8,
             offset: const Offset(0, 2),
           ),
@@ -1347,7 +1348,7 @@ class _SlotBookingScreenState extends State<SlotBookingScreen> with RouteAware, 
                       style: TextStyle(
                         fontSize: 15,
                         fontWeight: FontWeight.w700,
-                        color: isOpen ? const Color(0xFF0F172A) : AppColors.textSecondary,
+                        color: isOpen ? c.textPrimary : c.textSecondary,
                       ),
                     ),
                     const SizedBox(height: 2),
@@ -1355,7 +1356,7 @@ class _SlotBookingScreenState extends State<SlotBookingScreen> with RouteAware, 
                       timeRange,
                       style: TextStyle(
                         fontSize: 12,
-                        color: isOpen ? const Color(0xFF64748B) : AppColors.textSecondary.withOpacity(0.5),
+                        color: isOpen ? c.textSecondary : c.textSecondary.withValues(alpha: 0.5),
                       ),
                     ),
                   ],
@@ -1377,7 +1378,7 @@ class _SlotBookingScreenState extends State<SlotBookingScreen> with RouteAware, 
               ),
               child: Text(
                 'No slots in this period',
-                style: TextStyle(fontSize: 12, color: AppColors.textSecondary),
+                style: TextStyle(fontSize: 12, color: c.textSecondary),
               ),
             )
           else
@@ -1399,6 +1400,7 @@ class _SlotBookingScreenState extends State<SlotBookingScreen> with RouteAware, 
   }
 
   Widget _buildSlotCard(SlotModel slot) {
+    final c = AppColors.of(context);
     final isPast = _isSlotPast(slot);
     final isAvailable = slot.status == SlotStatus.available && !isPast;
     final isBooked = slot.status == SlotStatus.booked;
@@ -1423,38 +1425,38 @@ class _SlotBookingScreenState extends State<SlotBookingScreen> with RouteAware, 
     
     // Determine slot display based on status
     if (isPast) {
-      bgColor = const Color(0xFFF8FAFC);
-      borderColor = const Color(0xFFE2E8F0);
-      textColor = const Color(0xFF94A3B8);
+      bgColor = c.surface;
+      borderColor = c.border;
+      textColor = c.textHint;
       statusLabel = 'Past';
     } else if (isBooked) {
-      bgColor = const Color(0xFFFEF2F2);
-      borderColor = const Color(0xFFEF4444);
-      textColor = const Color(0xFF991B1B);
+      bgColor = c.errorLight;
+      borderColor = c.error;
+      textColor = c.error;
       statusLabel = 'Booked';
     } else if (isReserved) {
-      bgColor = const Color(0xFFFFFBEB);
-      borderColor = const Color(0xFFF59E0B);
-      textColor = const Color(0xFF92400E);
+      bgColor = c.warningLight;
+      borderColor = c.warning;
+      textColor = c.warning;
       statusLabel = 'Pending';
     } else if (effectivelyClosed) {
       // Slot is closed (blocked or period closed) but can be manually opened
-      bgColor = const Color(0xFFF8FAFC);
-      borderColor = const Color(0xFFE2E8F0);
-      textColor = const Color(0xFF64748B);
+      bgColor = c.surface;
+      borderColor = c.border;
+      textColor = c.textSecondary;
       statusLabel = 'Closed';
       showManualOverrideOption = true;
     } else if (isManuallyOpened && (isBlocked || isPeriodClosed)) {
       // Slot was closed but manually opened by owner
-      bgColor = const Color(0xFFECFDF5);
-      borderColor = const Color(0xFF22C55E);
-      textColor = const Color(0xFF166534);
+      bgColor = c.successLight;
+      borderColor = c.success;
+      textColor = c.success;
       statusLabel = 'Open';
       showManualOverrideOption = true;
     } else {
-      bgColor = const Color(0xFFECFDF5);
-      borderColor = const Color(0xFF22C55E);
-      textColor = const Color(0xFF166534);
+      bgColor = c.successLight;
+      borderColor = c.success;
+      textColor = c.success;
       statusLabel = 'Available';
     }
 
@@ -1471,13 +1473,13 @@ class _SlotBookingScreenState extends State<SlotBookingScreen> with RouteAware, 
           borderRadius: BorderRadius.circular(16),
           border: Border.all(
             color: isManuallyOpened && isPeriodClosed
-                ? const Color(0xFF22C55E)
+                ? c.success
                 : borderColor,
             width: isManuallyOpened && isPeriodClosed ? 2 : 1,
           ),
           boxShadow: [
             BoxShadow(
-              color: Colors.black.withOpacity(0.04),
+              color: Colors.black.withValues(alpha: 0.04),
               blurRadius: 6,
               offset: const Offset(0, 2),
             ),
@@ -1498,21 +1500,21 @@ class _SlotBookingScreenState extends State<SlotBookingScreen> with RouteAware, 
             if (effectivelyClosed)
               Icon(Icons.lock, size: 14, color: textColor)
             else if (isManuallyOpened && (isBlocked || isPeriodClosed))
-              Icon(Icons.lock_open, size: 14, color: const Color(0xFF166534))
+              Icon(Icons.lock_open, size: 14, color: c.success)
             else
               Text(
                 '₹${slot.price.toInt()}',
                 style: TextStyle(
                   fontSize: 12,
                   fontWeight: FontWeight.w500,
-                  color: textColor.withOpacity(0.85),
+                  color: textColor.withValues(alpha: 0.85),
                 ),
               ),
             const SizedBox(height: 4),
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
               decoration: BoxDecoration(
-                color: textColor.withOpacity(0.1),
+                color: textColor.withValues(alpha: 0.1),
                 borderRadius: BorderRadius.circular(6),
               ),
               child: Text(
@@ -1549,6 +1551,7 @@ class _SlotBookingScreenState extends State<SlotBookingScreen> with RouteAware, 
   }
 
   void _showSlotActions(SlotModel slot, {bool isPeriodClosed = false, bool isManuallyOpened = false}) {
+    final c = AppColors.of(context);
     final isAvailable = slot.status == SlotStatus.available;
     final isBooked = slot.status == SlotStatus.booked;
     final isReserved = slot.status == SlotStatus.reserved; // Pending payment
@@ -1566,12 +1569,12 @@ class _SlotBookingScreenState extends State<SlotBookingScreen> with RouteAware, 
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
-      backgroundColor: AppColors.background,
+      backgroundColor: c.background,
       builder: (context) => Container(
         padding: const EdgeInsets.all(24),
-        decoration: const BoxDecoration(
-          color: AppColors.surface,
-          borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+        decoration: BoxDecoration(
+          color: c.surface,
+          borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
         ),
         child: Column(
           mainAxisSize: MainAxisSize.min,
@@ -1595,14 +1598,14 @@ class _SlotBookingScreenState extends State<SlotBookingScreen> with RouteAware, 
               children: [
                 Text(
                   '₹${slot.price.toInt()}',
-                  style: TextStyle(fontSize: 16, color: AppColors.textSecondary),
+                  style: TextStyle(fontSize: 16, color: c.textSecondary),
                 ),
                 if (isReserved) ...[
                   const SizedBox(width: 12),
                   Container(
                     padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                     decoration: BoxDecoration(
-                      color: Colors.orange.withOpacity(0.1),
+                      color: Colors.orange.withValues(alpha: 0.1),
                       borderRadius: BorderRadius.circular(6),
                     ),
                     child: const Text(
@@ -1616,17 +1619,17 @@ class _SlotBookingScreenState extends State<SlotBookingScreen> with RouteAware, 
                   Container(
                     padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                     decoration: BoxDecoration(
-                      color: AppColors.success.withOpacity(0.1),
+                      color: c.success.withValues(alpha: 0.1),
                       borderRadius: BorderRadius.circular(6),
                     ),
-                    child: const Row(
+                    child: Row(
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        Icon(Icons.lock_open, size: 12, color: AppColors.success),
-                        SizedBox(width: 4),
+                        Icon(Icons.lock_open, size: 12, color: c.success),
+                        const SizedBox(width: 4),
                         Text(
                           'Manually Opened',
-                          style: TextStyle(fontSize: 12, color: AppColors.success, fontWeight: FontWeight.w600),
+                          style: TextStyle(fontSize: 12, color: c.success, fontWeight: FontWeight.w600),
                         ),
                       ],
                     ),
@@ -1637,7 +1640,7 @@ class _SlotBookingScreenState extends State<SlotBookingScreen> with RouteAware, 
                   Container(
                     padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                     decoration: BoxDecoration(
-                      color: Colors.grey.withOpacity(0.2),
+                      color: Colors.grey.withValues(alpha: 0.2),
                       borderRadius: BorderRadius.circular(6),
                     ),
                     child: const Row(
@@ -1662,10 +1665,10 @@ class _SlotBookingScreenState extends State<SlotBookingScreen> with RouteAware, 
               _buildActionButton(
                 'Open This Slot',
                 Icons.lock_open,
-                AppColors.success,
-                bgColor: const Color(0xFFECFDF5),
-                borderColor: const Color(0xFF22C55E),
-                textColor: const Color(0xFF166534),
+                c.success,
+                bgColor: c.successLight,
+                borderColor: c.success,
+                textColor: c.success,
                 () async {
                   Navigator.pop(context);
                   _toggleSlotManualOverride(slot.slotId);
@@ -1689,7 +1692,7 @@ class _SlotBookingScreenState extends State<SlotBookingScreen> with RouteAware, 
               _buildActionButton(
                 'Create Booking',
                 Icons.add_circle,
-                AppColors.primary,
+                c.primary,
                 () {
                   Navigator.pop(context);
                   _showBookingDialog(slot);
@@ -1700,9 +1703,9 @@ class _SlotBookingScreenState extends State<SlotBookingScreen> with RouteAware, 
                 'Close Slot',
                 Icons.lock,
                 Colors.grey,
-                bgColor: const Color(0xFFF1F5F9),
-                borderColor: const Color(0xFF94A3B8),
-                textColor: const Color(0xFF475569),
+                bgColor: c.surface,
+                borderColor: c.textHint,
+                textColor: c.textSecondary,
                 () {
                   Navigator.pop(context);
                   _blockSlot(slot);
@@ -1714,10 +1717,10 @@ class _SlotBookingScreenState extends State<SlotBookingScreen> with RouteAware, 
               _buildActionButton(
                 'Mark Payment Received',
                 Icons.check_circle,
-                AppColors.success,
-                bgColor: const Color(0xFFECFDF5),
-                borderColor: const Color(0xFF22C55E),
-                textColor: const Color(0xFF166534),
+                c.success,
+                bgColor: c.successLight,
+                borderColor: c.success,
+                textColor: c.success,
                 () async {
                   Navigator.pop(context);
                   await _markPaymentAndUpdateSlot(slot);
@@ -1727,10 +1730,10 @@ class _SlotBookingScreenState extends State<SlotBookingScreen> with RouteAware, 
               _buildActionButton(
                 'Cancel Booking',
                 Icons.cancel,
-                AppColors.error,
-                bgColor: const Color(0xFFFEF2F2),
-                borderColor: const Color(0xFFEF4444),
-                textColor: const Color(0xFF991B1B),
+                c.error,
+                bgColor: c.errorLight,
+                borderColor: c.error,
+                textColor: c.error,
                 () async {
                   Navigator.pop(context);
                   await _cancelBookingForSlot(slot);
@@ -1740,7 +1743,7 @@ class _SlotBookingScreenState extends State<SlotBookingScreen> with RouteAware, 
               _buildActionButton(
                 'View Payment Details',
                 Icons.payments,
-                AppColors.primary,
+                c.primary,
                 () async {
                   Navigator.pop(context);
                   await _showPaymentDetails(slot);
@@ -1752,10 +1755,10 @@ class _SlotBookingScreenState extends State<SlotBookingScreen> with RouteAware, 
               _buildActionButton(
                 'Cancel Booking',
                 Icons.cancel,
-                AppColors.error,
-                bgColor: const Color(0xFFFEF2F2),
-                borderColor: const Color(0xFFEF4444),
-                textColor: const Color(0xFF991B1B),
+                c.error,
+                bgColor: c.errorLight,
+                borderColor: c.error,
+                textColor: c.error,
                 () async {
                   Navigator.pop(context);
                   await _cancelBookingForSlot(slot);
@@ -1765,7 +1768,7 @@ class _SlotBookingScreenState extends State<SlotBookingScreen> with RouteAware, 
               _buildActionButton(
                 'View Payment Details',
                 Icons.payments,
-                AppColors.primary,
+                c.primary,
                 () async {
                   Navigator.pop(context);
                   await _showPaymentDetails(slot);
@@ -1781,6 +1784,7 @@ class _SlotBookingScreenState extends State<SlotBookingScreen> with RouteAware, 
   }
 
   Future<void> _showPaymentDetails(SlotModel slot) async {
+    final c = AppColors.of(context);
     final bookingProvider = Provider.of<BookingProvider>(context, listen: false);
     final booking = await bookingProvider.getBookingBySlotId(slot.slotId);
 
@@ -1796,12 +1800,12 @@ class _SlotBookingScreenState extends State<SlotBookingScreen> with RouteAware, 
 
     showModalBottomSheet(
       context: context,
-      backgroundColor: AppColors.background,
+      backgroundColor: c.background,
       builder: (context) => Container(
         padding: const EdgeInsets.all(20),
-        decoration: const BoxDecoration(
-          color: AppColors.surface,
-          borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+        decoration: BoxDecoration(
+          color: c.surface,
+          borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
         ),
         child: Column(
           mainAxisSize: MainAxisSize.min,
@@ -1823,13 +1827,13 @@ class _SlotBookingScreenState extends State<SlotBookingScreen> with RouteAware, 
               style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
             ),
             const SizedBox(height: 12),
-            _buildPaymentRow('Status', isPaid ? 'Paid' : 'Pending', isPaid ? AppColors.success : Colors.orange),
+            _buildPaymentRow('Status', isPaid ? 'Paid' : 'Pending', isPaid ? c.success : Colors.orange),
             const SizedBox(height: 8),
-            _buildPaymentRow('Total Amount', '₹${booking.amount.toInt()}', AppColors.textPrimary),
+            _buildPaymentRow('Total Amount', '₹${booking.amount.toInt()}', c.textPrimary),
             const SizedBox(height: 8),
-            _buildPaymentRow('Advance Paid', '₹${booking.advanceAmount.toInt()}', AppColors.textPrimary),
+            _buildPaymentRow('Advance Paid', '₹${booking.advanceAmount.toInt()}', c.textPrimary),
             const SizedBox(height: 8),
-            _buildPaymentRow('Balance Due', '₹${remaining.toInt()}', remaining > 0 ? Colors.orange : AppColors.success),
+            _buildPaymentRow('Balance Due', '₹${remaining.toInt()}', remaining > 0 ? Colors.orange : c.success),
             const SizedBox(height: 16),
           ],
         ),
@@ -1838,10 +1842,11 @@ class _SlotBookingScreenState extends State<SlotBookingScreen> with RouteAware, 
   }
 
   Widget _buildPaymentRow(String label, String value, Color valueColor) {
+    final c = AppColors.of(context);
     return Row(
       mainAxisAlignment: MainAxisAlignment.spaceBetween,
       children: [
-        Text(label, style: TextStyle(color: AppColors.textSecondary)),
+        Text(label, style: TextStyle(color: c.textSecondary)),
         Text(
           value,
           style: TextStyle(fontWeight: FontWeight.w600, color: valueColor),
@@ -1892,9 +1897,10 @@ class _SlotBookingScreenState extends State<SlotBookingScreen> with RouteAware, 
   }
 
   Widget _buildActionButton(String label, IconData icon, Color color, VoidCallback onTap, {Color? bgColor, Color? borderColor, Color? textColor}) {
-    final bg = bgColor ?? const Color(0xFFEFF6FF);
-    final bdr = borderColor ?? const Color(0xFF3B82F6);
-    final txt = textColor ?? const Color(0xFF1D4ED8);
+    final c = AppColors.of(context);
+    final bg = bgColor ?? c.primaryLight;
+    final bdr = borderColor ?? c.primary;
+    final txt = textColor ?? c.primaryDark;
     return SizedBox(
       width: double.infinity,
       height: 52,
@@ -1904,8 +1910,8 @@ class _SlotBookingScreenState extends State<SlotBookingScreen> with RouteAware, 
         child: InkWell(
           onTap: onTap,
           borderRadius: BorderRadius.circular(28),
-          splashColor: bdr.withOpacity(0.15),
-          highlightColor: bdr.withOpacity(0.10),
+          splashColor: bdr.withValues(alpha: 0.15),
+          highlightColor: bdr.withValues(alpha: 0.10),
           child: Container(
             decoration: BoxDecoration(
               borderRadius: BorderRadius.circular(28),
@@ -2029,6 +2035,7 @@ class _BookingDialogState extends State<_BookingDialog> {
 
   @override
   Widget build(BuildContext context) {
+    final c = AppColors.of(context);
     final dateStr = '${widget.selectedDate.day}/${widget.selectedDate.month}/${widget.selectedDate.year}';
     
     // Month names for ticket-style date
@@ -2048,7 +2055,7 @@ class _BookingDialogState extends State<_BookingDialog> {
               borderRadius: BorderRadius.circular(20),
               boxShadow: [
                 BoxShadow(
-                  color: const Color(0xFF2563EB).withOpacity(0.12),
+                  color: c.primary.withValues(alpha: 0.12),
                   blurRadius: 32,
                   offset: const Offset(0, 12),
                 ),
@@ -2064,12 +2071,8 @@ class _BookingDialogState extends State<_BookingDialog> {
                   // ═══════════════════════════════════════════════════
                   Container(
                     width: double.infinity,
-                    decoration: const BoxDecoration(
-                      gradient: LinearGradient(
-                        colors: [Color(0xFF3B82F6), Color(0xFF2563EB)],
-                        begin: Alignment.topLeft,
-                        end: Alignment.bottomRight,
-                      ),
+                    decoration: BoxDecoration(
+                      gradient: c.primaryGradient,
                     ),
                     child: Stack(
                       children: [
@@ -2117,10 +2120,10 @@ class _BookingDialogState extends State<_BookingDialog> {
                                     child: Container(
                                       padding: const EdgeInsets.all(5),
                                       decoration: BoxDecoration(
-                                        color: Colors.white.withOpacity(0.18),
+                                        color: Colors.white.withValues(alpha: 0.18),
                                         borderRadius: BorderRadius.circular(8),
                                       ),
-                                      child: const Icon(Icons.close_rounded, color: Colors.white, size: 16),
+                                      child: Icon(Icons.close_rounded, color: c.onPrimary, size: 16),
                                     ),
                                   ),
                                 ],
@@ -2163,7 +2166,7 @@ class _BookingDialogState extends State<_BookingDialog> {
                                     child: Column(
                                       crossAxisAlignment: CrossAxisAlignment.start,
                                       children: [
-                                        Text('Amount', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w500, color: Colors.white.withOpacity(0.78))),
+                                        Text('Amount', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w500, color: Colors.white.withValues(alpha: 0.78))),
                                         const SizedBox(height: 4),
                                         Row(
                                           children: [
@@ -2208,7 +2211,7 @@ class _BookingDialogState extends State<_BookingDialog> {
                                               Container(
                                                 padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                                                 decoration: BoxDecoration(
-                                                  color: Colors.white.withOpacity(0.20),
+                                                  color: Colors.white.withValues(alpha: 0.20),
                                                   borderRadius: BorderRadius.circular(6),
                                                 ),
                                                 child: Text('Peak', style: TextStyle(fontSize: 9, color: Colors.white, fontWeight: FontWeight.w600)),
@@ -2236,7 +2239,7 @@ class _BookingDialogState extends State<_BookingDialog> {
                       clipBehavior: Clip.none,
                       children: [
                         // Fill
-                        Positioned.fill(child: Container(color: Colors.white)),
+                        Positioned.fill(child: Container(color: c.surface)),
                         // Dashed line
                         Center(
                           child: Padding(
@@ -2258,7 +2261,7 @@ class _BookingDialogState extends State<_BookingDialog> {
                               height: 28,
                               decoration: BoxDecoration(
                                 shape: BoxShape.circle,
-                                color: Colors.black.withOpacity(0.55),
+                                color: Colors.black.withValues(alpha: 0.55),
                               ),
                             ),
                           ),
@@ -2274,7 +2277,7 @@ class _BookingDialogState extends State<_BookingDialog> {
                               height: 28,
                               decoration: BoxDecoration(
                                 shape: BoxShape.circle,
-                                color: Colors.black.withOpacity(0.55),
+                                color: Colors.black.withValues(alpha: 0.55),
                               ),
                             ),
                           ),
@@ -2287,7 +2290,7 @@ class _BookingDialogState extends State<_BookingDialog> {
                   // ═══════════════════════════════════════════════════
                   Container(
                     width: double.infinity,
-                    color: Colors.white,
+                    color: c.surface,
                     child: Stack(
                       children: [
                         // Stumps watermark
@@ -2296,7 +2299,7 @@ class _BookingDialogState extends State<_BookingDialog> {
                           bottom: 60,
                           child: CustomPaint(
                             size: const Size(90, 110),
-                            painter: _StumpsPainter(color: const Color(0xFF2563EB).withOpacity(0.04)),
+                            painter: _StumpsPainter(color: c.primary.withValues(alpha: 0.04)),
                           ),
                         ),
                         Padding(
@@ -2306,28 +2309,28 @@ class _BookingDialogState extends State<_BookingDialog> {
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
                               // ── Customer ──
-                              Text('Customer', style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w500, color: Color(0xFF64748B))),
+                              Text('Customer', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w500, color: c.textSecondary)),
                               const SizedBox(height: 10),
                               TextFormField(
                                 controller: _nameController,
                                 decoration: InputDecoration(
                                   hintText: 'Full Name',
-                                  hintStyle: const TextStyle(fontSize: 14, color: Color(0xFF94A3B8)),
-                                  prefixIcon: const Icon(Icons.person_outline_rounded, color: Color(0xFF64748B), size: 20),
+                                  hintStyle: TextStyle(fontSize: 14, color: c.textHint),
+                                  prefixIcon: Icon(Icons.person_outline_rounded, color: c.textSecondary, size: 20),
                                   border: OutlineInputBorder(
                                     borderRadius: BorderRadius.circular(14),
-                                    borderSide: const BorderSide(color: Color(0xFFE2E8F0)),
+                                    borderSide: BorderSide(color: c.border),
                                   ),
                                   enabledBorder: OutlineInputBorder(
                                     borderRadius: BorderRadius.circular(14),
-                                    borderSide: const BorderSide(color: Color(0xFFE2E8F0)),
+                                    borderSide: BorderSide(color: c.border),
                                   ),
                                   focusedBorder: OutlineInputBorder(
                                     borderRadius: BorderRadius.circular(14),
-                                    borderSide: const BorderSide(color: Color(0xFF3B82F6), width: 1.5),
+                                    borderSide: BorderSide(color: c.primary, width: 1.5),
                                   ),
                                   filled: true,
-                                  fillColor: const Color(0xFFF8FAFC),
+                                  fillColor: c.inputBackground,
                                   contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 13),
                                 ),
                                 validator: (v) => v?.isEmpty == true ? 'Please enter name' : null,
@@ -2343,23 +2346,23 @@ class _BookingDialogState extends State<_BookingDialog> {
                                 ],
                                 decoration: InputDecoration(
                                   hintText: 'Phone Number',
-                                  hintStyle: const TextStyle(fontSize: 14, color: Color(0xFF94A3B8)),
-                                  prefixIcon: const Icon(Icons.phone_outlined, color: Color(0xFF64748B), size: 20),
+                                  hintStyle: TextStyle(fontSize: 14, color: c.textHint),
+                                  prefixIcon: Icon(Icons.phone_outlined, color: c.textSecondary, size: 20),
                                   counterText: '',
                                   border: OutlineInputBorder(
                                     borderRadius: BorderRadius.circular(14),
-                                    borderSide: const BorderSide(color: Color(0xFFE2E8F0)),
+                                    borderSide: BorderSide(color: c.border),
                                   ),
                                   enabledBorder: OutlineInputBorder(
                                     borderRadius: BorderRadius.circular(14),
-                                    borderSide: const BorderSide(color: Color(0xFFE2E8F0)),
+                                    borderSide: BorderSide(color: c.border),
                                   ),
                                   focusedBorder: OutlineInputBorder(
                                     borderRadius: BorderRadius.circular(14),
-                                    borderSide: const BorderSide(color: Color(0xFF3B82F6), width: 1.5),
+                                    borderSide: BorderSide(color: c.primary, width: 1.5),
                                   ),
                                   filled: true,
-                                  fillColor: const Color(0xFFF8FAFC),
+                                  fillColor: c.inputBackground,
                                   contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 13),
                                 ),
                                 validator: (v) {
@@ -2373,9 +2376,9 @@ class _BookingDialogState extends State<_BookingDialog> {
                               // ── Advance ──
                               Row(
                                 children: [
-                                  Text('Advance', style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w500, color: Color(0xFF64748B))),
+                                  Text('Advance', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w500, color: c.textSecondary)),
                                   const SizedBox(width: 6),
-                                  Text('(Enter 0 if none)', style: TextStyle(fontSize: 10, color: const Color(0xFFCBD5E1))),
+                                  Text('(Enter 0 if none)', style: TextStyle(fontSize: 10, color: c.textDisabled)),
                                 ],
                               ),
                               const SizedBox(height: 10),
@@ -2385,22 +2388,22 @@ class _BookingDialogState extends State<_BookingDialog> {
                                 inputFormatters: [FilteringTextInputFormatter.digitsOnly],
                                 decoration: InputDecoration(
                                   hintText: '0',
-                                  hintStyle: const TextStyle(fontSize: 14, color: Color(0xFF94A3B8)),
-                                  prefixIcon: const Icon(Icons.currency_rupee_rounded, color: Color(0xFF64748B), size: 20),
+                                  hintStyle: TextStyle(fontSize: 14, color: c.textHint),
+                                  prefixIcon: Icon(Icons.currency_rupee_rounded, color: c.textSecondary, size: 20),
                                   border: OutlineInputBorder(
                                     borderRadius: BorderRadius.circular(14),
-                                    borderSide: const BorderSide(color: Color(0xFFE2E8F0)),
+                                    borderSide: BorderSide(color: c.border),
                                   ),
                                   enabledBorder: OutlineInputBorder(
                                     borderRadius: BorderRadius.circular(14),
-                                    borderSide: const BorderSide(color: Color(0xFFE2E8F0)),
+                                    borderSide: BorderSide(color: c.border),
                                   ),
                                   focusedBorder: OutlineInputBorder(
                                     borderRadius: BorderRadius.circular(14),
-                                    borderSide: const BorderSide(color: Color(0xFF3B82F6), width: 1.5),
+                                    borderSide: BorderSide(color: c.primary, width: 1.5),
                                   ),
                                   filled: true,
-                                  fillColor: const Color(0xFFF8FAFC),
+                                  fillColor: c.inputBackground,
                                   contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 13),
                                 ),
                                 validator: (v) {
@@ -2418,12 +2421,12 @@ class _BookingDialogState extends State<_BookingDialog> {
                               Container(
                                 padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
                                 decoration: BoxDecoration(
-                                  color: const Color(0xFFEEF4FF),
+                                  color: c.primaryLight,
                                   borderRadius: BorderRadius.circular(12),
                                 ),
                                 child: Row(
                                   children: [
-                                    const Icon(Icons.info_outline_rounded, size: 14, color: Color(0xFF2563EB)),
+                                    Icon(Icons.info_outline_rounded, size: 14, color: c.primary),
                                     const SizedBox(width: 8),
                                     Expanded(
                                       child: Text(
@@ -2432,8 +2435,8 @@ class _BookingDialogState extends State<_BookingDialog> {
                                             : _advanceAmount > 0
                                                 ? 'Advance: ₹${_advanceAmount.toInt()} | Remaining: ₹${(_bookingAmount - _advanceAmount).toInt()}'
                                                 : 'Payment: ₹${_bookingAmount.toInt()} (Pay at Turf)',
-                                        style: const TextStyle(
-                                          color: Color(0xFF2563EB),
+                                        style: TextStyle(
+                                          color: c.primary,
                                           fontWeight: FontWeight.w500,
                                           fontSize: 11,
                                         ),
@@ -2445,7 +2448,7 @@ class _BookingDialogState extends State<_BookingDialog> {
                               const SizedBox(height: 18),
 
                               // ── Source ──
-                              Text('Booking Source', style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w500, color: Color(0xFF64748B))),
+                              Text('Booking Source', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w500, color: c.textSecondary)),
                               const SizedBox(height: 10),
                               _buildSegmentedSource(),
                               const SizedBox(height: 22),
@@ -2457,10 +2460,10 @@ class _BookingDialogState extends State<_BookingDialog> {
                                 child: ElevatedButton(
                                   onPressed: _isLoading ? null : _createBooking,
                                   style: ElevatedButton.styleFrom(
-                                    backgroundColor: const Color(0xFF3B82F6),
-                                    foregroundColor: Colors.white,
+                                    backgroundColor: c.primary,
+                                    foregroundColor: c.onPrimary,
                                     elevation: 0,
-                                    shadowColor: const Color(0xFF3B82F6).withOpacity(0.18),
+                                    shadowColor: c.primary.withValues(alpha: 0.18),
                                     shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
                                   ).copyWith(
                                     elevation: WidgetStateProperty.all(4),
@@ -2496,7 +2499,7 @@ class _BookingDialogState extends State<_BookingDialog> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(label, style: TextStyle(fontSize: 12, fontWeight: FontWeight.w500, color: Colors.white.withOpacity(0.78))),
+        Text(label, style: TextStyle(fontSize: 12, fontWeight: FontWeight.w500, color: Colors.white.withValues(alpha: 0.78))),
         const SizedBox(height: 4),
         Text(
           value,
@@ -2514,13 +2517,14 @@ class _BookingDialogState extends State<_BookingDialog> {
   }
 
   Widget _buildSegmentedSource() {
+    final c = AppColors.of(context);
     final isPhone = _bookingSource == BookingSource.phone;
     return Container(
       height: 44,
       decoration: BoxDecoration(
-        color: const Color(0xFFF1F5F9),
+        color: c.inputBackground,
         borderRadius: BorderRadius.circular(22),
-        border: Border.all(color: const Color(0xFFE2E8F0)),
+        border: Border.all(color: c.border),
       ),
       child: LayoutBuilder(
         builder: (context, constraints) {
@@ -2539,11 +2543,11 @@ class _BookingDialogState extends State<_BookingDialog> {
                   padding: const EdgeInsets.all(3),
                   child: DecoratedBox(
                     decoration: BoxDecoration(
-                      color: const Color(0xFF3B82F6),
+                      color: c.primary,
                       borderRadius: BorderRadius.circular(20),
                       boxShadow: [
                         BoxShadow(
-                          color: const Color(0xFF3B82F6).withOpacity(0.25),
+                          color: c.primary.withValues(alpha: 0.25),
                           blurRadius: 6,
                           offset: const Offset(0, 2),
                         ),
@@ -2566,7 +2570,7 @@ class _BookingDialogState extends State<_BookingDialog> {
                           children: [
                             AnimatedSwitcher(
                               duration: const Duration(milliseconds: 220),
-                              child: Icon(Icons.phone, key: ValueKey(isPhone), size: 15, color: isPhone ? Colors.white : const Color(0xFF475569)),
+                              child: Icon(Icons.phone, key: ValueKey(isPhone), size: 15, color: isPhone ? c.onPrimary : c.textSecondary),
                             ),
                             const SizedBox(width: 5),
                             AnimatedDefaultTextStyle(
@@ -2574,7 +2578,7 @@ class _BookingDialogState extends State<_BookingDialog> {
                               style: TextStyle(
                                 fontSize: 13,
                                 fontWeight: FontWeight.w600,
-                                color: isPhone ? Colors.white : const Color(0xFF475569),
+                                color: isPhone ? c.onPrimary : c.textSecondary,
                               ),
                               child: const Text('Phone'),
                             ),
@@ -2594,7 +2598,7 @@ class _BookingDialogState extends State<_BookingDialog> {
                           children: [
                             AnimatedSwitcher(
                               duration: const Duration(milliseconds: 220),
-                              child: Icon(Icons.directions_walk, key: ValueKey(!isPhone), size: 15, color: !isPhone ? Colors.white : const Color(0xFF475569)),
+                              child: Icon(Icons.directions_walk, key: ValueKey(!isPhone), size: 15, color: !isPhone ? c.onPrimary : c.textSecondary),
                             ),
                             const SizedBox(width: 5),
                             AnimatedDefaultTextStyle(
@@ -2602,7 +2606,7 @@ class _BookingDialogState extends State<_BookingDialog> {
                               style: TextStyle(
                                 fontSize: 13,
                                 fontWeight: FontWeight.w600,
-                                color: !isPhone ? Colors.white : const Color(0xFF475569),
+                                color: !isPhone ? c.onPrimary : c.textSecondary,
                               ),
                               child: const Text('Walk-In'),
                             ),
@@ -2820,19 +2824,20 @@ class _BookingSuccessPopupState extends State<_BookingSuccessPopup> with TickerP
 
   @override
   Widget build(BuildContext context) {
+    final c = AppColors.of(context);
     return Dialog(
-      backgroundColor: AppColors.background,
+      backgroundColor: c.background,
       insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 20),
       child: SlideTransition(
         position: _slideAnimation,
         child: Container(
           constraints: const BoxConstraints(maxWidth: 400),
           decoration: BoxDecoration(
-            color: AppColors.surface,
+            color: c.surface,
             borderRadius: BorderRadius.circular(20),
             boxShadow: [
               BoxShadow(
-                color: AppColors.primary.withOpacity(0.2),
+                color: c.primary.withValues(alpha: 0.2),
                 blurRadius: 40,
                 offset: const Offset(0, 20),
               ),
@@ -2853,7 +2858,7 @@ class _BookingSuccessPopupState extends State<_BookingSuccessPopup> with TickerP
                   child: Stack(
                     clipBehavior: Clip.none,
                     children: [
-                      Positioned.fill(child: Container(color: Colors.white)),
+                      Positioned.fill(child: Container(color: c.surface)),
                       Center(
                         child: Padding(
                           padding: const EdgeInsets.symmetric(horizontal: 20),
@@ -2873,7 +2878,7 @@ class _BookingSuccessPopupState extends State<_BookingSuccessPopup> with TickerP
                             height: 28,
                             decoration: BoxDecoration(
                               shape: BoxShape.circle,
-                              color: Colors.black.withOpacity(0.55),
+                              color: Colors.black.withValues(alpha: 0.55),
                             ),
                           ),
                         ),
@@ -2888,7 +2893,7 @@ class _BookingSuccessPopupState extends State<_BookingSuccessPopup> with TickerP
                             height: 28,
                             decoration: BoxDecoration(
                               shape: BoxShape.circle,
-                              color: Colors.black.withOpacity(0.55),
+                              color: Colors.black.withValues(alpha: 0.55),
                             ),
                           ),
                         ),
@@ -2925,14 +2930,15 @@ class _BookingSuccessPopupState extends State<_BookingSuccessPopup> with TickerP
   }
 
   Widget _buildSuccessHeader() {
+    final c = AppColors.of(context);
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.symmetric(vertical: 32),
       decoration: BoxDecoration(
         gradient: LinearGradient(
           colors: [
-            AppColors.primary,
-            AppColors.primary.withBlue(200),
+            c.primary,
+            c.primary.withBlue(200),
           ],
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
@@ -2952,7 +2958,7 @@ class _BookingSuccessPopupState extends State<_BookingSuccessPopup> with TickerP
                 shape: BoxShape.circle,
                 boxShadow: [
                   BoxShadow(
-                    color: Colors.black.withOpacity(0.15),
+                    color: Colors.black.withValues(alpha: 0.15),
                     blurRadius: 20,
                   ),
                 ],
@@ -2962,7 +2968,7 @@ class _BookingSuccessPopupState extends State<_BookingSuccessPopup> with TickerP
                 children: [
                   Icon(
                     Icons.sports_cricket,
-                    color: AppColors.primary,
+                    color: c.primary,
                     size: 36,
                   ),
                   Positioned(
@@ -2970,13 +2976,13 @@ class _BookingSuccessPopupState extends State<_BookingSuccessPopup> with TickerP
                     bottom: 8,
                     child: Container(
                       padding: const EdgeInsets.all(2),
-                      decoration: const BoxDecoration(
-                        color: AppColors.success,
+                      decoration: BoxDecoration(
+                        color: c.success,
                         shape: BoxShape.circle,
                       ),
-                      child: const Icon(
+                      child: Icon(
                         Icons.check,
-                        color: Colors.white,
+                        color: c.onPrimary,
                         size: 16,
                       ),
                     ),
@@ -2999,7 +3005,7 @@ class _BookingSuccessPopupState extends State<_BookingSuccessPopup> with TickerP
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
             decoration: BoxDecoration(
-              color: Colors.white.withOpacity(0.2),
+              color: Colors.white.withValues(alpha: 0.2),
               borderRadius: BorderRadius.circular(20),
             ),
             child: Text(
@@ -3018,6 +3024,7 @@ class _BookingSuccessPopupState extends State<_BookingSuccessPopup> with TickerP
   }
 
   Widget _buildReceiptCard() {
+    final c = AppColors.of(context);
     return Container(
       decoration: BoxDecoration(
         color: Colors.grey.shade50,
@@ -3030,7 +3037,7 @@ class _BookingSuccessPopupState extends State<_BookingSuccessPopup> with TickerP
           Container(
             padding: const EdgeInsets.all(16),
             decoration: BoxDecoration(
-              color: AppColors.primary.withOpacity(0.05),
+              color: c.primary.withValues(alpha: 0.05),
               borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
             ),
             child: Row(
@@ -3038,10 +3045,10 @@ class _BookingSuccessPopupState extends State<_BookingSuccessPopup> with TickerP
                 Container(
                   padding: const EdgeInsets.all(10),
                   decoration: BoxDecoration(
-                    color: AppColors.primary.withOpacity(0.1),
+                    color: c.primary.withValues(alpha: 0.1),
                     borderRadius: BorderRadius.circular(12),
                   ),
-                  child: Icon(Icons.stadium, color: AppColors.primary, size: 24),
+                  child: Icon(Icons.stadium, color: c.primary, size: 24),
                 ),
                 const SizedBox(width: 12),
                 Expanded(
@@ -3060,7 +3067,7 @@ class _BookingSuccessPopupState extends State<_BookingSuccessPopup> with TickerP
                           margin: const EdgeInsets.only(top: 4),
                           padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
                           decoration: BoxDecoration(
-                            color: AppColors.primary,
+                            color: c.primary,
                             borderRadius: BorderRadius.circular(10),
                           ),
                           child: Text(
@@ -3100,16 +3107,17 @@ class _BookingSuccessPopupState extends State<_BookingSuccessPopup> with TickerP
   }
 
   Widget _buildReceiptRow(IconData icon, String label, String value) {
+    final c = AppColors.of(context);
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 6),
       child: Row(
         children: [
-          Icon(icon, size: 18, color: AppColors.textSecondary),
+          Icon(icon, size: 18, color: c.textSecondary),
           const SizedBox(width: 10),
           Text(
             '$label:',
             style: TextStyle(
-              color: AppColors.textSecondary,
+              color: c.textSecondary,
               fontSize: 13,
             ),
           ),
@@ -3130,6 +3138,7 @@ class _BookingSuccessPopupState extends State<_BookingSuccessPopup> with TickerP
   }
 
   Widget _buildPaymentSection() {
+    final c = AppColors.of(context);
     return Column(
       children: [
         // Total Amount
@@ -3148,7 +3157,7 @@ class _BookingSuccessPopupState extends State<_BookingSuccessPopup> with TickerP
               style: TextStyle(
                 fontWeight: FontWeight.bold,
                 fontSize: 22,
-                color: AppColors.primary,
+                color: c.primary,
               ),
             ),
           ],
@@ -3160,8 +3169,8 @@ class _BookingSuccessPopupState extends State<_BookingSuccessPopup> with TickerP
             padding: const EdgeInsets.all(12),
             decoration: BoxDecoration(
               color: _isFullPayment 
-                  ? AppColors.success.withOpacity(0.1) 
-                  : Colors.orange.withOpacity(0.1),
+                  ? c.success.withValues(alpha: 0.1) 
+                  : Colors.orange.withValues(alpha: 0.1),
               borderRadius: BorderRadius.circular(10),
             ),
             child: Column(
@@ -3174,13 +3183,13 @@ class _BookingSuccessPopupState extends State<_BookingSuccessPopup> with TickerP
                         Icon(
                           _isFullPayment ? Icons.check_circle : Icons.hourglass_bottom,
                           size: 16,
-                          color: _isFullPayment ? AppColors.success : Colors.orange,
+                          color: _isFullPayment ? c.success : Colors.orange,
                         ),
                         const SizedBox(width: 6),
                         Text(
                           _isFullPayment ? 'Paid' : 'Advance',
                           style: TextStyle(
-                            color: _isFullPayment ? AppColors.success : Colors.orange,
+                            color: _isFullPayment ? c.success : Colors.orange,
                             fontWeight: FontWeight.w600,
                           ),
                         ),
@@ -3190,7 +3199,7 @@ class _BookingSuccessPopupState extends State<_BookingSuccessPopup> with TickerP
                       '₹${widget.advanceAmount.toInt()}',
                       style: TextStyle(
                         fontWeight: FontWeight.bold,
-                        color: _isFullPayment ? AppColors.success : Colors.orange,
+                        color: _isFullPayment ? c.success : Colors.orange,
                       ),
                     ),
                   ],
@@ -3222,7 +3231,7 @@ class _BookingSuccessPopupState extends State<_BookingSuccessPopup> with TickerP
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
             decoration: BoxDecoration(
-              color: Colors.blue.withOpacity(0.1),
+              color: Colors.blue.withValues(alpha: 0.1),
               borderRadius: BorderRadius.circular(8),
             ),
             child: Row(
@@ -3247,6 +3256,7 @@ class _BookingSuccessPopupState extends State<_BookingSuccessPopup> with TickerP
   }
 
   Widget _buildActionButtons() {
+    final c = AppColors.of(context);
     return Column(
       children: [
         // Send Confirmation via Admin WhatsApp
@@ -3254,7 +3264,7 @@ class _BookingSuccessPopupState extends State<_BookingSuccessPopup> with TickerP
           icon: _confirmationSent ? Icons.check_circle : Icons.send,
           label: _confirmationSent ? 'Confirmation Sent!' : 'Send Booking Confirmation',
           sublabel: _confirmationSent ? null : 'Via FieldPass Business',
-          color: _confirmationSent ? AppColors.success : const Color(0xFF25D366),
+          color: _confirmationSent ? c.success : const Color(0xFF25D366),
           isLoading: _isSendingConfirmation,
           onTap: _confirmationSent ? null : _sendBookingConfirmation,
         ),
@@ -3270,7 +3280,7 @@ class _BookingSuccessPopupState extends State<_BookingSuccessPopup> with TickerP
                 child: _buildSmallActionButton(
                   icon: Icons.receipt_long,
                   label: 'Send Receipt',
-                  color: AppColors.primary,
+                  color: c.primary,
                   onTap: _sendPaymentReceipt,
                 ),
               ),
@@ -3317,8 +3327,8 @@ class _BookingSuccessPopupState extends State<_BookingSuccessPopup> with TickerP
                   : const Icon(Icons.verified, size: 18),
               label: Text(_isMarkingPayment ? 'Confirming...' : 'Mark Payment Confirmed'),
               style: OutlinedButton.styleFrom(
-                foregroundColor: AppColors.success,
-                side: const BorderSide(color: AppColors.success),
+                foregroundColor: c.success,
+                side: BorderSide(color: c.success),
                 padding: const EdgeInsets.symmetric(vertical: 12),
                 shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
               ),
@@ -3376,7 +3386,7 @@ class _BookingSuccessPopupState extends State<_BookingSuccessPopup> with TickerP
                     Text(
                       sublabel,
                       style: TextStyle(
-                        color: Colors.white.withOpacity(0.8),
+                        color: Colors.white.withValues(alpha: 0.8),
                         fontSize: 11,
                       ),
                     ),
@@ -3396,7 +3406,7 @@ class _BookingSuccessPopupState extends State<_BookingSuccessPopup> with TickerP
     required VoidCallback onTap,
   }) {
     return Material(
-      color: color.withOpacity(0.1),
+      color: color.withValues(alpha: 0.1),
       borderRadius: BorderRadius.circular(10),
       child: InkWell(
         onTap: onTap,
@@ -3423,6 +3433,7 @@ class _BookingSuccessPopupState extends State<_BookingSuccessPopup> with TickerP
   }
 
   Widget _buildDoneButton() {
+    final c = AppColors.of(context);
     return TextButton(
       onPressed: () => Navigator.pop(context),
       style: TextButton.styleFrom(
@@ -3431,7 +3442,7 @@ class _BookingSuccessPopupState extends State<_BookingSuccessPopup> with TickerP
       child: Text(
         'Done',
         style: TextStyle(
-          color: AppColors.textSecondary,
+          color: c.textSecondary,
           fontSize: 16,
           fontWeight: FontWeight.w600,
         ),
@@ -3733,7 +3744,7 @@ class _TicketEdgePainter extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {
     final paint = Paint()
-      ..color = Colors.white.withOpacity(0.12)
+      ..color = Colors.white.withValues(alpha: 0.12)
       ..strokeWidth = 2.0
       ..strokeCap = StrokeCap.butt;
 

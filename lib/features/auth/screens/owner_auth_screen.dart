@@ -159,8 +159,9 @@ class _OwnerAuthScreenState extends State<OwnerAuthScreen> with SingleTickerProv
 
   @override
   Widget build(BuildContext context) {
+    final c = AppColors.of(context);
     return Scaffold(
-      backgroundColor: AppColors.background,
+      backgroundColor: c.background,
       body: GlassScaffoldBackground(
         child: Stack(
           children: [
@@ -174,15 +175,15 @@ class _OwnerAuthScreenState extends State<OwnerAuthScreen> with SingleTickerProv
                 child: Row(
                   children: [
                     IconButton(
-                      icon: const Icon(Icons.arrow_back_ios, color: AppColors.textPrimary, size: 20),
+                      icon: Icon(Icons.arrow_back_ios, color: c.textPrimary, size: 20),
                       onPressed: () => Navigator.pop(context),
                     ),
-                    const Expanded(
+                    Expanded(
                       child: Text(
                         'Owner Portal',
                         textAlign: TextAlign.center,
                         style: TextStyle(
-                          color: AppColors.textPrimary,
+                          color: c.textPrimary,
                           fontWeight: FontWeight.bold,
                           fontSize: 18,
                         ),
@@ -194,12 +195,12 @@ class _OwnerAuthScreenState extends State<OwnerAuthScreen> with SingleTickerProv
               ),
               // Branding
               const SizedBox(height: 8),
-              const Text(
+              Text(
                 'FieldPass Business',
                 style: TextStyle(
                   fontSize: 24,
                   fontWeight: FontWeight.bold,
-                  color: AppColors.textPrimary,
+                  color: c.textPrimary,
                   letterSpacing: 0.5,
                 ),
               ),
@@ -208,7 +209,7 @@ class _OwnerAuthScreenState extends State<OwnerAuthScreen> with SingleTickerProv
                 'Pitch Perfect Management',
                 style: TextStyle(
                   fontSize: 14,
-                  color: AppColors.textSecondary,
+                  color: c.textSecondary,
                 ),
               ),
               const SizedBox(height: 16),
@@ -216,15 +217,15 @@ class _OwnerAuthScreenState extends State<OwnerAuthScreen> with SingleTickerProv
               Container(
                 margin: const EdgeInsets.symmetric(horizontal: 24),
                 decoration: BoxDecoration(
-                  color: AppColors.glassFill,
+                  color: c.glassFill,
                   borderRadius: BorderRadius.circular(16),
-                  border: Border.all(color: AppColors.glassBorder),
+                  border: Border.all(color: c.glassBorder),
                 ),
                 child: TabBar(
                   controller: _tabController,
-                  labelColor: AppColors.primary,
-                  unselectedLabelColor: AppColors.textSecondary,
-                  indicatorColor: AppColors.primary,
+                  labelColor: c.primary,
+                  unselectedLabelColor: c.textSecondary,
+                  indicatorColor: c.primary,
                   indicatorSize: TabBarIndicatorSize.label,
                   dividerColor: Colors.transparent,
                   tabs: const [
@@ -262,6 +263,7 @@ class _OwnerAuthScreenState extends State<OwnerAuthScreen> with SingleTickerProv
             children: [
               Expanded(
                 child: _buildMethodToggle(
+                  context: context,
                   title: 'Email',
                   isSelected: _isLoginWithEmail,
                   onTap: () => setState(() {
@@ -274,6 +276,7 @@ class _OwnerAuthScreenState extends State<OwnerAuthScreen> with SingleTickerProv
               const SizedBox(width: 16),
               Expanded(
                 child: _buildMethodToggle(
+                  context: context,
                   title: 'Phone',
                   isSelected: !_isLoginWithEmail,
                   onTap: () => setState(() => _isLoginWithEmail = false),
@@ -289,16 +292,17 @@ class _OwnerAuthScreenState extends State<OwnerAuthScreen> with SingleTickerProv
     );
   }
 
-  Widget _buildMethodToggle({required String title, required bool isSelected, required VoidCallback onTap}) {
+  Widget _buildMethodToggle({required BuildContext context, required String title, required bool isSelected, required VoidCallback onTap}) {
+    final c = AppColors.of(context);
     return GestureDetector(
       onTap: onTap,
       child: Container(
         padding: const EdgeInsets.symmetric(vertical: 12),
         decoration: BoxDecoration(
-          color: isSelected ? AppColors.primary.withOpacity(0.1) : AppColors.glassFill,
+          color: isSelected ? c.primary.withValues(alpha: 0.1) : c.glassFill,
           borderRadius: BorderRadius.circular(14),
           border: Border.all(
-            color: isSelected ? AppColors.primary.withOpacity(0.5) : AppColors.glassBorder,
+            color: isSelected ? c.primary.withValues(alpha: 0.5) : c.glassBorder,
             width: 1.5,
           ),
           boxShadow: isSelected ? AppColors.neonGlow(blur: 10) : null,
@@ -308,7 +312,7 @@ class _OwnerAuthScreenState extends State<OwnerAuthScreen> with SingleTickerProv
           title,
           style: TextStyle(
             fontWeight: FontWeight.bold,
-            color: isSelected ? AppColors.primary : AppColors.textSecondary,
+            color: isSelected ? c.primary : c.textSecondary,
           ),
         ),
       ),
@@ -316,20 +320,21 @@ class _OwnerAuthScreenState extends State<OwnerAuthScreen> with SingleTickerProv
   }
 
   Widget _buildEmailLoginForm() {
+    final c = AppColors.of(context);
     return Form(
       key: _loginEmailFormKey,
       child: Column(
         children: [
           TextFormField(
             controller: _loginEmailController,
-            decoration: _inputDecoration('Email Address', Icons.email_outlined),
+            decoration: _inputDecoration(context, 'Email Address', Icons.email_outlined),
             keyboardType: TextInputType.emailAddress,
             validator: (val) => val != null && val.contains('@') ? null : 'Invalid email',
           ),
           const SizedBox(height: 16),
           TextFormField(
             controller: _loginPasswordController,
-            decoration: _inputDecoration('Password', Icons.lock_outline),
+            decoration: _inputDecoration(context, 'Password', Icons.lock_outline),
             obscureText: true,
             validator: (val) => val != null && val.length >= 6 ? null : 'Min 6 chars',
           ),
@@ -339,7 +344,7 @@ class _OwnerAuthScreenState extends State<OwnerAuthScreen> with SingleTickerProv
             onPressed: () {
               // TODO: Implement Forgot Password
             },
-            child: const Text('Forgot Password?', style: TextStyle(color: AppColors.textSecondary)),
+            child: Text('Forgot Password?', style: TextStyle(color: c.textSecondary)),
           ),
         ],
       ),
@@ -347,13 +352,14 @@ class _OwnerAuthScreenState extends State<OwnerAuthScreen> with SingleTickerProv
   }
 
   Widget _buildPhoneLoginForm() {
+    final c = AppColors.of(context);
     return Form(
       key: _loginPhoneFormKey,
       child: Column(
         children: [
           TextFormField(
             controller: _loginPhoneController,
-            decoration: _inputDecoration('Phone Number', Icons.phone).copyWith(
+            decoration: _inputDecoration(context, 'Phone Number', Icons.phone).copyWith(
               prefixText: '+91 ',
               prefixStyle: const TextStyle(fontWeight: FontWeight.bold),
             ),
@@ -367,18 +373,18 @@ class _OwnerAuthScreenState extends State<OwnerAuthScreen> with SingleTickerProv
             const SizedBox(height: 16),
             TextFormField(
               controller: _loginOtpController,
-              decoration: _inputDecoration('Enter 6-digit OTP', Icons.security),
+              decoration: _inputDecoration(context, 'Enter 6-digit OTP', Icons.security),
               keyboardType: TextInputType.number,
               maxLength: 6,
               textAlign: TextAlign.center,
-              style: const TextStyle(letterSpacing: 8, fontWeight: FontWeight.bold, color: AppColors.textPrimary),
+              style: TextStyle(letterSpacing: 8, fontWeight: FontWeight.bold, color: c.textPrimary),
             ),
             const SizedBox(height: 24),
             _buildSubmitButton('Verify & Login', _handlePhoneLoginVerifyOtp),
             const SizedBox(height: 16),
             TextButton(
               onPressed: () => setState(() => _otpSent = false),
-              child: const Text('Change Number', style: TextStyle(color: AppColors.secondary)),
+              child: Text('Change Number', style: TextStyle(color: c.secondary)),
             ),
           ] else ...[
             const SizedBox(height: 24),
@@ -390,6 +396,7 @@ class _OwnerAuthScreenState extends State<OwnerAuthScreen> with SingleTickerProv
   }
 
   Widget _buildSignupTab() {
+    final c = AppColors.of(context);
     return SingleChildScrollView(
       padding: const EdgeInsets.all(24),
       child: Form(
@@ -398,20 +405,20 @@ class _OwnerAuthScreenState extends State<OwnerAuthScreen> with SingleTickerProv
           children: [
             TextFormField(
               controller: _signupNameController,
-              decoration: _inputDecoration('Full Name', Icons.person_outline),
+              decoration: _inputDecoration(context, 'Full Name', Icons.person_outline),
               validator: (val) => val != null && val.length >= 3 ? null : 'Min 3 chars',
             ),
             const SizedBox(height: 16),
             TextFormField(
               controller: _signupEmailController,
-              decoration: _inputDecoration('Email Address', Icons.email_outlined),
+              decoration: _inputDecoration(context, 'Email Address', Icons.email_outlined),
               keyboardType: TextInputType.emailAddress,
               validator: (val) => val != null && val.contains('@') ? null : 'Invalid email',
             ),
             const SizedBox(height: 16),
             TextFormField(
               controller: _signupPhoneController,
-              decoration: _inputDecoration('Phone Number', Icons.phone).copyWith(
+              decoration: _inputDecoration(context, 'Phone Number', Icons.phone).copyWith(
                 prefixText: '+91 ',
                 prefixStyle: const TextStyle(fontWeight: FontWeight.bold),
               ),
@@ -422,7 +429,7 @@ class _OwnerAuthScreenState extends State<OwnerAuthScreen> with SingleTickerProv
             const SizedBox(height: 16),
             TextFormField(
               controller: _signupPasswordController,
-              decoration: _inputDecoration('Password', Icons.lock_outline),
+              decoration: _inputDecoration(context, 'Password', Icons.lock_outline),
               obscureText: true,
               validator: (val) {
                 if (val == null || val.isEmpty) return 'Password is required';
@@ -435,7 +442,7 @@ class _OwnerAuthScreenState extends State<OwnerAuthScreen> with SingleTickerProv
             const SizedBox(height: 16),
             TextFormField(
               controller: _signupConfirmPasswordController,
-              decoration: _inputDecoration('Confirm Password', Icons.lock_outline),
+              decoration: _inputDecoration(context, 'Confirm Password', Icons.lock_outline),
               obscureText: true,
               validator: (val) {
                 if (val != _signupPasswordController.text) return 'Passwords do not match';
@@ -445,9 +452,9 @@ class _OwnerAuthScreenState extends State<OwnerAuthScreen> with SingleTickerProv
             const SizedBox(height: 32),
             _buildSubmitButton('Sign Up', _handleSignup),
             const SizedBox(height: 24),
-            const Text(
+            Text(
               'By signing up, you agree to our Terms & Conditions',
-              style: TextStyle(color: AppColors.textSecondary, fontSize: 12),
+              style: TextStyle(color: c.textSecondary, fontSize: 12),
               textAlign: TextAlign.center,
             ),
           ],
@@ -456,26 +463,27 @@ class _OwnerAuthScreenState extends State<OwnerAuthScreen> with SingleTickerProv
     );
   }
 
-  InputDecoration _inputDecoration(String label, IconData icon) {
+  InputDecoration _inputDecoration(BuildContext context, String label, IconData icon) {
+    final c = AppColors.of(context);
     return InputDecoration(
       labelText: label,
-      prefixIcon: Icon(icon, color: AppColors.textSecondary, size: 20),
+      prefixIcon: Icon(icon, color: c.textSecondary, size: 20),
       filled: true,
-      fillColor: AppColors.glassFill,
+      fillColor: c.glassFill,
       border: OutlineInputBorder(
         borderRadius: BorderRadius.circular(16),
-        borderSide: BorderSide(color: AppColors.glassBorder),
+        borderSide: BorderSide(color: c.glassBorder),
       ),
       enabledBorder: OutlineInputBorder(
         borderRadius: BorderRadius.circular(16),
-        borderSide: BorderSide(color: AppColors.glassBorder),
+        borderSide: BorderSide(color: c.glassBorder),
       ),
       focusedBorder: OutlineInputBorder(
         borderRadius: BorderRadius.circular(16),
-        borderSide: const BorderSide(color: AppColors.primary, width: 1.5),
+        borderSide: BorderSide(color: c.primary, width: 1.5),
       ),
       contentPadding: const EdgeInsets.all(16),
-      labelStyle: const TextStyle(color: AppColors.textSecondary),
+      labelStyle: TextStyle(color: c.textSecondary),
     );
   }
 

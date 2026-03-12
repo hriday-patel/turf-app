@@ -62,6 +62,7 @@ class _TurfDetailScreenState extends State<TurfDetailScreen> with RouteAware {
   Widget build(BuildContext context) {
     return Consumer<TurfProvider>(
       builder: (context, turfProvider, _) {
+        final c = AppColors.of(context);
         final turf = turfProvider.getTurfById(widget.turfId);
 
         if (turf == null) {
@@ -72,7 +73,7 @@ class _TurfDetailScreenState extends State<TurfDetailScreen> with RouteAware {
         }
 
         return Scaffold(
-          backgroundColor: AppColors.background,
+          backgroundColor: c.background,
           body: GlassScaffoldBackground(
             child: CustomScrollView(
               slivers: [
@@ -80,13 +81,13 @@ class _TurfDetailScreenState extends State<TurfDetailScreen> with RouteAware {
                 SliverAppBar(
                   expandedHeight: 200,
                   pinned: true,
-                  backgroundColor: AppColors.surface,
+                  backgroundColor: c.surface,
                   flexibleSpace: FlexibleSpaceBar(
                     title: Text(
                       turf.turfName,
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontWeight: FontWeight.bold,
-                        color: AppColors.textPrimary,
+                        color: c.textPrimary,
                         shadows: [
                           Shadow(
                             color: Colors.black54,
@@ -96,8 +97,8 @@ class _TurfDetailScreenState extends State<TurfDetailScreen> with RouteAware {
                       ),
                     ),
                     background: Container(
-                      decoration: const BoxDecoration(
-                        gradient: AppColors.scaffoldGradient,
+                      decoration: BoxDecoration(
+                        gradient: c.scaffoldGradient,
                       ),
                     child: turf.primaryImageUrl != null
                         ? Image.network(
@@ -110,7 +111,7 @@ class _TurfDetailScreenState extends State<TurfDetailScreen> with RouteAware {
                               return Center(
                                 child: CircularProgressIndicator(
                                   strokeWidth: 2,
-                                  color: AppColors.primary,
+                                  color: c.primary,
                                   value: loadingProgress.expectedTotalBytes != null
                                       ? loadingProgress.cumulativeBytesLoaded /
                                           loadingProgress.expectedTotalBytes!
@@ -123,7 +124,7 @@ class _TurfDetailScreenState extends State<TurfDetailScreen> with RouteAware {
                                 child: Icon(
                                   Icons.sports_cricket,
                                   size: 80,
-                                  color: AppColors.primary.withOpacity(0.5),
+                                  color: c.primary.withValues(alpha: 0.5),
                                 ),
                               );
                             },
@@ -132,7 +133,7 @@ class _TurfDetailScreenState extends State<TurfDetailScreen> with RouteAware {
                             child: Icon(
                               Icons.sports_cricket,
                               size: 80,
-                              color: AppColors.primary.withOpacity(0.5),
+                              color: c.primary.withValues(alpha: 0.5),
                             ),
                           ),
                   ),
@@ -207,30 +208,31 @@ class _TurfDetailScreenState extends State<TurfDetailScreen> with RouteAware {
     required String label,
     required String value,
   }) {
+    final c = AppColors.of(context);
     return Container(
       margin: const EdgeInsets.symmetric(horizontal: 4),
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: AppColors.glassFill,
+        color: c.glassFill,
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: AppColors.glassBorder),
+        border: Border.all(color: c.glassBorder),
       ),
       child: Column(
         children: [
-          Icon(icon, color: AppColors.primary, size: 24),
+          Icon(icon, color: c.primary, size: 24),
           const SizedBox(height: 8),
           Text(
             value,
-            style: const TextStyle(
+            style: TextStyle(
               fontWeight: FontWeight.w600,
-              color: AppColors.textPrimary,
+              color: c.textPrimary,
             ),
           ),
           Text(
             label,
             style: TextStyle(
               fontSize: 11,
-              color: AppColors.textSecondary,
+              color: c.textSecondary,
             ),
           ),
         ],
@@ -239,22 +241,23 @@ class _TurfDetailScreenState extends State<TurfDetailScreen> with RouteAware {
   }
 
   Widget _buildDetailsSection(TurfModel turf) {
+    final c = AppColors.of(context);
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: AppColors.glassFill,
+        color: c.glassFill,
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: AppColors.glassBorder),
+        border: Border.all(color: c.glassBorder),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text(
+          Text(
             'Details',
             style: TextStyle(
               fontSize: 16,
               fontWeight: FontWeight.bold,
-              color: AppColors.textPrimary,
+              color: c.textPrimary,
             ),
           ),
           const SizedBox(height: 16),
@@ -269,10 +272,11 @@ class _TurfDetailScreenState extends State<TurfDetailScreen> with RouteAware {
   }
 
   Widget _buildDetailRow(IconData icon, String label, String value) {
+    final c = AppColors.of(context);
     return Row(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Icon(icon, size: 20, color: AppColors.textSecondary),
+        Icon(icon, size: 20, color: c.textSecondary),
         const SizedBox(width: 12),
         Expanded(
           child: Column(
@@ -282,15 +286,15 @@ class _TurfDetailScreenState extends State<TurfDetailScreen> with RouteAware {
                 label,
                 style: TextStyle(
                   fontSize: 12,
-                  color: AppColors.textSecondary,
+                  color: c.textSecondary,
                 ),
               ),
               const SizedBox(height: 4),
               Text(
                 value,
-                style: const TextStyle(
+                style: TextStyle(
                   fontSize: 14,
-                  color: AppColors.textPrimary,
+                  color: c.textPrimary,
                 ),
               ),
             ],
@@ -301,24 +305,25 @@ class _TurfDetailScreenState extends State<TurfDetailScreen> with RouteAware {
   }
 
   Widget _buildPricingSection(TurfModel turf) {
+    final c = AppColors.of(context);
     final pricingRules = turf.pricingRules;
     
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: AppColors.glassFill,
+        color: c.glassFill,
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: AppColors.glassBorder),
+        border: Border.all(color: c.glassBorder),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text(
+          Text(
             'Pricing',
             style: TextStyle(
               fontSize: 16,
               fontWeight: FontWeight.bold,
-              color: AppColors.textPrimary,
+              color: c.textPrimary,
             ),
           ),
           const SizedBox(height: 8),
@@ -326,7 +331,7 @@ class _TurfDetailScreenState extends State<TurfDetailScreen> with RouteAware {
             '${turf.numberOfNets} Net(s) Available',
             style: TextStyle(
               fontSize: 13,
-              color: AppColors.textSecondary,
+              color: c.textSecondary,
             ),
           ),
           const SizedBox(height: 12),
@@ -335,19 +340,19 @@ class _TurfDetailScreenState extends State<TurfDetailScreen> with RouteAware {
             _buildDayTypePricingRow(
               'Weekday',
               pricingRules.netPricing.first.weekday,
-              AppColors.primary,
+              c.primary,
             ),
             const Divider(height: 16),
             _buildDayTypePricingRow(
               'Weekend',
               pricingRules.netPricing.first.weekend,
-              AppColors.secondary,
+              c.secondary,
             ),
             const Divider(height: 16),
             _buildDayTypePricingRow(
               'Holiday',
               pricingRules.netPricing.first.holiday,
-              AppColors.warning,
+              c.warning,
             ),
           ],
           if (turf.numberOfNets > 1) ...[
@@ -357,7 +362,7 @@ class _TurfDetailScreenState extends State<TurfDetailScreen> with RouteAware {
               style: TextStyle(
                 fontSize: 11,
                 fontStyle: FontStyle.italic,
-                color: AppColors.textSecondary,
+                color: c.textSecondary,
               ),
             ),
           ],
@@ -405,23 +410,24 @@ class _TurfDetailScreenState extends State<TurfDetailScreen> with RouteAware {
   }
 
   Widget _buildTimeSlotPrice(String label, double price, IconData icon) {
+    final c = AppColors.of(context);
     return Column(
       children: [
-        Icon(icon, size: 16, color: AppColors.textSecondary),
+        Icon(icon, size: 16, color: c.textSecondary),
         const SizedBox(height: 4),
         Text(
           PriceCalculator.formatPrice(price),
-          style: const TextStyle(
+          style: TextStyle(
             fontSize: 13,
             fontWeight: FontWeight.w600,
-            color: AppColors.textPrimary,
+            color: c.textPrimary,
           ),
         ),
         Text(
           label,
           style: TextStyle(
             fontSize: 10,
-            color: AppColors.textSecondary,
+            color: c.textSecondary,
           ),
         ),
       ],
@@ -429,6 +435,7 @@ class _TurfDetailScreenState extends State<TurfDetailScreen> with RouteAware {
   }
 
   Widget _buildPriceRow(String label, double dayPrice, double nightPrice, Color color) {
+    final c = AppColors.of(context);
     return Row(
       children: [
         Container(
@@ -443,9 +450,9 @@ class _TurfDetailScreenState extends State<TurfDetailScreen> with RouteAware {
         Expanded(
           child: Text(
             label,
-            style: const TextStyle(
+            style: TextStyle(
               fontWeight: FontWeight.w500,
-              color: AppColors.textPrimary,
+              color: c.textPrimary,
             ),
           ),
         ),
@@ -454,7 +461,7 @@ class _TurfDetailScreenState extends State<TurfDetailScreen> with RouteAware {
           children: [
             Row(
               children: [
-                const Icon(Icons.wb_sunny, size: 14, color: AppColors.warning),
+                Icon(Icons.wb_sunny, size: 14, color: c.warning),
                 const SizedBox(width: 4),
                 Text(
                   PriceCalculator.formatPrice(dayPrice),
@@ -465,7 +472,7 @@ class _TurfDetailScreenState extends State<TurfDetailScreen> with RouteAware {
             const SizedBox(height: 4),
             Row(
               children: [
-                const Icon(Icons.nightlight, size: 14, color: AppColors.info),
+                Icon(Icons.nightlight, size: 14, color: c.info),
                 const SizedBox(width: 4),
                 Text(
                   PriceCalculator.formatPrice(nightPrice),
@@ -480,35 +487,36 @@ class _TurfDetailScreenState extends State<TurfDetailScreen> with RouteAware {
   }
 
   Widget _buildOperatingHours(TurfModel turf) {
+    final c = AppColors.of(context);
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: AppColors.glassFill,
+        color: c.glassFill,
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: AppColors.glassBorder),
+        border: Border.all(color: c.glassBorder),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text(
+          Text(
             'Operating Hours',
             style: TextStyle(
               fontSize: 16,
               fontWeight: FontWeight.bold,
-              color: AppColors.textPrimary,
+              color: c.textPrimary,
             ),
           ),
           const SizedBox(height: 16),
           Row(
             children: [
-              const Icon(Icons.access_time, color: AppColors.primary),
+              Icon(Icons.access_time, color: c.primary),
               const SizedBox(width: 12),
               Text(
                 '${turf.openTime} - ${turf.closeTime}',
-                style: const TextStyle(
+                style: TextStyle(
                   fontSize: 18,
                   fontWeight: FontWeight.w600,
-                  color: AppColors.textPrimary,
+                  color: c.textPrimary,
                 ),
               ),
             ],
@@ -521,15 +529,15 @@ class _TurfDetailScreenState extends State<TurfDetailScreen> with RouteAware {
               return Container(
                 padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
                 decoration: BoxDecoration(
-                  color: AppColors.primary.withOpacity(0.1),
+                  color: c.primary.withValues(alpha: 0.1),
                   borderRadius: BorderRadius.circular(20),
                 ),
                 child: Text(
                   day,
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontSize: 12,
                     fontWeight: FontWeight.w500,
-                    color: AppColors.primary,
+                    color: c.primary,
                   ),
                 ),
               );

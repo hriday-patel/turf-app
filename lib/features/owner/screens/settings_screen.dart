@@ -118,8 +118,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final c = AppColors.of(context);
     return Scaffold(
-      backgroundColor: AppColors.background,
+      backgroundColor: c.background,
       body: GlassScaffoldBackground(
         child: Stack(
           children: [
@@ -166,29 +167,31 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   Widget _buildSectionTitle(String title) {
+    final c = AppColors.of(context);
     return Padding(
       padding: const EdgeInsets.only(bottom: 12),
       child: Text(
         title,
-        style: const TextStyle(
+        style: TextStyle(
           fontSize: 18,
           fontWeight: FontWeight.bold,
-          color: AppColors.textPrimary,
+          color: c.textPrimary,
         ),
       ),
     );
   }
 
   Widget _buildAccountInfo() {
+    final c = AppColors.of(context);
     return Consumer<AuthProvider>(
       builder: (context, authProvider, _) {
         final owner = authProvider.currentOwner;
         return Container(
           padding: const EdgeInsets.all(16),
           decoration: BoxDecoration(
-            color: AppColors.glassFill,
+            color: c.glassFill,
             borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: AppColors.glassBorder),
+            border: Border.all(color: c.glassBorder),
           ),
           child: Column(
             children: [
@@ -205,15 +208,16 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   Widget _buildInfoRow(IconData icon, String label, String value) {
+    final c = AppColors.of(context);
     return Row(
       children: [
-        Icon(icon, color: AppColors.primary, size: 20),
+        Icon(icon, color: c.primary, size: 20),
         const SizedBox(width: 12),
         Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(label, style: TextStyle(fontSize: 12, color: AppColors.textSecondary)),
-            Text(value, style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w500)),
+            Text(label, style: TextStyle(fontSize: 12, color: c.textSecondary)),
+            Text(value, style: TextStyle(fontSize: 15, fontWeight: FontWeight.w500, color: c.textPrimary)),
           ],
         ),
       ],
@@ -221,12 +225,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   Widget _buildEmailSection() {
+    final c = AppColors.of(context);
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: AppColors.glassFill,
+        color: c.glassFill,
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: AppColors.glassBorder),
+        border: Border.all(color: c.glassBorder),
       ),
       child: Column(
         children: [
@@ -245,10 +250,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
             height: 48,
             child: ElevatedButton(
               onPressed: _isEmailLoading ? null : _updateEmail,
-              style: ElevatedButton.styleFrom(
-                backgroundColor: AppColors.primary,
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-              ),
               child: _isEmailLoading
                   ? const SizedBox(height: 20, width: 20, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
                   : const Text('Update Email', style: TextStyle(fontWeight: FontWeight.w600)),
@@ -260,12 +261,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   Widget _buildPasswordSection() {
+    final c = AppColors.of(context);
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: AppColors.glassFill,
+        color: c.glassFill,
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: AppColors.glassBorder),
+        border: Border.all(color: c.glassBorder),
       ),
       child: Column(
         children: [
@@ -304,10 +306,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
             height: 48,
             child: ElevatedButton(
               onPressed: _isPasswordLoading ? null : _updatePassword,
-              style: ElevatedButton.styleFrom(
-                backgroundColor: AppColors.primary,
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-              ),
               child: _isPasswordLoading
                   ? const SizedBox(height: 20, width: 20, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
                   : const Text('Update Password', style: TextStyle(fontWeight: FontWeight.w600)),
@@ -319,18 +317,19 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   Widget _buildDangerZone() {
+    final c = AppColors.of(context);
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: AppColors.glassFill,
+        color: c.glassFill,
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: AppColors.glassBorder),
+        border: Border.all(color: c.glassBorder),
       ),
       child: Column(
         children: [
           ListTile(
-            leading: const Icon(Icons.logout, color: AppColors.error),
-            title: const Text('Logout', style: TextStyle(color: AppColors.error, fontWeight: FontWeight.w600)),
+            leading: Icon(Icons.logout, color: c.error),
+            title: Text('Logout', style: TextStyle(color: c.error, fontWeight: FontWeight.w600)),
             onTap: () async {
               final confirm = await showDialog<bool>(
                 context: context,
@@ -341,7 +340,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
                     TextButton(
                       onPressed: () => Navigator.pop(ctx, true),
-                      child: const Text('Logout', style: TextStyle(color: AppColors.error)),
+                      child: Text('Logout', style: TextStyle(color: c.error)),
                     ),
                   ],
                 ),

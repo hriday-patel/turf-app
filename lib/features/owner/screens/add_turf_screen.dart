@@ -602,6 +602,7 @@ class _AddTurfScreenState extends State<AddTurfScreen> with RouteAware {
 
   @override
   Widget build(BuildContext context) {
+    final c = AppColors.of(context);
     return PopScope(
       canPop: true,
       onPopInvokedWithResult: (didPop, result) {
@@ -611,7 +612,7 @@ class _AddTurfScreenState extends State<AddTurfScreen> with RouteAware {
         }
       },
       child: Scaffold(
-        backgroundColor: AppColors.background,
+        backgroundColor: c.background,
         body: GlassScaffoldBackground(
           child: SafeArea(
             child: Column(
@@ -619,7 +620,7 @@ class _AddTurfScreenState extends State<AddTurfScreen> with RouteAware {
                 GlassAppBar(
                   title: isEditing ? 'Edit Turf' : 'Add New Turf',
                   leading: IconButton(
-                    icon: const Icon(Icons.arrow_back, color: AppColors.textPrimary),
+                    icon: Icon(Icons.arrow_back, color: c.textPrimary),
                     onPressed: () {
                       _refreshTurfData();
                       Navigator.pop(context);
@@ -649,13 +650,14 @@ class _AddTurfScreenState extends State<AddTurfScreen> with RouteAware {
   }
 
   Widget _buildStepIndicator() {
+    final c = AppColors.of(context);
     final steps = ['Basic Info', 'Schedule', 'Pricing', 'Images'];
     
     return Container(
       padding: const EdgeInsets.symmetric(vertical: 20, horizontal: 16),
       decoration: BoxDecoration(
-        color: AppColors.glassFill,
-        border: Border(bottom: BorderSide(color: AppColors.glassBorder)),
+        color: c.glassFill,
+        border: Border(bottom: BorderSide(color: c.glassBorder)),
       ),
       child: Row(
         children: List.generate(steps.length, (index) {
@@ -671,16 +673,16 @@ class _AddTurfScreenState extends State<AddTurfScreen> with RouteAware {
                       width: 32,
                       height: 32,
                       decoration: BoxDecoration(
-                        color: isActive ? AppColors.primary : AppColors.disabled,
+                        color: isActive ? c.primary : c.textDisabled,
                         shape: BoxShape.circle,
                       ),
                       child: Center(
                         child: isCompleted
-                            ? const Icon(Icons.check, color: Colors.white, size: 18)
+                            ? Icon(Icons.check, color: c.onPrimary, size: 18)
                             : Text(
                                 '${index + 1}',
                                 style: TextStyle(
-                                  color: isActive ? Colors.white : AppColors.textSecondary,
+                                  color: isActive ? c.onPrimary : c.textSecondary,
                                   fontWeight: FontWeight.w600,
                                 ),
                               ),
@@ -691,7 +693,7 @@ class _AddTurfScreenState extends State<AddTurfScreen> with RouteAware {
                       steps[index],
                       style: TextStyle(
                         fontSize: 10,
-                        color: isActive ? AppColors.primary : AppColors.textSecondary,
+                        color: isActive ? c.primary : c.textSecondary,
                         fontWeight: isActive ? FontWeight.w600 : FontWeight.normal,
                       ),
                     ),
@@ -702,7 +704,7 @@ class _AddTurfScreenState extends State<AddTurfScreen> with RouteAware {
                     child: Container(
                       height: 2,
                       margin: const EdgeInsets.symmetric(horizontal: 4),
-                      color: isCompleted ? AppColors.primary : AppColors.disabled,
+                      color: isCompleted ? c.primary : c.textDisabled,
                     ),
                   ),
               ],
@@ -714,6 +716,7 @@ class _AddTurfScreenState extends State<AddTurfScreen> with RouteAware {
   }
 
   Widget _buildBasicInfoStep() {
+    final c = AppColors.of(context);
     return SingleChildScrollView(
       padding: const EdgeInsets.all(20),
       child: Form(
@@ -721,18 +724,18 @@ class _AddTurfScreenState extends State<AddTurfScreen> with RouteAware {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text(
+            Text(
               'Basic Information',
               style: TextStyle(
                 fontSize: 20,
                 fontWeight: FontWeight.bold,
-                color: AppColors.textPrimary,
+                color: c.textPrimary,
               ),
             ),
             const SizedBox(height: 8),
             Text(
               'Enter the basic details of your turf',
-              style: TextStyle(color: AppColors.textSecondary),
+              style: TextStyle(color: c.textSecondary),
             ),
             
             // Warning for edit mode
@@ -741,20 +744,20 @@ class _AddTurfScreenState extends State<AddTurfScreen> with RouteAware {
               Container(
                 padding: const EdgeInsets.all(12),
                 decoration: BoxDecoration(
-                  color: AppColors.warning.withOpacity(0.1),
+                  color: c.warning.withValues(alpha: 0.1),
                   borderRadius: BorderRadius.circular(8),
-                  border: Border.all(color: AppColors.warning.withOpacity(0.3)),
+                  border: Border.all(color: c.warning.withValues(alpha: 0.3)),
                 ),
                 child: Row(
                   children: [
-                    Icon(Icons.info_outline, color: AppColors.warning, size: 20),
+                    Icon(Icons.info_outline, color: c.warning, size: 20),
                     const SizedBox(width: 8),
                     Expanded(
                       child: Text(
                         'Note: Changes to basic info will require re-approval. Pricing, schedule, and images can be changed freely.',
                         style: TextStyle(
                           fontSize: 12,
-                          color: AppColors.warning.withOpacity(0.8),
+                          color: c.warning.withValues(alpha: 0.8),
                         ),
                       ),
                     ),
@@ -815,15 +818,16 @@ class _AddTurfScreenState extends State<AddTurfScreen> with RouteAware {
   }
 
   Widget _buildNetsSelector() {
+    final c = AppColors.of(context);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const Text(
+        Text(
           'Number of Nets/Boxes',
           style: TextStyle(
             fontSize: 14,
             fontWeight: FontWeight.w500,
-            color: AppColors.textPrimary,
+            color: c.textPrimary,
           ),
         ),
         const SizedBox(height: 8),
@@ -838,9 +842,9 @@ class _AddTurfScreenState extends State<AddTurfScreen> with RouteAware {
               onSelected: (selected) {
                 if (selected) _updateNumberOfNets(count);
               },
-              selectedColor: AppColors.primary,
+              selectedColor: c.primary,
               labelStyle: TextStyle(
-                color: isSelected ? Colors.white : AppColors.textPrimary,
+                color: isSelected ? c.onPrimary : c.textPrimary,
                 fontWeight: FontWeight.w600,
               ),
             );
@@ -849,35 +853,36 @@ class _AddTurfScreenState extends State<AddTurfScreen> with RouteAware {
         const SizedBox(height: 8),
         Text(
           'Select how many nets or boxes are available at this turf',
-          style: TextStyle(fontSize: 12, color: AppColors.textSecondary),
+          style: TextStyle(fontSize: 12, color: c.textSecondary),
         ),
       ],
     );
   }
 
   Widget _buildDropdown() {
+    final c = AppColors.of(context);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const Text(
+        Text(
           'Turf Type',
           style: TextStyle(
             fontSize: 14,
             fontWeight: FontWeight.w500,
-            color: AppColors.textPrimary,
+            color: c.textPrimary,
           ),
         ),
         const SizedBox(height: 8),
         Container(
           decoration: BoxDecoration(
-            color: AppColors.glassFill,
+            color: c.glassFill,
             borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: AppColors.glassBorder),
+            border: Border.all(color: c.glassBorder),
           ),
           child: DropdownButtonFormField<TurfType>(
             value: _selectedTurfType,
-            decoration: const InputDecoration(
-              prefixIcon: Icon(Icons.sports_cricket, color: AppColors.primary),
+            decoration: InputDecoration(
+              prefixIcon: Icon(Icons.sports_cricket, color: c.primary),
               border: InputBorder.none,
               contentPadding: EdgeInsets.symmetric(horizontal: 16, vertical: 12),
             ),
@@ -899,6 +904,7 @@ class _AddTurfScreenState extends State<AddTurfScreen> with RouteAware {
   }
 
   Widget _buildScheduleStep() {
+    final c = AppColors.of(context);
     return SingleChildScrollView(
       padding: const EdgeInsets.all(20),
       child: Form(
@@ -906,18 +912,18 @@ class _AddTurfScreenState extends State<AddTurfScreen> with RouteAware {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text(
+            Text(
               'Schedule & Timing',
               style: TextStyle(
                 fontSize: 20,
                 fontWeight: FontWeight.bold,
-                color: AppColors.textPrimary,
+                color: c.textPrimary,
               ),
             ),
             const SizedBox(height: 8),
             Text(
               'Set your operating hours and slot duration',
-              style: TextStyle(color: AppColors.textSecondary),
+              style: TextStyle(color: c.textSecondary),
             ),
             const SizedBox(height: 24),
             
@@ -942,12 +948,12 @@ class _AddTurfScreenState extends State<AddTurfScreen> with RouteAware {
             ),
             const SizedBox(height: 24),
             
-            const Text(
+            Text(
               'Slot Duration',
               style: TextStyle(
                 fontSize: 14,
                 fontWeight: FontWeight.w500,
-                color: AppColors.textPrimary,
+                color: c.textPrimary,
               ),
             ),
             const SizedBox(height: 8),
@@ -961,21 +967,21 @@ class _AddTurfScreenState extends State<AddTurfScreen> with RouteAware {
                   onSelected: (selected) {
                     if (selected) setState(() => _slotDuration = duration);
                   },
-                  selectedColor: AppColors.primary,
+                  selectedColor: c.primary,
                   labelStyle: TextStyle(
-                    color: isSelected ? Colors.white : AppColors.textPrimary,
+                    color: isSelected ? c.onPrimary : c.textPrimary,
                   ),
                 );
               }).toList(),
             ),
             const SizedBox(height: 24),
             
-            const Text(
+            Text(
               'Days Open',
               style: TextStyle(
                 fontSize: 14,
                 fontWeight: FontWeight.w500,
-                color: AppColors.textPrimary,
+                color: c.textPrimary,
               ),
             ),
             const SizedBox(height: 8),
@@ -998,9 +1004,9 @@ class _AddTurfScreenState extends State<AddTurfScreen> with RouteAware {
                       }
                     });
                   },
-                  selectedColor: AppColors.primary,
+                  selectedColor: c.primary,
                   labelStyle: TextStyle(
-                    color: isSelected ? Colors.white : AppColors.textPrimary,
+                    color: isSelected ? c.onPrimary : c.textPrimary,
                     fontSize: 12,
                   ),
                 );
@@ -1013,6 +1019,7 @@ class _AddTurfScreenState extends State<AddTurfScreen> with RouteAware {
   }
 
   Widget _buildPricingStep() {
+    final c = AppColors.of(context);
     return DefaultTabController(
       length: _numberOfNets,
       child: Column(
@@ -1023,29 +1030,29 @@ class _AddTurfScreenState extends State<AddTurfScreen> with RouteAware {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Text(
+                Text(
                   'Pricing Rules',
                   style: TextStyle(
                     fontSize: 20,
                     fontWeight: FontWeight.bold,
-                    color: AppColors.textPrimary,
+                    color: c.textPrimary,
                   ),
                 ),
                 const SizedBox(height: 8),
                 Text(
                   'Set prices for each net across different time slots',
-                  style: TextStyle(color: AppColors.textSecondary),
+                  style: TextStyle(color: c.textSecondary),
                 ),
               ],
             ),
           ),
           if (_numberOfNets > 1)
             Container(
-              color: AppColors.glassFill,
+              color: c.glassFill,
               child: TabBar(
-                labelColor: AppColors.primary,
-                unselectedLabelColor: AppColors.textSecondary,
-                indicatorColor: AppColors.primary,
+                labelColor: c.primary,
+                unselectedLabelColor: c.textSecondary,
+                indicatorColor: c.primary,
                 tabs: List.generate(_numberOfNets, (i) => Tab(text: 'Net ${i + 1}')),
               ),
             ),
@@ -1062,29 +1069,31 @@ class _AddTurfScreenState extends State<AddTurfScreen> with RouteAware {
   }
 
   Widget _buildNetPricingContent(int netIndex) {
+    final c = AppColors.of(context);
     return SingleChildScrollView(
       padding: const EdgeInsets.all(20),
       child: Column(
         children: [
-          _buildDayTypePricing(netIndex, 'weekday', 'Weekdays (Mon-Fri)', AppColors.primary),
+          _buildDayTypePricing(netIndex, 'weekday', 'Weekdays (Mon-Fri)', c.primary),
           const SizedBox(height: 20),
-          _buildDayTypePricing(netIndex, 'weekend', 'Weekends (Sat-Sun)', AppColors.secondary),
+          _buildDayTypePricing(netIndex, 'weekend', 'Weekends (Sat-Sun)', c.secondary),
           const SizedBox(height: 20),
-          _buildDayTypePricing(netIndex, 'holiday', 'Public Holidays', AppColors.warning),
+          _buildDayTypePricing(netIndex, 'holiday', 'Public Holidays', c.warning),
         ],
       ),
     );
   }
 
   Widget _buildDayTypePricing(int netIndex, String dayType, String title, Color color) {
+    final c = AppColors.of(context);
     final controllers = _netPricingControllers[netIndex][dayType]!;
     
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: AppColors.glassFill,
+        color: c.glassFill,
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: color.withOpacity(0.3)),
+        border: Border.all(color: color.withValues(alpha: 0.3)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -1124,16 +1133,16 @@ class _AddTurfScreenState extends State<AddTurfScreen> with RouteAware {
                       children: [
                         Text(
                           slot['label']!,
-                          style: const TextStyle(
+                          style: TextStyle(
                             fontWeight: FontWeight.w500,
-                            color: AppColors.textPrimary,
+                            color: c.textPrimary,
                           ),
                         ),
                         Text(
                           '${slot['start']} - ${slot['end']}',
                           style: TextStyle(
                             fontSize: 12,
-                            color: AppColors.textSecondary,
+                            color: c.textSecondary,
                           ),
                         ),
                       ],
@@ -1164,6 +1173,7 @@ class _AddTurfScreenState extends State<AddTurfScreen> with RouteAware {
   }
 
   Widget _buildImagesStep() {
+    final c = AppColors.of(context);
     final int totalImages = _existingImages.length + _selectedImages.length;
     final bool hasExistingImages = _existingImages.isNotEmpty;
     final bool hasNewImages = _selectedImages.isNotEmpty;
@@ -1173,18 +1183,18 @@ class _AddTurfScreenState extends State<AddTurfScreen> with RouteAware {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text(
+          Text(
             'Turf Images',
             style: TextStyle(
               fontSize: 20,
               fontWeight: FontWeight.bold,
-              color: AppColors.textPrimary,
+              color: c.textPrimary,
             ),
           ),
           const SizedBox(height: 8),
           Text(
             'Add photos of your turf (optional for now)',
-            style: TextStyle(color: AppColors.textSecondary),
+            style: TextStyle(color: c.textSecondary),
           ),
           const SizedBox(height: 24),
           
@@ -1195,10 +1205,10 @@ class _AddTurfScreenState extends State<AddTurfScreen> with RouteAware {
               width: double.infinity,
               height: 150,
               decoration: BoxDecoration(
-                color: AppColors.primary.withOpacity(0.05),
+                color: c.primary.withValues(alpha: 0.05),
                 borderRadius: BorderRadius.circular(16),
                 border: Border.all(
-                  color: AppColors.primary.withOpacity(0.3),
+                  color: c.primary.withValues(alpha: 0.3),
                   width: 2,
                 ),
               ),
@@ -1208,13 +1218,13 @@ class _AddTurfScreenState extends State<AddTurfScreen> with RouteAware {
                   Icon(
                     Icons.add_photo_alternate_outlined,
                     size: 48,
-                    color: AppColors.primary.withOpacity(0.7),
+                    color: c.primary.withValues(alpha: 0.7),
                   ),
                   const SizedBox(height: 8),
-                  const Text(
+                  Text(
                     'Tap to add images',
                     style: TextStyle(
-                      color: AppColors.primary,
+                      color: c.primary,
                       fontWeight: FontWeight.w500,
                     ),
                   ),
@@ -1228,10 +1238,10 @@ class _AddTurfScreenState extends State<AddTurfScreen> with RouteAware {
           if (hasExistingImages) ...[
             Text(
               'Current Images (${_existingImages.length})',
-              style: const TextStyle(
+              style: TextStyle(
                 fontSize: 14,
                 fontWeight: FontWeight.w600,
-                color: AppColors.textSecondary,
+                color: c.textSecondary,
               ),
             ),
             const SizedBox(height: 8),
@@ -1251,7 +1261,7 @@ class _AddTurfScreenState extends State<AddTurfScreen> with RouteAware {
                     Container(
                       decoration: BoxDecoration(
                         borderRadius: BorderRadius.circular(12),
-                        color: AppColors.disabled,
+                        color: c.textDisabled,
                       ),
                       child: ClipRRect(
                         borderRadius: BorderRadius.circular(12),
@@ -1274,11 +1284,11 @@ class _AddTurfScreenState extends State<AddTurfScreen> with RouteAware {
                           },
                           errorBuilder: (context, error, stackTrace) {
                             return Container(
-                              color: AppColors.disabled,
-                              child: const Center(
+                              color: c.textDisabled,
+                              child: Center(
                                 child: Icon(
                                   Icons.broken_image_outlined,
-                                  color: AppColors.textSecondary,
+                                  color: c.textSecondary,
                                 ),
                               ),
                             );
@@ -1296,7 +1306,7 @@ class _AddTurfScreenState extends State<AddTurfScreen> with RouteAware {
                         child: Container(
                           padding: const EdgeInsets.all(4),
                           decoration: BoxDecoration(
-                            color: Colors.black.withOpacity(0.6),
+                            color: Colors.black.withValues(alpha: 0.6),
                             shape: BoxShape.circle,
                           ),
                           child: const Icon(
@@ -1314,13 +1324,13 @@ class _AddTurfScreenState extends State<AddTurfScreen> with RouteAware {
                         child: Container(
                           padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                           decoration: BoxDecoration(
-                            color: AppColors.primary,
+                            color: c.primary,
                             borderRadius: BorderRadius.circular(4),
                           ),
-                          child: const Text(
+                          child: Text(
                             'Primary',
                             style: TextStyle(
-                              color: Colors.white,
+                              color: c.onPrimary,
                               fontSize: 10,
                               fontWeight: FontWeight.w500,
                             ),
@@ -1338,10 +1348,10 @@ class _AddTurfScreenState extends State<AddTurfScreen> with RouteAware {
           if (hasNewImages) ...[
             Text(
               'New Images (${_selectedImages.length})',
-              style: const TextStyle(
+              style: TextStyle(
                 fontSize: 14,
                 fontWeight: FontWeight.w600,
-                color: AppColors.textSecondary,
+                color: c.textSecondary,
               ),
             ),
             const SizedBox(height: 8),
@@ -1373,7 +1383,7 @@ class _AddTurfScreenState extends State<AddTurfScreen> with RouteAware {
                         }
                         return Container(
                           decoration: BoxDecoration(
-                            color: AppColors.disabled,
+                            color: c.textDisabled,
                             borderRadius: BorderRadius.circular(12),
                           ),
                           child: const Center(
@@ -1392,7 +1402,7 @@ class _AddTurfScreenState extends State<AddTurfScreen> with RouteAware {
                         child: Container(
                           padding: const EdgeInsets.all(4),
                           decoration: BoxDecoration(
-                            color: Colors.black.withOpacity(0.6),
+                            color: Colors.black.withValues(alpha: 0.6),
                             shape: BoxShape.circle,
                           ),
                           child: const Icon(
@@ -1411,13 +1421,13 @@ class _AddTurfScreenState extends State<AddTurfScreen> with RouteAware {
                         child: Container(
                           padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                           decoration: BoxDecoration(
-                            color: AppColors.primary,
+                            color: c.primary,
                             borderRadius: BorderRadius.circular(4),
                           ),
-                          child: const Text(
+                          child: Text(
                             'Primary',
                             style: TextStyle(
-                              color: Colors.white,
+                              color: c.onPrimary,
                               fontSize: 10,
                               fontWeight: FontWeight.w500,
                             ),
@@ -1435,20 +1445,20 @@ class _AddTurfScreenState extends State<AddTurfScreen> with RouteAware {
           Container(
             padding: const EdgeInsets.all(16),
             decoration: BoxDecoration(
-              color: AppColors.info.withOpacity(0.1),
+              color: c.info.withValues(alpha: 0.1),
               borderRadius: BorderRadius.circular(12),
-              border: Border.all(color: AppColors.info.withOpacity(0.3)),
+              border: Border.all(color: c.info.withValues(alpha: 0.3)),
             ),
             child: Row(
               children: [
-                const Icon(Icons.lightbulb_outline, color: AppColors.info),
+                Icon(Icons.lightbulb_outline, color: c.info),
                 const SizedBox(width: 12),
                 Expanded(
                   child: Text(
                     'You can add images later from turf settings. The first image will be used as the primary display image.',
                     style: TextStyle(
                       fontSize: 13,
-                      color: AppColors.info.withOpacity(0.9),
+                      color: c.info.withValues(alpha: 0.9),
                     ),
                   ),
                 ),
@@ -1461,11 +1471,12 @@ class _AddTurfScreenState extends State<AddTurfScreen> with RouteAware {
   }
 
   Widget _buildNavigationButtons() {
+    final c = AppColors.of(context);
     return Container(
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
-        color: AppColors.glassFill,
-        border: Border(top: BorderSide(color: AppColors.glassBorder)),
+        color: c.glassFill,
+        border: Border(top: BorderSide(color: c.glassBorder)),
       ),
       child: Row(
         children: [
@@ -1489,26 +1500,26 @@ class _AddTurfScreenState extends State<AddTurfScreen> with RouteAware {
                   ? null
                   : (_currentStep < 3 ? _nextStep : _submitTurf),
               style: ElevatedButton.styleFrom(
-                backgroundColor: AppColors.primary,
+                backgroundColor: c.primary,
                 padding: const EdgeInsets.symmetric(vertical: 14),
                 shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(12),
                 ),
               ),
               child: _isLoading
-                  ? const SizedBox(
+                  ? SizedBox(
                       height: 20,
                       width: 20,
                       child: CircularProgressIndicator(
                         strokeWidth: 2,
-                        color: Colors.white,
+                        color: c.onPrimary,
                       ),
                     )
                   : Text(
                       _currentStep < 3
                           ? 'Next'
                           : (isEditing ? 'Update Turf' : 'Submit for Review'),
-                      style: const TextStyle(color: Colors.white),
+                      style: TextStyle(color: c.onPrimary),
                     ),
             ),
           ),
@@ -1525,15 +1536,16 @@ class _AddTurfScreenState extends State<AddTurfScreen> with RouteAware {
     int maxLines = 1,
     String? Function(String?)? validator,
   }) {
+    final c = AppColors.of(context);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(
           label,
-          style: const TextStyle(
+          style: TextStyle(
             fontSize: 14,
             fontWeight: FontWeight.w500,
-            color: AppColors.textPrimary,
+            color: c.textPrimary,
           ),
         ),
         const SizedBox(height: 8),
@@ -1543,20 +1555,20 @@ class _AddTurfScreenState extends State<AddTurfScreen> with RouteAware {
           validator: validator,
           decoration: InputDecoration(
             hintText: hint,
-            prefixIcon: Icon(prefixIcon, color: AppColors.primary),
+            prefixIcon: Icon(prefixIcon, color: c.primary),
             filled: true,
-            fillColor: AppColors.glassFill,
+            fillColor: c.glassFill,
             border: OutlineInputBorder(
               borderRadius: BorderRadius.circular(12),
-              borderSide: const BorderSide(color: AppColors.glassBorder),
+              borderSide: BorderSide(color: c.glassBorder),
             ),
             enabledBorder: OutlineInputBorder(
               borderRadius: BorderRadius.circular(12),
-              borderSide: const BorderSide(color: AppColors.glassBorder),
+              borderSide: BorderSide(color: c.glassBorder),
             ),
             focusedBorder: OutlineInputBorder(
               borderRadius: BorderRadius.circular(12),
-              borderSide: const BorderSide(color: AppColors.primary, width: 2),
+              borderSide: BorderSide(color: c.primary, width: 2),
             ),
           ),
         ),
@@ -1569,15 +1581,16 @@ class _AddTurfScreenState extends State<AddTurfScreen> with RouteAware {
     required TimeOfDay time,
     required Function(TimeOfDay) onChanged,
   }) {
+    final c = AppColors.of(context);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(
           label,
-          style: const TextStyle(
+          style: TextStyle(
             fontSize: 14,
             fontWeight: FontWeight.w500,
-            color: AppColors.textPrimary,
+            color: c.textPrimary,
           ),
         ),
         const SizedBox(height: 8),
@@ -1592,19 +1605,19 @@ class _AddTurfScreenState extends State<AddTurfScreen> with RouteAware {
           child: Container(
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
             decoration: BoxDecoration(
-              color: AppColors.glassFill,
+              color: c.glassFill,
               borderRadius: BorderRadius.circular(12),
-              border: Border.all(color: AppColors.glassBorder),
+              border: Border.all(color: c.glassBorder),
             ),
             child: Row(
               children: [
-                const Icon(Icons.access_time, color: AppColors.primary),
+                Icon(Icons.access_time, color: c.primary),
                 const SizedBox(width: 12),
                 Text(
                   time.format(context),
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontSize: 16,
-                    color: AppColors.textPrimary,
+                    color: c.textPrimary,
                   ),
                 ),
               ],

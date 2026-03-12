@@ -7,6 +7,7 @@ import 'features/owner/providers/turf_provider.dart';
 import 'features/owner/providers/slot_provider.dart';
 import 'features/owner/providers/booking_provider.dart';
 import 'config/supabase_config.dart';
+import 'config/theme_provider.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -21,6 +22,7 @@ void main() async {
     runApp(
       MultiProvider(
         providers: [
+          ChangeNotifierProvider(create: (_) => ThemeProvider()),
           ChangeNotifierProvider(create: (_) => AuthProvider()),
           ChangeNotifierProvider(create: (_) => TurfProvider()),
           ChangeNotifierProvider(create: (_) => SlotProvider()),

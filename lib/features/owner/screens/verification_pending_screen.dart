@@ -36,8 +36,9 @@ class _VerificationPendingScreenState extends State<VerificationPendingScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final c = AppColors.of(context);
     return Scaffold(
-      backgroundColor: AppColors.background,
+      backgroundColor: c.background,
       body: GlassScaffoldBackground(
         child: SafeArea(
           child: Padding(
@@ -52,23 +53,23 @@ class _VerificationPendingScreenState extends State<VerificationPendingScreen> {
                   width: 140,
                   height: 140,
                   decoration: BoxDecoration(
-                    color: AppColors.secondary.withOpacity(0.08),
+                    color: c.secondary.withValues(alpha: 0.08),
                     shape: BoxShape.circle,
-                    border: Border.all(color: AppColors.secondary.withOpacity(0.15)),
-                    boxShadow: AppColors.neonGlow(color: AppColors.secondary, blur: 24),
+                    border: Border.all(color: c.secondary.withValues(alpha: 0.15)),
+                    boxShadow: AppColors.neonGlow(color: c.secondary, blur: 24),
                   ),
                   child: Center(
                     child: Container(
                       width: 100,
                       height: 100,
                       decoration: BoxDecoration(
-                        color: AppColors.secondary.withOpacity(0.1),
+                        color: c.secondary.withValues(alpha: 0.1),
                         shape: BoxShape.circle,
                       ),
-                      child: const Icon(
+                      child: Icon(
                         Icons.hourglass_top_rounded,
                         size: 50,
-                        color: AppColors.secondary,
+                        color: c.secondary,
                       ),
                     ),
                   ),
@@ -76,12 +77,12 @@ class _VerificationPendingScreenState extends State<VerificationPendingScreen> {
                 
                 const SizedBox(height: 40),
                 
-                const Text(
+                Text(
                   'Verification Pending',
                   style: TextStyle(
                     fontSize: 26,
                     fontWeight: FontWeight.bold,
-                    color: AppColors.textPrimary,
+                    color: c.textPrimary,
                   ),
                   textAlign: TextAlign.center,
                 ),
@@ -90,9 +91,9 @@ class _VerificationPendingScreenState extends State<VerificationPendingScreen> {
                 
                 Text(
                   AppStrings.verificationMessage,
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontSize: 15,
-                    color: AppColors.textSecondary,
+                    color: c.textSecondary,
                     height: 1.5,
                   ),
                   textAlign: TextAlign.center,
@@ -142,12 +143,12 @@ class _VerificationPendingScreenState extends State<VerificationPendingScreen> {
                 
                 TextButton(
                   onPressed: () => Navigator.pushNamed(context, AppRoutes.addTurf),
-                  child: const Text(
+                  child: Text(
                     'Add Another Turf',
                     style: TextStyle(
                       fontSize: 14,
                       fontWeight: FontWeight.w600,
-                      color: AppColors.primary,
+                      color: c.primary,
                     ),
                   ),
                 ),
@@ -160,17 +161,18 @@ class _VerificationPendingScreenState extends State<VerificationPendingScreen> {
   }
 
   Widget _buildInfoRow(IconData icon, String title, String value) {
+    final c = AppColors.of(context);
     return Row(
       children: [
         Container(
           width: 44,
           height: 44,
           decoration: BoxDecoration(
-            color: AppColors.primary.withOpacity(0.1),
+            color: c.primary.withValues(alpha: 0.1),
             borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: AppColors.primary.withOpacity(0.15)),
+            border: Border.all(color: c.primary.withValues(alpha: 0.15)),
           ),
-          child: Icon(icon, color: AppColors.primary, size: 22),
+          child: Icon(icon, color: c.primary, size: 22),
         ),
         const SizedBox(width: 14),
         Expanded(
@@ -179,21 +181,21 @@ class _VerificationPendingScreenState extends State<VerificationPendingScreen> {
             children: [
               Text(
                 title,
-                style: const TextStyle(fontSize: 13, color: AppColors.textSecondary),
+                style: TextStyle(fontSize: 13, color: c.textSecondary),
               ),
               const SizedBox(height: 2),
               Text(
                 value,
-                style: const TextStyle(
+                style: TextStyle(
                   fontSize: 14,
                   fontWeight: FontWeight.w600,
-                  color: AppColors.textPrimary,
+                  color: c.textPrimary,
                 ),
               ),
             ],
           ),
         ),
-        const Icon(Icons.chevron_right, color: AppColors.textSecondary, size: 18),
+        Icon(Icons.chevron_right, color: c.textSecondary, size: 18),
       ],
     );
   }

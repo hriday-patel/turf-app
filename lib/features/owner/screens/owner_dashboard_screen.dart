@@ -5,6 +5,7 @@ import 'package:provider/provider.dart';
 import '../../../config/colors.dart';
 import '../../../config/glass_widgets.dart';
 import '../../../config/section_container.dart';
+import '../../../config/theme_provider.dart';
 import '../../../core/constants/strings.dart';
 import '../../../core/constants/enums.dart';
 import '../../../app/routes.dart';
@@ -186,14 +187,15 @@ class _OwnerDashboardScreenState extends State<OwnerDashboardScreen>
 
   @override
   Widget build(BuildContext context) {
+    final c = AppColors.of(context);
     return Scaffold(
-      backgroundColor: AppColors.background,
+      backgroundColor: c.background,
       body: GlassScaffoldBackground(
         child: SafeArea(
           child: RefreshIndicator(
             onRefresh: _forceRefreshData,
-            color: AppColors.primary,
-            backgroundColor: AppColors.surface,
+            color: c.primary,
+            backgroundColor: c.surface,
             child: CustomScrollView(
               slivers: [
                 SliverToBoxAdapter(child: _buildHeader()),
@@ -210,14 +212,14 @@ class _OwnerDashboardScreenState extends State<OwnerDashboardScreen>
         height: 58,
         decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(30),
-          gradient: const LinearGradient(
-            colors: [Color(0xFF6E8FF7), Color(0xFF4F7DF3)],
+          gradient: LinearGradient(
+            colors: [c.primary, c.primaryDark],
             begin: Alignment.topLeft,
             end: Alignment.bottomRight,
           ),
           boxShadow: [
             BoxShadow(
-              color: const Color(0xFF4F7DF3).withOpacity(0.18),
+              color: c.primary.withValues(alpha: 0.18),
               blurRadius: 18,
               offset: const Offset(0, 6),
             ),
@@ -232,12 +234,12 @@ class _OwnerDashboardScreenState extends State<OwnerDashboardScreen>
               padding: const EdgeInsets.symmetric(horizontal: 22),
               child: Row(
                 mainAxisSize: MainAxisSize.min,
-                children: const [
-                  Icon(Icons.add, color: Colors.white, size: 22),
-                  SizedBox(width: 8),
+                children: [
+                  Icon(Icons.add, color: c.onPrimary, size: 22),
+                  const SizedBox(width: 8),
                   Text(
                     'Add Turf',
-                    style: TextStyle(color: Colors.white, fontWeight: FontWeight.w600, fontSize: 15),
+                    style: TextStyle(color: c.onPrimary, fontWeight: FontWeight.w600, fontSize: 15),
                   ),
                 ],
               ),
@@ -251,6 +253,7 @@ class _OwnerDashboardScreenState extends State<OwnerDashboardScreen>
   Widget _buildHeader() {
     return Consumer<AuthProvider>(
       builder: (context, authProvider, _) {
+        final c = AppColors.of(context);
         final owner = authProvider.currentOwner;
         return Padding(
           padding: const EdgeInsets.fromLTRB(20, 16, 20, 8),
@@ -267,17 +270,17 @@ class _OwnerDashboardScreenState extends State<OwnerDashboardScreen>
                         'Welcome back,',
                         style: TextStyle(
                           fontSize: 14,
-                          color: AppColors.textSecondary,
+                          color: c.textSecondary,
                           letterSpacing: 0.5,
                         ),
                       ),
                       const SizedBox(height: 4),
                       Text(
                         owner?.name ?? 'Owner',
-                        style: const TextStyle(
+                        style: TextStyle(
                           fontSize: 26,
                           fontWeight: FontWeight.w800,
-                          color: AppColors.textPrimary,
+                          color: c.textPrimary,
                           letterSpacing: -0.5,
                         ),
                       ),
@@ -285,21 +288,46 @@ class _OwnerDashboardScreenState extends State<OwnerDashboardScreen>
                   ),
                   Row(
                     children: [
+                      // Theme toggle
+                      Consumer<ThemeProvider>(
+                        builder: (context, themeProvider, _) {
+                          return GestureDetector(
+                            onTap: () => themeProvider.toggle(),
+                            child: Container(
+                              width: 38,
+                              height: 38,
+                              decoration: BoxDecoration(
+                                color: c.glassFill,
+                                shape: BoxShape.circle,
+                                border: Border.all(color: c.glassBorder),
+                              ),
+                              child: Icon(
+                                themeProvider.isDarkMode
+                                    ? Icons.light_mode_rounded
+                                    : Icons.dark_mode_rounded,
+                                color: c.primary,
+                                size: 20,
+                              ),
+                            ),
+                          );
+                        },
+                      ),
+                      const SizedBox(width: 10),
                       PopupMenuButton<String>(
                         icon: Container(
                           width: 40,
                           height: 40,
                           decoration: BoxDecoration(
-                            color: AppColors.glassFill,
+                            color: c.glassFill,
                             shape: BoxShape.circle,
-                            border: Border.all(color: AppColors.primary.withOpacity(0.3)),
+                            border: Border.all(color: c.primary.withValues(alpha: 0.3)),
                             boxShadow: AppColors.neonGlow(blur: 8),
                           ),
                           child: Center(
                             child: Text(
                               (owner?.name ?? 'O').substring(0, 1).toUpperCase(),
-                              style: const TextStyle(
-                                color: AppColors.primary,
+                              style: TextStyle(
+                                color: c.primary,
                                 fontWeight: FontWeight.bold,
                                 fontSize: 18,
                               ),
@@ -317,14 +345,14 @@ class _OwnerDashboardScreenState extends State<OwnerDashboardScreen>
                           }
                         },
                         itemBuilder: (context) => [
-                          const PopupMenuItem(
+                          PopupMenuItem(
                             value: 'settings',
-                            child: Row(children: [Icon(Icons.person_outline, color: AppColors.textSecondary), SizedBox(width: 8), Text('Profile', style: TextStyle(color: AppColors.textPrimary))]),
+                            child: Row(children: [Icon(Icons.person_outline, color: c.textSecondary), const SizedBox(width: 8), Text('Profile', style: TextStyle(color: c.textPrimary))]),
                           ),
                           const PopupMenuDivider(),
-                          const PopupMenuItem(
+                          PopupMenuItem(
                             value: 'logout',
-                            child: Row(children: [Icon(Icons.logout, color: AppColors.error), SizedBox(width: 8), Text('Logout', style: TextStyle(color: AppColors.error))]),
+                            child: Row(children: [Icon(Icons.logout, color: c.error), const SizedBox(width: 8), Text('Logout', style: TextStyle(color: c.error))]),
                           ),
                         ],
                       ),
@@ -340,11 +368,11 @@ class _OwnerDashboardScreenState extends State<OwnerDashboardScreen>
                 child: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    const Icon(Icons.calendar_today, color: AppColors.primary, size: 18),
+                    Icon(Icons.calendar_today, color: c.primary, size: 18),
                     const SizedBox(width: 8),
                     Text(
                       _getFormattedDate(),
-                      style: const TextStyle(color: AppColors.textPrimary, fontWeight: FontWeight.w500),
+                      style: TextStyle(color: c.textPrimary, fontWeight: FontWeight.w500),
                     ),
                   ],
                 ),
@@ -361,6 +389,7 @@ class _OwnerDashboardScreenState extends State<OwnerDashboardScreen>
   Widget _buildQuickStats() {
     return Consumer2<TurfProvider, BookingProvider>(
       builder: (context, turfProvider, bookingProvider, _) {
+        final c = AppColors.of(context);
         // Initialize bookings once when turfs become available
         if (turfProvider.turfIds.isNotEmpty && !_bookingsInitialized) {
           _bookingsInitialized = true;
@@ -374,12 +403,12 @@ class _OwnerDashboardScreenState extends State<OwnerDashboardScreen>
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Text(
+              Text(
                 'Quick Overview',
                 style: TextStyle(
                   fontSize: 18,
                   fontWeight: FontWeight.bold,
-                  color: AppColors.textPrimary,
+                  color: c.textPrimary,
                 ),
               ),
               const SizedBox(height: 16),
@@ -457,6 +486,9 @@ class _OwnerDashboardScreenState extends State<OwnerDashboardScreen>
   }
 
   Widget _buildCarouselCard(_CarouselCardData data) {
+    // Carousel cards always have light pastel backgrounds — text must be dark for contrast
+    const darkText = Color(0xFF1E293B);
+    const subtitleText = Color(0xFF475569);
     return Container(
       margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
       padding: const EdgeInsets.all(18),
@@ -474,7 +506,7 @@ class _OwnerDashboardScreenState extends State<OwnerDashboardScreen>
               width: 64,
               height: 64,
               decoration: BoxDecoration(
-                color: data.iconColor.withOpacity(0.07),
+                color: data.iconColor.withValues(alpha: 0.07),
                 shape: BoxShape.circle,
               ),
             ),
@@ -488,28 +520,32 @@ class _OwnerDashboardScreenState extends State<OwnerDashboardScreen>
                   Container(
                     padding: const EdgeInsets.all(10),
                     decoration: BoxDecoration(
-                      color: data.iconColor.withOpacity(0.14),
+                      color: data.iconColor.withValues(alpha: 0.14),
                       borderRadius: BorderRadius.circular(14),
                     ),
                     child: Icon(data.icon, color: data.iconColor, size: 24),
                   ),
                   Text(
                     data.value,
-                    style: const TextStyle(
+                    style: TextStyle(
                       fontSize: 32,
                       fontWeight: FontWeight.bold,
-                      color: Color(0xFF1E293B),
+                      color: data.iconColor.withValues(alpha: 0.5),
                     ),
                   ),
                 ],
               ),
               const Spacer(),
+              const Text(
+                '',
+                style: TextStyle(fontSize: 0),
+              ),
               Text(
                 data.title,
                 style: const TextStyle(
                   fontSize: 14,
                   fontWeight: FontWeight.w600,
-                  color: Color(0xFF1E293B),
+                  color: darkText,
                 ),
               ),
               const SizedBox(height: 2),
@@ -517,7 +553,7 @@ class _OwnerDashboardScreenState extends State<OwnerDashboardScreen>
                 data.subtitle,
                 style: const TextStyle(
                   fontSize: 12,
-                  color: Color(0xFF1E293B),
+                  color: subtitleText,
                 ),
               ),
             ],
@@ -534,6 +570,7 @@ class _OwnerDashboardScreenState extends State<OwnerDashboardScreen>
     required Color color,
     required String subtitle,
   }) {
+    final c = AppColors.of(context);
     return GlassCard(
       padding: const EdgeInsets.all(16),
       child: Column(
@@ -545,9 +582,9 @@ class _OwnerDashboardScreenState extends State<OwnerDashboardScreen>
               Container(
                 padding: const EdgeInsets.all(8),
                 decoration: BoxDecoration(
-                  color: color.withOpacity(0.1),
+                  color: color.withValues(alpha: 0.1),
                   borderRadius: BorderRadius.circular(10),
-                  border: Border.all(color: color.withOpacity(0.2)),
+                  border: Border.all(color: color.withValues(alpha: 0.2)),
                 ),
                 child: Icon(icon, color: color, size: 22),
               ),
@@ -564,18 +601,18 @@ class _OwnerDashboardScreenState extends State<OwnerDashboardScreen>
           const SizedBox(height: 12),
           Text(
             title,
-            style: const TextStyle(
+            style: TextStyle(
               fontSize: 13,
               fontWeight: FontWeight.w600,
-              color: AppColors.textPrimary,
+              color: c.textPrimary,
             ),
           ),
           const SizedBox(height: 2),
           Text(
             subtitle,
-            style: const TextStyle(
+            style: TextStyle(
               fontSize: 11,
-              color: AppColors.textSecondary,
+              color: c.textSecondary,
             ),
           ),
         ],
@@ -584,17 +621,18 @@ class _OwnerDashboardScreenState extends State<OwnerDashboardScreen>
   }
 
   Widget _buildActionCards() {
+    final c = AppColors.of(context);
     return SectionContainer(
       margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text(
+          Text(
             'Quick Actions',
             style: TextStyle(
               fontSize: 18,
               fontWeight: FontWeight.bold,
-              color: AppColors.textPrimary,
+              color: c.textPrimary,
             ),
           ),
           const SizedBox(height: 16),
@@ -710,7 +748,7 @@ class _OwnerDashboardScreenState extends State<OwnerDashboardScreen>
           borderRadius: BorderRadius.circular(24),
           boxShadow: [
             BoxShadow(
-              color: Colors.black.withOpacity(0.20),
+              color: Colors.black.withValues(alpha: 0.20),
               blurRadius: 10,
               offset: const Offset(0, 3),
             ),
@@ -761,6 +799,7 @@ class _OwnerDashboardScreenState extends State<OwnerDashboardScreen>
     required Color color,
     required VoidCallback onTap,
   }) {
+    final c = AppColors.of(context);
     return GlassCard(
       onTap: onTap,
       padding: const EdgeInsets.all(16),
@@ -771,18 +810,18 @@ class _OwnerDashboardScreenState extends State<OwnerDashboardScreen>
           const SizedBox(height: 12),
           Text(
             title,
-            style: const TextStyle(
+            style: TextStyle(
               fontSize: 16,
               fontWeight: FontWeight.bold,
-              color: AppColors.textPrimary,
+              color: c.textPrimary,
             ),
           ),
           const SizedBox(height: 2),
           Text(
             subtitle,
-            style: const TextStyle(
+            style: TextStyle(
               fontSize: 12,
-              color: AppColors.textSecondary,
+              color: c.textSecondary,
             ),
           ),
         ],
@@ -793,6 +832,7 @@ class _OwnerDashboardScreenState extends State<OwnerDashboardScreen>
   Widget _buildRecentActivity() {
     return Consumer<BookingProvider>(
       builder: (context, bookingProvider, _) {
+        final c = AppColors.of(context);
         final recentBookings = bookingProvider.recentBookings;
         
         return NotchedSectionContainer(
@@ -803,12 +843,12 @@ class _OwnerDashboardScreenState extends State<OwnerDashboardScreen>
               Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  const Text(
+                  Text(
                     'Recent Bookings',
                     style: TextStyle(
                       fontSize: 18,
                       fontWeight: FontWeight.bold,
-                      color: AppColors.textPrimary,
+                      color: c.textPrimary,
                     ),
                   ),
                   TextButton(
@@ -832,6 +872,7 @@ class _OwnerDashboardScreenState extends State<OwnerDashboardScreen>
   }
 
   Widget _buildEmptyState() {
+    final c = AppColors.of(context);
     return GlassCard(
       padding: const EdgeInsets.all(32),
       child: Center(
@@ -840,13 +881,13 @@ class _OwnerDashboardScreenState extends State<OwnerDashboardScreen>
             Icon(
               Icons.event_busy_outlined,
               size: 48,
-              color: AppColors.textSecondary.withOpacity(0.5),
+              color: c.textSecondary.withValues(alpha: 0.5),
             ),
             const SizedBox(height: 12),
-            const Text(
+            Text(
               'No recent bookings',
               style: TextStyle(
-                color: AppColors.textSecondary,
+                color: c.textSecondary,
                 fontSize: 14,
               ),
             ),
@@ -879,6 +920,7 @@ class _OwnerDashboardScreenState extends State<OwnerDashboardScreen>
   }
 
   Widget _buildTimeline(List<BookingModel> bookings) {
+    final c = AppColors.of(context);
     return Column(
       children: List.generate(bookings.length, (index) {
         final booking = bookings[index];
@@ -895,10 +937,10 @@ class _OwnerDashboardScreenState extends State<OwnerDashboardScreen>
                   child: Text(
                     _formatBookingDateShort(booking.bookingDate),
                     textAlign: TextAlign.center,
-                    style: const TextStyle(
+                    style: TextStyle(
                       fontSize: 11,
                       fontWeight: FontWeight.w600,
-                      color: Color(0xFF475569),
+                      color: c.textSecondary,
                       height: 1.3,
                     ),
                   ),
@@ -913,8 +955,8 @@ class _OwnerDashboardScreenState extends State<OwnerDashboardScreen>
                     Container(
                       width: 10,
                       height: 10,
-                      decoration: const BoxDecoration(
-                        color: Color(0xFF6E8FF7),
+                      decoration: BoxDecoration(
+                        color: c.primary,
                         shape: BoxShape.circle,
                       ),
                     ),
@@ -922,7 +964,7 @@ class _OwnerDashboardScreenState extends State<OwnerDashboardScreen>
                       Expanded(
                         child: Container(
                           width: 2,
-                          color: const Color(0xFF9FB7F0),
+                          color: c.primaryLight,
                         ),
                       ),
                   ],
@@ -943,14 +985,15 @@ class _OwnerDashboardScreenState extends State<OwnerDashboardScreen>
   }
 
   Widget _buildTimelineCard(BookingModel booking) {
+    final c = AppColors.of(context);
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: c.surface,
         borderRadius: BorderRadius.circular(18),
         boxShadow: [
           BoxShadow(
-            color: const Color(0xFF0F172A).withOpacity(0.05),
+            color: c.textPrimary.withValues(alpha: 0.05),
             blurRadius: 10,
             offset: const Offset(0, 3),
           ),
@@ -966,22 +1009,22 @@ class _OwnerDashboardScreenState extends State<OwnerDashboardScreen>
                   booking.customerName.isNotEmpty ? booking.customerName : 'Customer',
                   overflow: TextOverflow.ellipsis,
                   maxLines: 1,
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontSize: 14,
                     fontWeight: FontWeight.w600,
-                    color: AppColors.textPrimary,
+                    color: c.textPrimary,
                   ),
                 ),
                 const SizedBox(height: 6),
                 Row(
                   children: [
-                    const Icon(Icons.access_time_outlined, size: 13, color: Color(0xFF475569)),
+                    Icon(Icons.access_time_outlined, size: 13, color: c.textSecondary),
                     const SizedBox(width: 5),
                     Flexible(
                       child: Text(
                         booking.displayTimeRange,
                         overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(fontSize: 12, color: Color(0xFF475569)),
+                        style: TextStyle(fontSize: 12, color: c.textSecondary),
                       ),
                     ),
                   ],
@@ -997,9 +1040,10 @@ class _OwnerDashboardScreenState extends State<OwnerDashboardScreen>
   }
 
   Widget _buildPaymentBadge(String status) {
+    final c = AppColors.of(context);
     final bool isPaid = status.toLowerCase() == 'paid';
-    final Color bgColor = isPaid ? const Color(0xFFDCFCE7) : const Color(0xFFE2E8F0);
-    final Color textColor = isPaid ? const Color(0xFF166534) : const Color(0xFF475569);
+    final Color bgColor = isPaid ? c.successLight : c.border;
+    final Color textColor = isPaid ? c.success : c.textSecondary;
 
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),

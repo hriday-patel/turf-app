@@ -3,24 +3,25 @@ import 'colors.dart';
 
 // ═══════════════════════════════════════════════════════════════
 //  CLEAN UI COMPONENT LIBRARY
-//  Simple, modern widgets for the light SaaS theme.
+//  Theme-aware widgets for both light and dark modes.
 // ═══════════════════════════════════════════════════════════════
 
-/// Screen background wrapper — flat color, no gradient.
+/// Screen background wrapper — uses adaptive background color.
 class GlassScaffoldBackground extends StatelessWidget {
   final Widget child;
   const GlassScaffoldBackground({super.key, required this.child});
 
   @override
   Widget build(BuildContext context) {
+    final c = AppColors.of(context);
     return ColoredBox(
-      color: AppColors.background,
+      color: c.background,
       child: child,
     );
   }
 }
 
-/// Clean white card with subtle shadow.
+/// Clean card with subtle shadow — theme-aware.
 class GlassCard extends StatelessWidget {
   final Widget child;
   final EdgeInsetsGeometry? padding;
@@ -43,13 +44,14 @@ class GlassCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final c = AppColors.of(context);
     final card = Container(
       margin: margin,
       decoration: BoxDecoration(
-        color: AppColors.cardBackground,
+        color: c.cardBackground,
         borderRadius: BorderRadius.circular(borderRadius),
-        border: Border.all(color: AppColors.border, width: 1),
-        boxShadow: AppColors.cardShadow,
+        border: Border.all(color: c.border, width: 1),
+        boxShadow: c.cardShadow,
       ),
       child: Padding(
         padding: padding ?? const EdgeInsets.all(16),
@@ -89,7 +91,8 @@ class GlassButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final accent = color ?? AppColors.primary;
+    final c = AppColors.of(context);
+    final accent = color ?? c.primary;
 
     if (outlined) {
       return SizedBox(
@@ -185,6 +188,7 @@ class GlassTextField extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final c = AppColors.of(context);
     return TextFormField(
       controller: controller,
       obscureText: obscureText,
@@ -194,14 +198,14 @@ class GlassTextField extends StatelessWidget {
       enabled: enabled,
       textAlign: textAlign,
       maxLines: maxLines,
-      style: style ?? const TextStyle(color: AppColors.textPrimary, fontSize: 15, fontWeight: FontWeight.w500),
+      style: style ?? TextStyle(color: c.textPrimary, fontSize: 15, fontWeight: FontWeight.w500),
       decoration: InputDecoration(
         labelText: label,
         hintText: hint,
-        prefixIcon: prefixIcon != null ? Icon(prefixIcon, color: AppColors.textSecondary, size: 20) : null,
+        prefixIcon: prefixIcon != null ? Icon(prefixIcon, color: c.textSecondary, size: 20) : null,
         suffixIcon: suffix,
         prefixText: prefixText,
-        prefixStyle: prefixStyle ?? const TextStyle(fontWeight: FontWeight.bold, color: AppColors.textPrimary),
+        prefixStyle: prefixStyle ?? TextStyle(fontWeight: FontWeight.bold, color: c.textPrimary),
       ),
     );
   }
@@ -216,14 +220,15 @@ class GlassSectionTitle extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final c = AppColors.of(context);
     return Padding(
       padding: padding,
       child: Text(
         title,
-        style: const TextStyle(
+        style: TextStyle(
           fontSize: 16,
           fontWeight: FontWeight.w600,
-          color: AppColors.textPrimary,
+          color: c.textPrimary,
         ),
       ),
     );
@@ -236,7 +241,8 @@ class GlassDivider extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return const Divider(color: AppColors.divider, height: 24, thickness: 1);
+    final c = AppColors.of(context);
+    return Divider(color: c.divider, height: 24, thickness: 1);
   }
 }
 
@@ -262,22 +268,23 @@ class GlassAppBar extends StatelessWidget implements PreferredSizeWidget {
 
   @override
   Widget build(BuildContext context) {
+    final c = AppColors.of(context);
     final appBar = AppBar(
       title: Text(
         title,
-        style: const TextStyle(
-          color: AppColors.textPrimary,
+        style: TextStyle(
+          color: c.textPrimary,
           fontWeight: FontWeight.w600,
           fontSize: 18,
         ),
       ),
-      backgroundColor: AppColors.surface,
+      backgroundColor: c.surface,
       elevation: 0,
       centerTitle: true,
       leading: leading ??
           (showBack
               ? IconButton(
-                  icon: const Icon(Icons.arrow_back_ios, color: AppColors.textPrimary, size: 20),
+                  icon: Icon(Icons.arrow_back_ios, color: c.textPrimary, size: 20),
                   onPressed: () => Navigator.pop(context),
                 )
               : null),

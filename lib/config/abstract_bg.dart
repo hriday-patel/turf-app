@@ -1,29 +1,32 @@
 import 'package:flutter/material.dart';
 import 'colors.dart';
 
-/// Decorative layered organic wave / blob background.
-/// Inspired by overlapping curved shapes that flow across the screen.
-/// Uses only the app blue palette at subtle opacities.
+/// Decorative layered organic wave / blob background — theme-aware.
 class AbstractBgShapes extends StatelessWidget {
   const AbstractBgShapes({super.key});
 
   @override
   Widget build(BuildContext context) {
+    final c = AppColors.of(context);
     return SizedBox.expand(
       child: CustomPaint(
-        painter: _WaveBlobPainter(),
+        painter: _WaveBlobPainter(primary: c.primary, primaryDark: c.primaryDark),
       ),
     );
   }
 }
 
 class _WaveBlobPainter extends CustomPainter {
+  final Color primary;
+  final Color primaryDark;
+
+  _WaveBlobPainter({required this.primary, required this.primaryDark});
+
   @override
   void paint(Canvas canvas, Size size) {
     final w = size.width;
     final h = size.height;
 
-    // --- Layer 1: large blob flowing from top-right to mid-left ---
     final p1 = Path()
       ..moveTo(w * 0.35, 0)
       ..quadraticBezierTo(w * 1.05, h * 0.08, w * 1.0, h * 0.38)
@@ -35,11 +38,10 @@ class _WaveBlobPainter extends CustomPainter {
     canvas.drawPath(
       p1,
       Paint()
-        ..color = AppColors.primary.withOpacity(0.06)
+        ..color = primary.withValues(alpha: 0.06)
         ..style = PaintingStyle.fill,
     );
 
-    // --- Layer 2: mid-screen organic curve from left ---
     final p2 = Path()
       ..moveTo(0, h * 0.30)
       ..quadraticBezierTo(w * 0.25, h * 0.22, w * 0.55, h * 0.35)
@@ -51,11 +53,10 @@ class _WaveBlobPainter extends CustomPainter {
     canvas.drawPath(
       p2,
       Paint()
-        ..color = AppColors.primary.withOpacity(0.045)
+        ..color = primary.withValues(alpha: 0.045)
         ..style = PaintingStyle.fill,
     );
 
-    // --- Layer 3: bottom-right wave flowing upward ---
     final p3 = Path()
       ..moveTo(w * 0.50, h)
       ..quadraticBezierTo(w * 1.15, h * 0.85, w, h * 0.60)
@@ -67,11 +68,10 @@ class _WaveBlobPainter extends CustomPainter {
     canvas.drawPath(
       p3,
       Paint()
-        ..color = AppColors.primaryDark.withOpacity(0.05)
+        ..color = primaryDark.withValues(alpha: 0.05)
         ..style = PaintingStyle.fill,
     );
 
-    // --- Layer 4: small accent blob top-left ---
     final p4 = Path()
       ..moveTo(0, 0)
       ..lineTo(w * 0.30, 0)
@@ -82,11 +82,12 @@ class _WaveBlobPainter extends CustomPainter {
     canvas.drawPath(
       p4,
       Paint()
-        ..color = AppColors.primary.withOpacity(0.07)
+        ..color = primary.withValues(alpha: 0.07)
         ..style = PaintingStyle.fill,
     );
   }
 
   @override
-  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
+  bool shouldRepaint(covariant _WaveBlobPainter oldDelegate) =>
+      primary != oldDelegate.primary || primaryDark != oldDelegate.primaryDark;
 }

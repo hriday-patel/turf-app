@@ -176,20 +176,21 @@ class _SlotManagementScreenState extends State<SlotManagementScreen> with RouteA
 
   @override
   Widget build(BuildContext context) {
+    final c = AppColors.of(context);
     return Consumer<TurfProvider>(
       builder: (context, turfProvider, _) {
         final turf = turfProvider.getTurfById(widget.turfId);
 
         if (turf == null) {
           return Scaffold(
-            appBar: AppBar(title: const Text('Slot Management', style: TextStyle(color: AppColors.textPrimary)), backgroundColor: AppColors.background, elevation: 0),
-            backgroundColor: AppColors.background,
-            body: const Center(child: Text('Turf not found', style: TextStyle(color: AppColors.textPrimary))),
+            appBar: AppBar(title: Text('Slot Management', style: TextStyle(color: c.textPrimary)), backgroundColor: c.background, elevation: 0),
+            backgroundColor: c.background,
+            body: Center(child: Text('Turf not found', style: TextStyle(color: c.textPrimary))),
           );
         }
 
         return Scaffold(
-          backgroundColor: AppColors.background,
+          backgroundColor: c.background,
           body: GlassScaffoldBackground(
             child: SafeArea(
               child: Column(
@@ -228,8 +229,9 @@ class _SlotManagementScreenState extends State<SlotManagementScreen> with RouteA
   }
 
   Widget _buildCalendar() {
+    final c = AppColors.of(context);
     return Container(
-      color: AppColors.glassFill,
+      color: c.glassFill,
       child: TableCalendar(
         firstDay: DateTime.now().subtract(const Duration(days: 7)),
         lastDay: DateTime.now().add(const Duration(days: 60)),
@@ -242,14 +244,14 @@ class _SlotManagementScreenState extends State<SlotManagementScreen> with RouteA
         },
         calendarStyle: CalendarStyle(
           todayDecoration: BoxDecoration(
-            color: AppColors.primary.withOpacity(0.3),
+            color: c.primary.withValues(alpha: 0.3),
             shape: BoxShape.circle,
           ),
-          selectedDecoration: const BoxDecoration(
-            color: AppColors.primary,
+          selectedDecoration: BoxDecoration(
+            color: c.primary,
             shape: BoxShape.circle,
           ),
-          weekendTextStyle: const TextStyle(color: AppColors.secondary),
+          weekendTextStyle: TextStyle(color: c.secondary),
         ),
         headerStyle: const HeaderStyle(
           formatButtonVisible: true,
@@ -260,19 +262,20 @@ class _SlotManagementScreenState extends State<SlotManagementScreen> with RouteA
   }
 
   Widget _buildNetSelector(int numberOfNets) {
+    final c = AppColors.of(context);
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-      color: AppColors.glassFill,
+      color: c.glassFill,
       child: Row(
         children: [
-          const Icon(Icons.grid_view, size: 16, color: AppColors.textSecondary),
+          Icon(Icons.grid_view, size: 16, color: c.textSecondary),
           const SizedBox(width: 8),
-          const Text(
+          Text(
             'Net',
             style: TextStyle(
               fontSize: 13,
               fontWeight: FontWeight.w600,
-              color: AppColors.textSecondary,
+              color: c.textSecondary,
             ),
           ),
           const SizedBox(width: 12),
@@ -288,9 +291,9 @@ class _SlotManagementScreenState extends State<SlotManagementScreen> with RouteA
                   setState(() => _selectedNetNumber = net);
                   _updateToggleStatesFromSlots();
                 },
-                selectedColor: AppColors.primary,
+                selectedColor: c.primary,
                 labelStyle: TextStyle(
-                  color: isSelected ? Colors.white : AppColors.textPrimary,
+                  color: isSelected ? c.onPrimary : c.textPrimary,
                   fontSize: 12,
                   fontWeight: FontWeight.w600,
                 ),
@@ -305,26 +308,28 @@ class _SlotManagementScreenState extends State<SlotManagementScreen> with RouteA
   }
 
   Widget _buildLegend() {
+    final c = AppColors.of(context);
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-      color: AppColors.glassFill,
+      color: c.glassFill,
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceAround,
         children: [
-          _buildLegendItem(AppColors.slotAvailable, 'Available'),
-          _buildLegendItem(AppColors.slotReserved, 'Reserved'),
-          _buildLegendItem(AppColors.slotBooked, 'Booked'),
-          _buildLegendItem(AppColors.slotBlocked, 'Blocked'),
-          _buildLegendItem(Colors.grey.shade400, 'Closed'),
+          _buildLegendItem(c.success, 'Available'),
+          _buildLegendItem(c.warning, 'Reserved'),
+          _buildLegendItem(c.primary, 'Booked'),
+          _buildLegendItem(c.error, 'Blocked'),
+          _buildLegendItem(c.textDisabled, 'Closed'),
         ],
       ),
     );
   }
 
   Widget _buildDayControls() {
+    final c = AppColors.of(context);
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-      color: AppColors.glassFill,
+      color: c.glassFill,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -336,16 +341,16 @@ class _SlotManagementScreenState extends State<SlotManagementScreen> with RouteA
                 children: [
                   Icon(
                     _isDayOpen ? Icons.wb_sunny : Icons.nights_stay,
-                    color: _isDayOpen ? Colors.orange : Colors.grey,
+                    color: _isDayOpen ? c.warning : c.textDisabled,
                     size: 20,
                   ),
                   const SizedBox(width: 8),
-                  const Text(
+                  Text(
                     'Day Status',
                     style: TextStyle(
                       fontSize: 14,
                       fontWeight: FontWeight.bold,
-                      color: AppColors.textPrimary,
+                      color: c.textPrimary,
                     ),
                   ),
                 ],
@@ -355,14 +360,14 @@ class _SlotManagementScreenState extends State<SlotManagementScreen> with RouteA
                   Container(
                     padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                     decoration: BoxDecoration(
-                      color: _isDayOpen ? AppColors.success.withOpacity(0.1) : AppColors.error.withOpacity(0.1),
+                      color: _isDayOpen ? c.success.withValues(alpha: 0.1) : c.error.withValues(alpha: 0.1),
                       borderRadius: BorderRadius.circular(12),
                     ),
                     child: Text(
                       _isDayOpen ? 'OPEN' : 'CLOSED',
                       style: TextStyle(
                         fontSize: 11,
-                        color: _isDayOpen ? AppColors.success : AppColors.error,
+                        color: _isDayOpen ? c.success : c.error,
                         fontWeight: FontWeight.bold,
                       ),
                     ),
@@ -370,7 +375,7 @@ class _SlotManagementScreenState extends State<SlotManagementScreen> with RouteA
                   Switch(
                     value: _isDayOpen,
                     onChanged: (value) => _toggleDay(value),
-                    activeColor: AppColors.success,
+                    activeColor: c.success,
                   ),
                 ],
               ),
@@ -382,14 +387,14 @@ class _SlotManagementScreenState extends State<SlotManagementScreen> with RouteA
           const SizedBox(height: 8),
           Row(
             children: [
-              const Icon(Icons.access_time, size: 16, color: AppColors.textSecondary),
+              Icon(Icons.access_time, size: 16, color: c.textSecondary),
               const SizedBox(width: 4),
-              const Text(
+              Text(
                 'Time Periods',
                 style: TextStyle(
                   fontSize: 12,
                   fontWeight: FontWeight.w500,
-                  color: AppColors.textSecondary,
+                  color: c.textSecondary,
                 ),
               ),
             ],
@@ -417,15 +422,16 @@ class _SlotManagementScreenState extends State<SlotManagementScreen> with RouteA
   }
 
   Widget _buildPeriodToggle(String label, String timeRange, bool isOpen, Function(bool) onChanged) {
+    final c = AppColors.of(context);
     return GestureDetector(
       onTap: () => onChanged(!isOpen),
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
         decoration: BoxDecoration(
-          color: isOpen ? AppColors.success.withOpacity(0.1) : AppColors.textSecondary.withOpacity(0.1),
+          color: isOpen ? c.success.withValues(alpha: 0.1) : c.textSecondary.withValues(alpha: 0.1),
           borderRadius: BorderRadius.circular(8),
           border: Border.all(
-            color: isOpen ? AppColors.success.withOpacity(0.3) : AppColors.textSecondary.withOpacity(0.3),
+            color: isOpen ? c.success.withValues(alpha: 0.3) : c.textSecondary.withValues(alpha: 0.3),
           ),
         ),
         child: Row(
@@ -440,14 +446,14 @@ class _SlotManagementScreenState extends State<SlotManagementScreen> with RouteA
                     style: TextStyle(
                       fontSize: 12,
                       fontWeight: FontWeight.w600,
-                      color: isOpen ? AppColors.textPrimary : AppColors.textSecondary,
+                      color: isOpen ? c.textPrimary : c.textSecondary,
                     ),
                   ),
                   Text(
                     timeRange,
                     style: TextStyle(
                       fontSize: 10,
-                      color: isOpen ? AppColors.textSecondary : AppColors.textSecondary.withOpacity(0.5),
+                      color: isOpen ? c.textSecondary : c.textSecondary.withValues(alpha: 0.5),
                     ),
                   ),
                 ],
@@ -457,7 +463,7 @@ class _SlotManagementScreenState extends State<SlotManagementScreen> with RouteA
               width: 36,
               height: 20,
               decoration: BoxDecoration(
-                color: isOpen ? AppColors.success : AppColors.textSecondary,
+                color: isOpen ? c.success : c.textSecondary,
                 borderRadius: BorderRadius.circular(10),
               ),
               child: Stack(
@@ -469,8 +475,8 @@ class _SlotManagementScreenState extends State<SlotManagementScreen> with RouteA
                     child: Container(
                       width: 16,
                       height: 16,
-                      decoration: const BoxDecoration(
-                        color: Colors.white,
+                      decoration: BoxDecoration(
+                        color: c.surface,
                         shape: BoxShape.circle,
                       ),
                     ),
@@ -595,6 +601,7 @@ class _SlotManagementScreenState extends State<SlotManagementScreen> with RouteA
   }
 
   Widget _buildLegendItem(Color color, String label) {
+    final c = AppColors.of(context);
     return Row(
       children: [
         Container(
@@ -610,7 +617,7 @@ class _SlotManagementScreenState extends State<SlotManagementScreen> with RouteA
           label,
           style: TextStyle(
             fontSize: 11,
-            color: AppColors.textSecondary,
+            color: c.textSecondary,
           ),
         ),
       ],
@@ -628,6 +635,7 @@ class _SlotManagementScreenState extends State<SlotManagementScreen> with RouteA
         final netSlots = _getSlotsForSelectedNet(slotProvider.slots);
 
         if (netSlots.isEmpty) {
+          final c = AppColors.of(context);
           return Center(
             child: Column(
               mainAxisAlignment: MainAxisAlignment.center,
@@ -635,14 +643,14 @@ class _SlotManagementScreenState extends State<SlotManagementScreen> with RouteA
                 Icon(
                   Icons.event_busy,
                   size: 64,
-                  color: AppColors.textSecondary.withOpacity(0.5),
+                  color: c.textSecondary.withValues(alpha: 0.5),
                 ),
                 const SizedBox(height: 16),
                 Text(
                   'No slots for this date',
                   style: TextStyle(
                     fontSize: 16,
-                    color: AppColors.textSecondary,
+                    color: c.textSecondary,
                   ),
                 ),
               ],
@@ -685,20 +693,21 @@ class _SlotManagementScreenState extends State<SlotManagementScreen> with RouteA
   }
 
   Widget _buildPeriodSection(String title, String timeRange, IconData icon, List<SlotModel> slots) {
+    final c = AppColors.of(context);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         // Period header
         Row(
           children: [
-            Icon(icon, size: 18, color: AppColors.primary),
+            Icon(icon, size: 18, color: c.primary),
             const SizedBox(width: 8),
             Text(
               title,
-              style: const TextStyle(
+              style: TextStyle(
                 fontSize: 14,
                 fontWeight: FontWeight.bold,
-                color: AppColors.textPrimary,
+                color: c.textPrimary,
               ),
             ),
             const SizedBox(width: 6),
@@ -706,13 +715,13 @@ class _SlotManagementScreenState extends State<SlotManagementScreen> with RouteA
               timeRange,
               style: TextStyle(
                 fontSize: 12,
-                color: AppColors.textSecondary,
+                color: c.textSecondary,
               ),
             ),
             const Spacer(),
             Text(
               '${slots.where((s) => s.status == SlotStatus.available).length}/${slots.length} open',
-              style: TextStyle(fontSize: 11, color: AppColors.textSecondary),
+              style: TextStyle(fontSize: 11, color: c.textSecondary),
             ),
           ],
         ),
@@ -722,13 +731,13 @@ class _SlotManagementScreenState extends State<SlotManagementScreen> with RouteA
             width: double.infinity,
             padding: const EdgeInsets.symmetric(vertical: 16),
             decoration: BoxDecoration(
-              color: Colors.grey.shade100,
+              color: c.inputBackground,
               borderRadius: BorderRadius.circular(8),
             ),
             child: Center(
               child: Text(
                 'No slots in this period',
-                style: TextStyle(fontSize: 12, color: AppColors.textSecondary),
+                style: TextStyle(fontSize: 12, color: c.textSecondary),
               ),
             ),
           )
@@ -752,6 +761,7 @@ class _SlotManagementScreenState extends State<SlotManagementScreen> with RouteA
   }
 
   Widget _buildSlotCard(SlotModel slot) {
+    final c = AppColors.of(context);
     Color statusColor;
     IconData statusIcon;
     String statusLabel;
@@ -766,37 +776,37 @@ class _SlotManagementScreenState extends State<SlotManagementScreen> with RouteA
 
     // Past slots are always dimmed and non-interactive
     if (isPast) {
-      statusColor = Colors.grey.shade400;
+      statusColor = c.textDisabled;
       statusIcon = Icons.history;
       statusLabel = 'Past';
     } else if (isPeriodClosed || isAutoBlocked) {
-      statusColor = Colors.grey.shade400;
+      statusColor = c.textDisabled;
       statusIcon = Icons.block_outlined;
       statusLabel = 'Closed';
     } else {
       switch (slot.status) {
         case SlotStatus.available:
-          statusColor = AppColors.slotAvailable;
+          statusColor = c.success;
           statusIcon = Icons.check_circle_outline;
           statusLabel = 'Available';
           break;
         case SlotStatus.reserved:
-          statusColor = AppColors.slotReserved;
+          statusColor = c.warning;
           statusIcon = Icons.schedule;
           statusLabel = 'Reserved';
           break;
         case SlotStatus.booked:
-          statusColor = AppColors.slotBooked;
+          statusColor = c.primary;
           statusIcon = Icons.event_available;
           statusLabel = 'Booked';
           break;
         case SlotStatus.blocked:
-          statusColor = AppColors.slotBlocked;
+          statusColor = c.error;
           statusIcon = Icons.block;
           statusLabel = 'Blocked';
           break;
         default:
-          statusColor = AppColors.slotAvailable;
+          statusColor = c.success;
           statusIcon = Icons.check_circle_outline;
           statusLabel = 'Available';
       }
@@ -810,9 +820,9 @@ class _SlotManagementScreenState extends State<SlotManagementScreen> with RouteA
         opacity: isPast ? 0.5 : 1.0,
         child: Container(
           decoration: BoxDecoration(
-            color: statusColor.withOpacity(isInteractive ? 0.1 : 0.15),
+            color: statusColor.withValues(alpha: isInteractive ? 0.1 : 0.15),
             borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: statusColor.withOpacity(isInteractive ? 0.5 : 0.3)),
+            border: Border.all(color: statusColor.withValues(alpha: isInteractive ? 0.5 : 0.3)),
           ),
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
@@ -832,7 +842,7 @@ class _SlotManagementScreenState extends State<SlotManagementScreen> with RouteA
                   'Past',
                   style: TextStyle(
                     fontSize: 10,
-                    color: Colors.grey.shade600,
+                    color: c.textHint,
                     fontWeight: FontWeight.w500,
                   ),
                 )
@@ -841,7 +851,7 @@ class _SlotManagementScreenState extends State<SlotManagementScreen> with RouteA
                   'Closed',
                   style: TextStyle(
                     fontSize: 10,
-                    color: Colors.grey.shade600,
+                    color: c.textHint,
                     fontWeight: FontWeight.w500,
                   ),
                 )
@@ -850,7 +860,7 @@ class _SlotManagementScreenState extends State<SlotManagementScreen> with RouteA
                   '₹${slot.price.toInt()}',
                   style: TextStyle(
                     fontSize: 11,
-                    color: AppColors.textSecondary,
+                    color: c.textSecondary,
                   ),
                 ),
             ],
@@ -873,6 +883,7 @@ class _SlotManagementScreenState extends State<SlotManagementScreen> with RouteA
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),
       builder: (context) {
+        final c = AppColors.of(context);
         return Padding(
           padding: const EdgeInsets.all(20),
           child: Column(
@@ -882,23 +893,23 @@ class _SlotManagementScreenState extends State<SlotManagementScreen> with RouteA
                 width: 40,
                 height: 4,
                 decoration: BoxDecoration(
-                  color: AppColors.divider,
+                  color: c.divider,
                   borderRadius: BorderRadius.circular(2),
                 ),
               ),
               const SizedBox(height: 20),
               Text(
                 slot.displayTimeRange,
-                style: const TextStyle(
+                style: TextStyle(
                   fontSize: 20,
                   fontWeight: FontWeight.bold,
-                  color: AppColors.textPrimary,
+                  color: c.textPrimary,
                 ),
               ),
               const SizedBox(height: 8),
               Text(
                 'Status: ${slot.status.displayName}',
-                style: TextStyle(color: AppColors.textSecondary),
+                style: TextStyle(color: c.textSecondary),
               ),
               const SizedBox(height: 24),
               
@@ -906,7 +917,7 @@ class _SlotManagementScreenState extends State<SlotManagementScreen> with RouteA
                 _buildActionButton(
                   icon: Icons.block,
                   label: 'Block Slot',
-                  color: AppColors.warning,
+                  color: c.warning,
                   onTap: () async {
                     Navigator.pop(context);
                     await slotProvider.blockSlot(
@@ -923,7 +934,7 @@ class _SlotManagementScreenState extends State<SlotManagementScreen> with RouteA
                 _buildActionButton(
                   icon: Icons.check,
                   label: 'Unblock Slot',
-                  color: AppColors.success,
+                  color: c.success,
                   onTap: () async {
                     Navigator.pop(context);
                     await slotProvider.unblockSlot(slot.slotId);
@@ -936,7 +947,7 @@ class _SlotManagementScreenState extends State<SlotManagementScreen> with RouteA
                 _buildActionButton(
                   icon: Icons.info,
                   label: 'View Booking Details',
-                  color: AppColors.info,
+                  color: c.info,
                   onTap: () {
                     Navigator.pop(context);
                     // TODO: Show booking details
@@ -958,6 +969,7 @@ class _SlotManagementScreenState extends State<SlotManagementScreen> with RouteA
     required Color color,
     required VoidCallback onTap,
   }) {
+    final c = AppColors.of(context);
     return SizedBox(
       width: double.infinity,
       child: ElevatedButton.icon(
@@ -966,7 +978,7 @@ class _SlotManagementScreenState extends State<SlotManagementScreen> with RouteA
         label: Text(label),
         style: ElevatedButton.styleFrom(
           backgroundColor: color,
-          foregroundColor: Colors.white,
+          foregroundColor: c.onPrimary,
           padding: const EdgeInsets.symmetric(vertical: 14),
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(12),

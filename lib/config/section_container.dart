@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
+import 'colors.dart';
 
-/// Premium SaaS-style gradient section container.
-/// Wraps dashboard sections with a visible rounded gradient background.
+/// Premium gradient section container — theme-aware.
 class SectionContainer extends StatelessWidget {
   final Widget child;
   final EdgeInsetsGeometry? margin;
@@ -16,20 +16,17 @@ class SectionContainer extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final c = AppColors.of(context);
     return Container(
       margin: margin ?? const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
       padding: padding,
       decoration: BoxDecoration(
-        gradient: const LinearGradient(
-          colors: [Color(0xFFAFC6FF), Color(0xFFD7E4FF)],
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-        ),
+        gradient: c.sectionGradient,
         borderRadius: BorderRadius.circular(28),
-        border: Border.all(color: const Color(0xFFC2D5FF), width: 1),
+        border: Border.all(color: c.sectionBorder, width: 1),
         boxShadow: [
           BoxShadow(
-            color: const Color(0xFF2563EB).withOpacity(0.08),
+            color: c.primary.withValues(alpha: 0.08),
             blurRadius: 16,
             offset: const Offset(0, 4),
           ),
@@ -40,8 +37,7 @@ class SectionContainer extends StatelessWidget {
   }
 }
 
-/// Variant with a downward central notch on the top edge,
-/// styled like a transaction / statistics panel.
+/// Variant with a downward central notch on the top edge.
 class NotchedSectionContainer extends StatelessWidget {
   final Widget child;
   final EdgeInsetsGeometry? margin;
@@ -56,6 +52,7 @@ class NotchedSectionContainer extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final c = AppColors.of(context);
     return Container(
       margin: margin ?? const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
       child: ClipPath(
@@ -63,11 +60,7 @@ class NotchedSectionContainer extends StatelessWidget {
         child: Container(
           padding: padding.add(const EdgeInsets.only(top: 18)),
           decoration: BoxDecoration(
-            gradient: const LinearGradient(
-              colors: [Color(0xFFAFC6FF), Color(0xFFD7E4FF)],
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
-            ),
+            gradient: c.sectionGradient,
           ),
           child: child,
         ),
