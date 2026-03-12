@@ -41,7 +41,6 @@ class _SlotBookingScreenState extends State<SlotBookingScreen> with RouteAware, 
   TurfModel? _selectedTurf;
   int _selectedNetNumber = 1;
   DateTime _selectedDate = DateTime.now();
-  bool _isLoading = false;
   bool _isSidebarVisible = false;
   int _loadSlotsGeneration = 0;
   
@@ -279,7 +278,6 @@ class _SlotBookingScreenState extends State<SlotBookingScreen> with RouteAware, 
     setState(() {
       _selectedTurf = turf;
       _selectedNetNumber = 1;
-      _isLoading = true;
       if (shouldCloseSidebar) {
         _isSidebarVisible = false;
       }
@@ -291,7 +289,6 @@ class _SlotBookingScreenState extends State<SlotBookingScreen> with RouteAware, 
     if (_selectedNetNumber == netNumber) return;
     setState(() {
       _selectedNetNumber = netNumber;
-      _isLoading = true;
     });
     _loadSlots();
   }
@@ -299,7 +296,6 @@ class _SlotBookingScreenState extends State<SlotBookingScreen> with RouteAware, 
   void _onDateSelected(DateTime date) {
     setState(() {
       _selectedDate = date;
-      _isLoading = true;
       // Note: We don't reset toggles - each date has its own state per turf+net
     });
     _loadSlots();
@@ -1402,7 +1398,6 @@ class _SlotBookingScreenState extends State<SlotBookingScreen> with RouteAware, 
   Widget _buildSlotCard(SlotModel slot) {
     final c = AppColors.of(context);
     final isPast = _isSlotPast(slot);
-    final isAvailable = slot.status == SlotStatus.available && !isPast;
     final isBooked = slot.status == SlotStatus.booked;
     final isReserved = slot.status == SlotStatus.reserved; // Pending payment
     final isBlocked = slot.status == SlotStatus.blocked; // Shows as "Closed"
@@ -1421,7 +1416,6 @@ class _SlotBookingScreenState extends State<SlotBookingScreen> with RouteAware, 
     Color textColor;
     Color borderColor;
     String statusLabel;
-    bool showManualOverrideOption = false;
     
     // Determine slot display based on status
     if (isPast) {
@@ -1445,14 +1439,12 @@ class _SlotBookingScreenState extends State<SlotBookingScreen> with RouteAware, 
       borderColor = c.border;
       textColor = c.textSecondary;
       statusLabel = 'Closed';
-      showManualOverrideOption = true;
     } else if (isManuallyOpened && (isBlocked || isPeriodClosed)) {
       // Slot was closed but manually opened by owner
       bgColor = c.successLight;
       borderColor = c.success;
       textColor = c.success;
       statusLabel = 'Open';
-      showManualOverrideOption = true;
     } else {
       bgColor = c.successLight;
       borderColor = c.success;
@@ -1958,15 +1950,6 @@ class _SlotBookingScreenState extends State<SlotBookingScreen> with RouteAware, 
     _loadSlots();
   }
 
-  Future<void> _unblockSlot(SlotModel slot) async {
-    final slotProvider = Provider.of<SlotProvider>(context, listen: false);
-    // Always set override marker so sync preserves the manually opened slot
-    await slotProvider.unblockSlot(
-      slot.slotId,
-      overrideMarker: 'Opened by owner',
-    );
-    _loadSlots();
-  }
 }
 
 /// Booking Dialog Widget
@@ -2025,12 +2008,6 @@ class _BookingDialogState extends State<_BookingDialog> {
   double get _advanceAmount {
     if (_advanceController.text.isEmpty) return 0;
     return double.tryParse(_advanceController.text) ?? 0;
-  }
-
-  PaymentStatus get _paymentStatus {
-    if (_bookingAmount <= 0) return PaymentStatus.pending;
-    if (_advanceAmount >= _bookingAmount) return PaymentStatus.paid;
-    return PaymentStatus.pending;
   }
 
   @override
@@ -2689,58 +2666,6 @@ class _BookingDialogState extends State<_BookingDialog> {
       ),
     );
   }
-
-  String _buildBookingConfirmationMessage(String customerName, String dateStr) {
-    final netInfo = widget.turf.numberOfNets > 1 ? '\n🥅 *Net:* Net ${widget.selectedNetNumber}' : '';
-    final advanceInfo = _advanceAmount > 0 
-        ? '\n💵 *Advance Paid:* ₹${_advanceAmount.toInt()}${_advanceAmount < _bookingAmount ? '\n💳 *Remaining:* ₹${(_bookingAmount - _advanceAmount).toInt()}' : ''}'
-        : '';
-    
-    const appName = 'TurfBook';
-    const appContact = '📞 For customer support, call +91 9929615076';
-    
-    return '''🎉 *Booking Confirmed!*
-
-Hi $customerName,
-
-Your booking has been confirmed:
-
-📍 *Venue:* ${widget.turf.turfName}$netInfo
-📅 *Date:* $dateStr
-⏰ *Time:* ${widget.slot.displayTimeRange}
-💰 *Total Amount:* ₹${_bookingAmount.toInt()}$advanceInfo
-
-Please arrive 10 minutes before your slot time.
-
-$appContact
-
-Thank you for choosing $appName! 🏏''';
-  }
-
-  Future<void> _sendWhatsAppMessage(String phone, String message) async {
-    String cleanPhone = phone.replaceAll(RegExp(r'[^0-9]'), '');
-    if (!cleanPhone.startsWith('91') && cleanPhone.length == 10) {
-      cleanPhone = '91$cleanPhone';
-    }
-    
-    final encodedMessage = Uri.encodeComponent(message);
-    final whatsappUrl = 'https://wa.me/$cleanPhone?text=$encodedMessage';
-    
-    try {
-      final uri = Uri.parse(whatsappUrl);
-      if (await canLaunchUrl(uri)) {
-        await launchUrl(uri, mode: LaunchMode.externalApplication);
-      } else {
-        if (mounted) {
-          _showPremiumToast(context, 'Could not open WhatsApp', type: _ToastType.error);
-        }
-      }
-    } catch (e) {
-      if (mounted) {
-        _showPremiumToast(context, 'Error: $e', type: _ToastType.error);
-      }
-    }
-  }
 }
 
 /// Booking Success Popup - Complete Redesign
@@ -2786,7 +2711,7 @@ class _BookingSuccessPopupState extends State<_BookingSuccessPopup> with TickerP
   bool _isSendingConfirmation = false;
   bool _confirmationSent = false;
   bool _isMarkingPayment = false;
-  int _currentStep = 0; // 0: Initial, 1: Confirmation Sent, 2: Complete
+
 
   @override
   void initState() {

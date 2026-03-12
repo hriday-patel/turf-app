@@ -4,7 +4,6 @@ import 'package:table_calendar/table_calendar.dart';
 import '../../../config/colors.dart';
 import '../../../config/glass_widgets.dart';
 import '../../../core/constants/enums.dart';
-import '../../../data/models/turf_model.dart';
 import '../../../data/models/slot_model.dart';
 import '../../../app/routes.dart';
 import '../providers/turf_provider.dart';
@@ -764,7 +763,6 @@ class _SlotManagementScreenState extends State<SlotManagementScreen> with RouteA
     final c = AppColors.of(context);
     Color statusColor;
     IconData statusIcon;
-    String statusLabel;
     
     final period = _getSlotPeriod(slot);
     final isPeriodClosed = _isPeriodClosed(period);
@@ -778,27 +776,22 @@ class _SlotManagementScreenState extends State<SlotManagementScreen> with RouteA
     if (isPast) {
       statusColor = c.textDisabled;
       statusIcon = Icons.history;
-      statusLabel = 'Past';
     } else if (isPeriodClosed || isAutoBlocked) {
       statusColor = c.textDisabled;
       statusIcon = Icons.block_outlined;
-      statusLabel = 'Closed';
     } else {
       switch (slot.status) {
         case SlotStatus.available:
           statusColor = c.success;
           statusIcon = Icons.check_circle_outline;
-          statusLabel = 'Available';
           break;
         case SlotStatus.reserved:
           statusColor = c.warning;
           statusIcon = Icons.schedule;
-          statusLabel = 'Reserved';
           break;
         case SlotStatus.booked:
           statusColor = c.primary;
           statusIcon = Icons.event_available;
-          statusLabel = 'Booked';
           break;
         case SlotStatus.blocked:
           statusColor = c.error;

@@ -160,7 +160,6 @@ class _OwnerDashboardScreenState extends State<OwnerDashboardScreen>
   void _loadData() {
     final authProvider = Provider.of<AuthProvider>(context, listen: false);
     final turfProvider = Provider.of<TurfProvider>(context, listen: false);
-    final bookingProvider = Provider.of<BookingProvider>(context, listen: false);
 
     if (authProvider.currentUserId != null) {
       turfProvider.loadOwnerTurfs(authProvider.currentUserId!);
@@ -908,15 +907,6 @@ class _OwnerDashboardScreenState extends State<OwnerDashboardScreen>
       }
     } catch (_) {}
     return bookingDate;
-  }
-
-  String _formatStartTimeShort(String startTime) {
-    final parts = startTime.split(':');
-    final hour = int.parse(parts[0]);
-    final minute = parts[1];
-    final period = hour >= 12 ? 'PM' : 'AM';
-    final displayHour = hour > 12 ? hour - 12 : (hour == 0 ? 12 : hour);
-    return '$displayHour:$minute\n$period';
   }
 
   Widget _buildTimeline(List<BookingModel> bookings) {

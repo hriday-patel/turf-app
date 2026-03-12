@@ -3,10 +3,7 @@ import 'package:provider/provider.dart';
 import 'package:fl_chart/fl_chart.dart';
 import '../../../config/colors.dart';
 import '../../../config/glass_widgets.dart';
-import '../../../data/models/booking_model.dart';
 import '../../../core/constants/enums.dart';
-import '../../auth/providers/auth_provider.dart';
-import '../providers/turf_provider.dart';
 import '../providers/booking_provider.dart';
 
 /// Analytics Screen

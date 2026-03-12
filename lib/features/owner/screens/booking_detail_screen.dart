@@ -333,7 +333,6 @@ class _BookingDetailScreenState extends State<BookingDetailScreen> with RouteAwa
   Widget _buildStatusBanner() {
     final c = AppColors.of(context);
     final isCancelled = _booking!.bookingStatus == BookingStatus.cancelled;
-    final isConfirmed = _booking!.bookingStatus == BookingStatus.confirmed;
     final isPending = _booking!.isPendingPayment;
 
     Color bg, border, textColor;
@@ -401,7 +400,6 @@ class _BookingDetailScreenState extends State<BookingDetailScreen> with RouteAwa
     required String title,
     required IconData icon,
     required List<Widget> children,
-    Color? color,
   }) {
     final c = AppColors.of(context);
     return Container(

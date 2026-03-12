@@ -23,7 +23,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   bool _isEmailLoading = false;
   bool _isPasswordLoading = false;
-  bool _obscureCurrentPassword = true;
   bool _obscureNewPassword = true;
   bool _obscureConfirmPassword = true;
 

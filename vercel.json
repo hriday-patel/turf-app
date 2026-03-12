@@ -6,48 +6,8 @@
   ],
   "routes": [
     {
-      "src": "/api/auth/owner-exists",
-      "dest": "/api/auth/owner-exists.js"
-    },
-    {
-      "src": "/api/auth/create-owner",
-      "dest": "/api/auth/create-owner.js"
-    },
-    {
-      "src": "/api/auth/create-player",
-      "dest": "/api/auth/create-player.js"
-    },
-    {
-      "src": "/api/slots/reserve",
-      "dest": "/api/slots/reserve.js"
-    },
-    {
-      "src": "/api/slots/release",
-      "dest": "/api/slots/release.js"
-    },
-    {
-      "src": "/api/slots/book",
-      "dest": "/api/slots/book.js"
-    },
-    {
-      "src": "/api/bookings/create",
-      "dest": "/api/bookings/create.js"
-    },
-    {
-      "src": "/api/bookings/cancel",
-      "dest": "/api/bookings/cancel.js"
-    },
-    {
       "src": "/api/storage/upload-image",
       "dest": "/api/storage/upload-image.js"
-    },
-    {
-      "src": "/api/admin/approve-turf",
-      "dest": "/api/admin/approve-turf.js"
-    },
-    {
-      "src": "/api/health",
-      "dest": "/api/health.js"
     },
     { "src": "/(.*)", "dest": "/build/web/$1" }
   ],
