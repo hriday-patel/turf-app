@@ -5,6 +5,7 @@ import '../../../config/colors.dart';
 import '../../../config/glass_widgets.dart';
 import '../../../core/constants/enums.dart';
 import '../../../data/models/slot_model.dart';
+import '../../../data/models/turf_model.dart';
 import '../../../app/routes.dart';
 import '../providers/turf_provider.dart';
 import '../providers/slot_provider.dart';
@@ -109,6 +110,46 @@ class _SlotManagementScreenState extends State<SlotManagementScreen> with RouteA
     return now.isAfter(slotDateTime);
   }
 
+  /// Check if a slot falls within the turf's operational hours
+  bool _isWithinOperationalHours(SlotModel slot) {
+    final turfProvider = Provider.of<TurfProvider>(context, listen: false);
+    final turf = turfProvider.getTurfById(widget.turfId);
+    if (turf == null) return true; // fallback: treat as operational
+
+    final openHour = int.parse(turf.openTime.split(':')[0]);
+    final openMinute = int.parse(turf.openTime.split(':')[1]);
+    final closeHour = int.parse(turf.closeTime.split(':')[0]);
+    final closeMinute = int.parse(turf.closeTime.split(':')[1]);
+
+    final openMinutes = openHour * 60 + openMinute;
+    final closeMinutesRaw = closeHour * 60 + closeMinute;
+    int closeMinutes;
+    if (closeMinutesRaw == 0) {
+      closeMinutes = 1440;
+    } else if (closeMinutesRaw == openMinutes) {
+      closeMinutes = openMinutes;
+    } else if (closeMinutesRaw < openMinutes) {
+      closeMinutes = closeMinutesRaw + 1440;
+    } else {
+      closeMinutes = closeMinutesRaw;
+    }
+
+    final startParts = slot.startTime.split(':');
+    final endParts = slot.endTime.split(':');
+    final slotStartMin = int.parse(startParts[0]) * 60 + int.parse(startParts[1]);
+    final slotEndMin = int.parse(endParts[0]) * 60 + int.parse(endParts[1]);
+    final slotEndAdj = slotEndMin == 0 ? 1440 : slotEndMin;
+
+    if (closeMinutes == openMinutes) return false;
+    if (closeMinutes <= 1440) {
+      return slotStartMin >= openMinutes && slotEndAdj <= closeMinutes;
+    } else {
+      final inDayPortion = slotStartMin >= openMinutes && slotEndAdj <= 1440;
+      final inNightPortion = slotStartMin < (closeMinutes - 1440) && slotEndAdj <= (closeMinutes - 1440);
+      return inDayPortion || inNightPortion;
+    }
+  }
+
   /// Get slots filtered by the currently selected net number
   List<SlotModel> _getSlotsForSelectedNet(List<SlotModel> allSlots) {
     return allSlots.where((s) => s.netNumber == _selectedNetNumber).toList();
@@ -122,9 +163,9 @@ class _SlotManagementScreenState extends State<SlotManagementScreen> with RouteA
     final netSlots = _getSlotsForSelectedNet(slotProvider.slots);
     if (netSlots.isEmpty) return;
     
-    // Count period-closed slots (explicitly closed by owner toggle)
-    // Auto-blocked "Closed" slots (outside operating hours) should NOT
-    // affect toggle state — those are naturally closed by schedule.
+    // Count period-closed slots that are WITHIN operational hours.
+    // Only these affect toggle state. Auto-blocked "Closed" slots
+    // (outside operating hours) and manually-blocked slots do NOT affect toggles.
     int morningPeriodClosed = 0;
     int afternoonPeriodClosed = 0;
     int eveningPeriodClosed = 0;
@@ -133,7 +174,8 @@ class _SlotManagementScreenState extends State<SlotManagementScreen> with RouteA
     for (final slot in netSlots) {
       final hour = int.tryParse(slot.startTime.split(':')[0]) ?? 0;
       final isPeriodClosed = slot.status == SlotStatus.blocked &&
-          (slot.blockReason ?? '').contains('Period closed');
+          (slot.blockReason ?? '').contains('Period closed') &&
+          _isWithinOperationalHours(slot);
       
       if (hour >= 6 && hour < 12) {
         if (isPeriodClosed) morningPeriodClosed++;
@@ -147,8 +189,9 @@ class _SlotManagementScreenState extends State<SlotManagementScreen> with RouteA
     }
     
     setState(() {
-      // Period toggle is OPEN unless owner explicitly period-closed slots in it.
-      // Slots outside operating hours (block_reason="Closed") don't affect toggles.
+      // Period toggle is OPEN unless owner explicitly period-closed
+      // operational-hour slots in it. Slots outside operating hours
+      // and manually blocked slots don't affect toggles.
       _isMorningOpen = morningPeriodClosed == 0;
       _isAfternoonOpen = afternoonPeriodClosed == 0;
       _isEveningOpen = eveningPeriodClosed == 0;
@@ -563,15 +606,17 @@ class _SlotManagementScreenState extends State<SlotManagementScreen> with RouteA
       
       // Only change status for available or blocked slots (don't touch booked/reserved)
       if (shouldBeBlocked && slot.status == SlotStatus.available) {
+        // Period close: block ALL available slots in the period
         await slotProvider.blockSlot(
           slot.slotId,
           authProvider.currentUserId!,
           'Period closed by owner',
         );
       } else if (!shouldBeBlocked && slot.status == SlotStatus.blocked) {
-        // Only unblock period-closed slots, not auto-closed (operating hours) or manually blocked
+        // Period open: only unblock "Period closed" slots within operational hours.
+        // Leave auto-closed ("Closed") and manually-blocked slots untouched.
         final reason = slot.blockReason ?? '';
-        if (reason.contains('Period closed')) {
+        if (reason.contains('Period closed') && _isWithinOperationalHours(slot)) {
           await slotProvider.unblockSlot(slot.slotId);
         }
       }
@@ -579,24 +624,6 @@ class _SlotManagementScreenState extends State<SlotManagementScreen> with RouteA
     
     // Reload to show updated status
     _loadSlots();
-  }
-
-  String _getSlotPeriod(SlotModel slot) {
-    final hour = int.tryParse(slot.startTime.split(':')[0]) ?? 0;
-    if (hour >= 6 && hour < 12) return 'morning';
-    if (hour >= 12 && hour < 18) return 'afternoon';
-    if (hour >= 18 && hour < 24) return 'evening';
-    return 'night';
-  }
-
-  bool _isPeriodClosed(String period) {
-    switch (period) {
-      case 'morning': return !_isMorningOpen;
-      case 'afternoon': return !_isAfternoonOpen;
-      case 'evening': return !_isEveningOpen;
-      case 'night': return !_isNightOpen;
-      default: return false;
-    }
   }
 
   Widget _buildLegendItem(Color color, String label) {
@@ -764,19 +791,23 @@ class _SlotManagementScreenState extends State<SlotManagementScreen> with RouteA
     Color statusColor;
     IconData statusIcon;
     
-    final period = _getSlotPeriod(slot);
-    final isPeriodClosed = _isPeriodClosed(period);
     final isPast = _isSlotInPast(slot);
+    final reason = slot.blockReason ?? '';
 
-    // Check if slot is auto-blocked (outside operating hours)
-    final isAutoBlocked = slot.status == SlotStatus.blocked &&
-        (slot.blockReason == 'Closed' || (slot.blockReason ?? '').contains('Period closed'));
+    // Slots that are system-closed or period-closed are non-interactive and dimmed.
+    // Manually-blocked slots remain interactive (owner can unblock them).
+    final isSystemClosed = slot.status == SlotStatus.blocked &&
+        (reason == 'Closed' || reason.contains('Period closed'));
+
+    // Manually-blocked slots are interactive (can be unblocked individually).
+    final isManuallyBlocked = slot.status == SlotStatus.blocked &&
+        reason == 'Manually blocked by owner';
 
     // Past slots are always dimmed and non-interactive
     if (isPast) {
       statusColor = c.textDisabled;
       statusIcon = Icons.history;
-    } else if (isPeriodClosed || isAutoBlocked) {
+    } else if (isSystemClosed) {
       statusColor = c.textDisabled;
       statusIcon = Icons.block_outlined;
     } else {
@@ -794,18 +825,18 @@ class _SlotManagementScreenState extends State<SlotManagementScreen> with RouteA
           statusIcon = Icons.event_available;
           break;
         case SlotStatus.blocked:
+          // Manually blocked by owner — shown as red/interactive
           statusColor = c.error;
           statusIcon = Icons.block;
-          statusLabel = 'Blocked';
           break;
         default:
           statusColor = c.success;
           statusIcon = Icons.check_circle_outline;
-          statusLabel = 'Available';
       }
     }
 
-    final isInteractive = !isPast && !isPeriodClosed && !isAutoBlocked;
+    // Interactive: not past, not system-closed. Manually-blocked slots ARE interactive.
+    final isInteractive = !isPast && !isSystemClosed;
 
     return GestureDetector(
       onTap: isInteractive ? () => _showSlotActions(slot) : null,
@@ -839,12 +870,21 @@ class _SlotManagementScreenState extends State<SlotManagementScreen> with RouteA
                     fontWeight: FontWeight.w500,
                   ),
                 )
-              else if (isPeriodClosed)
+              else if (isSystemClosed)
                 Text(
                   'Closed',
                   style: TextStyle(
                     fontSize: 10,
                     color: c.textHint,
+                    fontWeight: FontWeight.w500,
+                  ),
+                )
+              else if (isManuallyBlocked)
+                Text(
+                  'Blocked',
+                  style: TextStyle(
+                    fontSize: 10,
+                    color: c.error,
                     fontWeight: FontWeight.w500,
                   ),
                 )
@@ -918,6 +958,7 @@ class _SlotManagementScreenState extends State<SlotManagementScreen> with RouteA
                       authProvider.currentUserId!,
                       'Manually blocked by owner',
                     );
+                    // Individual block does not affect period/day toggles — just reload slots
                     _loadSlots();
                   },
                 ),
@@ -930,7 +971,14 @@ class _SlotManagementScreenState extends State<SlotManagementScreen> with RouteA
                   color: c.success,
                   onTap: () async {
                     Navigator.pop(context);
-                    await slotProvider.unblockSlot(slot.slotId);
+                    // If slot is outside operational hours, mark as override
+                    // so _syncOperatingHoursForNet won't re-block it
+                    final isOpHours = _isWithinOperationalHours(slot);
+                    await slotProvider.unblockSlot(
+                      slot.slotId,
+                      overrideMarker: isOpHours ? null : 'Opened by owner',
+                    );
+                    // Individual unblock does not affect period/day toggles — just reload slots
                     _loadSlots();
                   },
                 ),
