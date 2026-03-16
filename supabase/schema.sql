@@ -133,6 +133,7 @@ create table if not exists turfs (
   verification_status text not null default 'PENDING',
   rejection_reason text,
   status text not null default 'OPEN',
+  renovation_net_numbers int[] not null default array[]::int[],
   created_at timestamptz not null default now(),
   updated_at timestamptz
 );

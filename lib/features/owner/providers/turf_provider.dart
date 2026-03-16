@@ -14,19 +14,24 @@ class TurfProvider extends ChangeNotifier {
   bool _isLoading = false;
   String? _errorMessage;
   StreamSubscription? _turfsSubscription;
+  final Set<String> _pendingTurfStatusOps = {};
 
   // Getters
   List<TurfModel> get turfs => _turfs;
-  List<TurfModel> get approvedTurfs => 
-      _turfs.where((t) => t.verificationStatus == VerificationStatus.approved).toList();
-  List<TurfModel> get pendingTurfs => 
-      _turfs.where((t) => t.verificationStatus == VerificationStatus.pending).toList();
+  List<TurfModel> get approvedTurfs => _turfs
+      .where((t) => t.verificationStatus == VerificationStatus.approved)
+      .toList();
+  List<TurfModel> get pendingTurfs => _turfs
+      .where((t) => t.verificationStatus == VerificationStatus.pending)
+      .toList();
   TurfModel? get selectedTurf => _selectedTurf;
   bool get isLoading => _isLoading;
   String? get errorMessage => _errorMessage;
   int get totalTurfs => _turfs.length;
   int get approvedCount => approvedTurfs.length;
   int get pendingCount => pendingTurfs.length;
+  bool isTurfStatusUpdating(String turfId) =>
+      _pendingTurfStatusOps.contains(turfId);
 
   /// Load turfs for an owner
   void loadOwnerTurfs(String ownerId) {
@@ -83,18 +88,18 @@ class TurfProvider extends ChangeNotifier {
         'slot_duration_minutes': slotDurationMinutes,
         'days_open': daysOpen,
         'pricing_rules': pricingRules.toMap(),
+        'renovation_net_numbers': <int>[],
         'public_holidays': [],
         'images': images.map((i) => i.toMap()).toList(),
         'is_approved': false,
         'verification_status': 'PENDING',
       };
 
-      final resultTurfId =
-          await _dbService.createTurf(data, turfId: turfId);
-      
+      final resultTurfId = await _dbService.createTurf(data, turfId: turfId);
+
       _isLoading = false;
       notifyListeners();
-      
+
       return resultTurfId;
     } catch (e) {
       _isLoading = false;
@@ -105,8 +110,35 @@ class TurfProvider extends ChangeNotifier {
   }
 
   /// Update turf status (open/closed/renovation)
-  Future<bool> updateTurfStatus(String turfId, TurfStatus status) async {
-    return await updateTurf(turfId, {'status': status.value});
+  Future<bool> updateTurfStatus(
+    String turfId,
+    TurfStatus status, {
+    List<int>? renovationNetNumbers,
+  }) async {
+    if (_pendingTurfStatusOps.contains(turfId)) {
+      return false;
+    }
+
+    _pendingTurfStatusOps.add(turfId);
+    try {
+      final normalizedRenovationNets = <int>[];
+      if (status == TurfStatus.renovation) {
+        normalizedRenovationNets.addAll(
+          (renovationNetNumbers ?? <int>[])
+              .where((n) => n > 0)
+              .toSet()
+              .toList(),
+        );
+        normalizedRenovationNets.sort();
+      }
+
+      return await updateTurf(turfId, {
+        'status': status.value,
+        'renovation_net_numbers': normalizedRenovationNets,
+      });
+    } finally {
+      _pendingTurfStatusOps.remove(turfId);
+    }
   }
 
   /// Update turf
@@ -125,38 +157,40 @@ class TurfProvider extends ChangeNotifier {
         'close_time',
         'days_open',
       ];
-      
-      final hasSlotAffectingChanges = data.keys.any(
-        (key) => slotAffectingKeys.contains(key)
-      );
+
+      final hasSlotAffectingChanges =
+          data.keys.any((key) => slotAffectingKeys.contains(key));
 
       await _dbService.updateTurf(turfId, data);
-      
+
       // If slot-affecting settings changed, delete future available slots
       // so they get regenerated with new settings
       if (hasSlotAffectingChanges) {
-        final deletedCount = await _dbService.deleteFutureAvailableSlots(turfId);
-        debugPrint('Deleted $deletedCount future available slots for regeneration');
-        
+        final deletedCount =
+            await _dbService.deleteFutureAvailableSlots(turfId);
+        debugPrint(
+            'Deleted $deletedCount future available slots for regeneration');
+
         // If net count was reduced, also delete slots for removed nets
         if (data.containsKey('number_of_nets')) {
           final newNetCount = data['number_of_nets'] as int;
-          final removedNetSlotsCount = await _dbService.deleteSlotsForRemovedNets(turfId, newNetCount);
+          final removedNetSlotsCount =
+              await _dbService.deleteSlotsForRemovedNets(turfId, newNetCount);
           debugPrint('Deleted $removedNetSlotsCount slots for removed nets');
         }
       }
-      
+
       // Update the local turf immediately for instant UI feedback
       final index = _turfs.indexWhere((t) => t.turfId == turfId);
       if (index != -1) {
         final currentTurf = _turfs[index];
         final updatedMap = currentTurf.toMap();
-        
+
         // Merge data carefully - handle special fields
         for (final entry in data.entries) {
           final key = entry.key;
           final value = entry.value;
-          
+
           // Convert snake_case to the format used in toMap if needed
           if (key == 'turf_name') {
             updatedMap['turf_name'] = value;
@@ -182,12 +216,12 @@ class TurfProvider extends ChangeNotifier {
             updatedMap[key] = value;
           }
         }
-        
+
         updatedMap['updated_at'] = DateTime.now().toIso8601String();
-        
+
         try {
           _turfs[index] = TurfModel.fromMap(updatedMap);
-          
+
           // Also update selected turf if it's the same
           if (_selectedTurf?.turfId == turfId) {
             _selectedTurf = _turfs[index];
@@ -197,7 +231,7 @@ class TurfProvider extends ChangeNotifier {
           debugPrint('Failed to parse updated turf locally: $parseError');
         }
       }
-      
+
       _isLoading = false;
       notifyListeners();
       return true;
@@ -208,7 +242,7 @@ class TurfProvider extends ChangeNotifier {
       return false;
     }
   }
-  
+
   /// Force refresh turfs from database
   Future<void> refreshTurfs(String ownerId) async {
     try {

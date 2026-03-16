@@ -28,11 +28,11 @@ class SlotProvider extends ChangeNotifier {
   bool get isLoading => _isLoading;
   String? get errorMessage => _errorMessage;
 
-  List<SlotModel> get availableSlots => 
+  List<SlotModel> get availableSlots =>
       _slots.where((s) => s.status == SlotStatus.available).toList();
-  List<SlotModel> get bookedSlots => 
+  List<SlotModel> get bookedSlots =>
       _slots.where((s) => s.status == SlotStatus.booked).toList();
-  List<SlotModel> get blockedSlots => 
+  List<SlotModel> get blockedSlots =>
       _slots.where((s) => s.status == SlotStatus.blocked).toList();
 
   @override
@@ -89,13 +89,15 @@ class SlotProvider extends ChangeNotifier {
         return false;
       }
       if (turf.daysOpen.isEmpty) {
-        debugPrint('Warning: turf has no daysOpen configured — all slots will be blocked');
+        debugPrint(
+            'Warning: turf has no daysOpen configured — all slots will be blocked');
       }
 
       // Check if this date's day-of-week is in daysOpen
       final parsedDate = DateTime.parse(date);
       const dayNames = ['MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT', 'SUN'];
-      final dayOfWeek = dayNames[parsedDate.weekday - 1]; // weekday: 1=Mon..7=Sun
+      final dayOfWeek =
+          dayNames[parsedDate.weekday - 1]; // weekday: 1=Mon..7=Sun
       final isDayOpen = turf.daysOpen.contains(dayOfWeek);
 
       // Parse operating hours
@@ -125,23 +127,31 @@ class SlotProvider extends ChangeNotifier {
 
       // Generate slots for each net
       for (int netNumber = 1; netNumber <= turf.numberOfNets; netNumber++) {
-        debugPrint('Processing Net $netNumber of ${turf.numberOfNets} for date $date');
-        
+        debugPrint(
+            'Processing Net $netNumber of ${turf.numberOfNets} for date $date');
+        final isRenovationNet = turf.status == TurfStatus.renovation &&
+            turf.renovationNetNumbers.contains(netNumber);
+        final isNetForceClosed =
+            turf.status == TurfStatus.closed || isRenovationNet;
+
         // For force regeneration: delete existing AVAILABLE/BLOCKED(Closed) slots first
         // This ensures a clean set of all 24-hour slots is always generated
         if (forceRegenerate) {
-          await _dbService.deleteAvailableSlotsForDateAndNet(turf.turfId, date, netNumber);
+          await _dbService.deleteAvailableSlotsForDateAndNet(
+              turf.turfId, date, netNumber);
           debugPrint('Deleted regeneratable slots for $date Net $netNumber');
         }
 
         // Sync prices for existing slots
-        await _syncSlotPricesForNet(turf: turf, date: date, netNumber: netNumber);
-        
+        await _syncSlotPricesForNet(
+            turf: turf, date: date, netNumber: netNumber);
+
         // Sync operating hours for existing slots
-        await _syncOperatingHoursForNet(turf: turf, date: date, netNumber: netNumber);
+        await _syncOperatingHoursForNet(
+            turf: turf, date: date, netNumber: netNumber);
 
         int netSlotsCreated = 0;
-        
+
         // ============================================================
         // FULL 24-HOUR SLOT GENERATION:
         // 1. Generate slots for ALL 24 hours (0:00 to 23:59)
@@ -151,36 +161,42 @@ class SlotProvider extends ChangeNotifier {
         // 4. Owner can manually open any closed slot
         // 5. Uses upsert (ignore duplicates) so existing slots are preserved
         // ============================================================
-        
+
         for (int slotStart = 0; slotStart < 1440; slotStart += slotDuration) {
           final slotEnd = slotStart + slotDuration;
-          
+
           // Don't generate partial slots past midnight
           if (slotEnd > 1440) break;
-          
+
           final startHour = slotStart ~/ 60;
           final startMin = slotStart % 60;
           final endHour = (slotEnd ~/ 60) % 24; // 24 → 0 for midnight
           final endMin = slotEnd % 60;
 
-          final startTime = '${startHour.toString().padLeft(2, '0')}:${startMin.toString().padLeft(2, '0')}';
-          final endTime = '${endHour.toString().padLeft(2, '0')}:${endMin.toString().padLeft(2, '0')}';
+          final startTime =
+              '${startHour.toString().padLeft(2, '0')}:${startMin.toString().padLeft(2, '0')}';
+          final endTime =
+              '${endHour.toString().padLeft(2, '0')}:${endMin.toString().padLeft(2, '0')}';
 
           // Determine if slot is within operating hours
           // If the day is not in daysOpen, all slots are closed regardless of operating hours
           // If openTime == closeTime, all slots are closed (invalid config)
           bool isWithinOperatingHours;
-          if (!isDayOpen || closeMinutes == openMinutes) {
+          if (isNetForceClosed) {
+            isWithinOperatingHours = false;
+          } else if (!isDayOpen || closeMinutes == openMinutes) {
             isWithinOperatingHours = false;
           } else if (closeMinutes <= 1440) {
             // Normal hours (e.g., 06:00-23:00)
-            isWithinOperatingHours = slotStart >= openMinutes && slotEnd <= closeMinutes;
+            isWithinOperatingHours =
+                slotStart >= openMinutes && slotEnd <= closeMinutes;
           } else {
             // Overnight hours (e.g., 18:00-02:00 = open 1080, close 2520)
             // Day portion: slot starts at or after open AND ends by midnight
             final inDayPortion = slotStart >= openMinutes && slotEnd <= 1440;
             // Night portion: slot is entirely before the close time (after midnight)
-            final inNightPortion = slotStart < (closeMinutes - 1440) && slotEnd <= (closeMinutes - 1440);
+            final inNightPortion = slotStart < (closeMinutes - 1440) &&
+                slotEnd <= (closeMinutes - 1440);
             isWithinOperatingHours = inDayPortion || inNightPortion;
           }
 
@@ -205,11 +221,17 @@ class SlotProvider extends ChangeNotifier {
             'reserved_until': null,
             'reserved_by': null,
             'blocked_by': isWithinOperatingHours ? null : turf.ownerId,
-            'block_reason': isWithinOperatingHours ? null : 'Closed',
+            'block_reason': isWithinOperatingHours
+                ? null
+                : isRenovationNet
+                    ? 'Under renovation'
+                    : turf.status == TurfStatus.closed
+                        ? 'Turf closed'
+                        : 'Closed',
           });
           netSlotsCreated++;
         }
-        
+
         debugPrint('Prepared $netSlotsCreated slots for Net $netNumber');
         totalSlotsCreated += netSlotsCreated;
         totalNetsProcessed++;
@@ -219,7 +241,8 @@ class SlotProvider extends ChangeNotifier {
       if (slotsData.isNotEmpty) {
         try {
           await _dbService.batchCreateSlots(slotsData);
-          debugPrint('Created $totalSlotsCreated slots across $totalNetsProcessed nets for $date');
+          debugPrint(
+              'Created $totalSlotsCreated slots across $totalNetsProcessed nets for $date');
         } catch (e) {
           debugPrint('Batch slot creation failed: $e. Retrying...');
           // Retry once on failure
@@ -268,6 +291,10 @@ class SlotProvider extends ChangeNotifier {
       const dayNames = ['MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT', 'SUN'];
       final dayOfWeek = dayNames[parsedDate.weekday - 1];
       final isDayOpen = turf.daysOpen.contains(dayOfWeek);
+      final isRenovationNet = turf.status == TurfStatus.renovation &&
+          turf.renovationNetNumbers.contains(netNumber);
+      final isNetForceClosed =
+          turf.status == TurfStatus.closed || isRenovationNet;
 
       final openHour = int.parse(turf.openTime.split(':')[0]);
       final openMinute = int.parse(turf.openTime.split(':')[1]);
@@ -299,30 +326,51 @@ class SlotProvider extends ChangeNotifier {
 
         final startParts = startTime.split(':');
         final endParts = endTime.split(':');
-        final slotStartMin = (int.parse(startParts[0]) * 60) + int.parse(startParts[1]);
-        final slotEndMin = (int.parse(endParts[0]) * 60) + int.parse(endParts[1]);
+        final slotStartMin =
+            (int.parse(startParts[0]) * 60) + int.parse(startParts[1]);
+        final slotEndMin =
+            (int.parse(endParts[0]) * 60) + int.parse(endParts[1]);
         final slotEndAdj = slotEndMin == 0 ? 1440 : slotEndMin;
 
         bool isWithinOperatingHours;
         if (closeMinutes == openMinutes) {
           isWithinOperatingHours = false;
         } else if (closeMinutes <= 1440) {
-          isWithinOperatingHours = slotStartMin >= openMinutes && slotEndAdj <= closeMinutes;
+          isWithinOperatingHours =
+              slotStartMin >= openMinutes && slotEndAdj <= closeMinutes;
         } else {
-          final inDayPortion = slotStartMin >= openMinutes && slotEndAdj <= 1440;
-          final inNightPortion = slotStartMin < (closeMinutes - 1440) && slotEndAdj <= (closeMinutes - 1440);
+          final inDayPortion =
+              slotStartMin >= openMinutes && slotEndAdj <= 1440;
+          final inNightPortion = slotStartMin < (closeMinutes - 1440) &&
+              slotEndAdj <= (closeMinutes - 1440);
           isWithinOperatingHours = inDayPortion || inNightPortion;
         }
 
-        final isManualOverride = blockReason == 'Day opened by owner' || blockReason == 'Opened by owner';
-        final isAutoClosed = blockReason == 'Closed' || blockReason == 'Outside operating hours';
+        final isManualOverride = blockReason == 'Day opened by owner' ||
+            blockReason == 'Opened by owner';
+        final isAutoClosed = blockReason == 'Closed' ||
+            blockReason == 'Outside operating hours' ||
+            blockReason == 'Turf closed' ||
+            blockReason == 'Under renovation';
+
+        if (isNetForceClosed) {
+          if (status == 'AVAILABLE' && !isManualOverride) {
+            await _dbService.blockSlot(
+              slot['id'] as String,
+              turf.ownerId,
+              isRenovationNet ? 'Under renovation' : 'Turf closed',
+            );
+          }
+          continue;
+        }
 
         // === daysOpen enforcement ===
         if (!isDayOpen) {
           // Day is CLOSED in config.
           if (status == 'AVAILABLE' && !isManualOverride) {
             // Block non-overridden AVAILABLE slots on closed days
-            await _dbService.blockSlot(slot['id'] as String, turf.ownerId, 'Closed');
+            await _dbService.blockSlot(
+                slot['id'] as String, turf.ownerId, 'Closed');
           }
           // Skip operating-hours check — day is closed, slots are already handled
           continue;
@@ -331,8 +379,11 @@ class SlotProvider extends ChangeNotifier {
         // Day is OPEN in config from here on.
         // Cleanup: clear override marker ONLY if slot is within operating hours
         // (if outside operating hours, the marker is still needed to prevent re-blocking)
-        if (status == 'AVAILABLE' && isManualOverride && isWithinOperatingHours) {
-          await _dbService.unblockSlot(slot['id'] as String); // clears marker, stays AVAILABLE
+        if (status == 'AVAILABLE' &&
+            isManualOverride &&
+            isWithinOperatingHours) {
+          await _dbService.unblockSlot(
+              slot['id'] as String); // clears marker, stays AVAILABLE
         }
         // Unblock auto-closed slots that are now within operating hours
         if (status == 'BLOCKED' && isAutoClosed && isWithinOperatingHours) {
@@ -341,12 +392,16 @@ class SlotProvider extends ChangeNotifier {
 
         // === Operating hours enforcement (open days only) ===
         // Don't re-block manually overridden slots — owner explicitly opened them
-        if (!isWithinOperatingHours && status == 'AVAILABLE' && !isManualOverride) {
-          await _dbService.blockSlot(slot['id'] as String, turf.ownerId, 'Closed');
+        if (!isWithinOperatingHours &&
+            status == 'AVAILABLE' &&
+            !isManualOverride) {
+          await _dbService.blockSlot(
+              slot['id'] as String, turf.ownerId, 'Closed');
         }
       }
     } catch (e) {
-      debugPrint('Failed to sync operating hours for Net $netNumber on $date: $e');
+      debugPrint(
+          'Failed to sync operating hours for Net $netNumber on $date: $e');
     }
   }
 
@@ -383,7 +438,8 @@ class SlotProvider extends ChangeNotifier {
         final newType = priceInfo['priceType'] as String;
 
         if (currentPrice != newPrice || currentType != newType) {
-          await _dbService.updateSlotPricing(slot['id'] as String, newPrice, newType);
+          await _dbService.updateSlotPricing(
+              slot['id'] as String, newPrice, newType);
         }
       }
     } catch (e) {
@@ -417,7 +473,7 @@ class SlotProvider extends ChangeNotifier {
         );
         notifyListeners();
       }
-      
+
       await _dbService.blockSlot(slotId, ownerId, reason);
       return true;
     } catch (e) {
@@ -461,7 +517,7 @@ class SlotProvider extends ChangeNotifier {
         );
         notifyListeners();
       }
-      
+
       await _dbService.unblockSlot(slotId, overrideMarker: overrideMarker);
       return true;
     } catch (e) {

@@ -118,9 +118,10 @@ class DatabaseService {
         .from('turfs')
         .stream(primaryKey: ['id'])
         .order('created_at', ascending: false)
-        .map((rows) => rows.where((row) => row['owner_id'] == ownerId).toList());
+        .map(
+            (rows) => rows.where((row) => row['owner_id'] == ownerId).toList());
   }
-  
+
   /// Get owner's turfs (one-time fetch)
   Future<List<Map<String, dynamic>>> getOwnerTurfs(String ownerId) async {
     return await _client
@@ -141,36 +142,71 @@ class DatabaseService {
 
   /// Get turf by ID
   Future<Map<String, dynamic>?> getTurf(String turfId) async {
-    return await _client.from('turfs').select('*').eq('id', turfId).maybeSingle();
+    return await _client
+        .from('turfs')
+        .select('*')
+        .eq('id', turfId)
+        .maybeSingle();
   }
 
   /// Create turf with retry logic for network issues
-  Future<String> createTurf(Map<String, dynamic> data, {String? turfId, int retryCount = 5}) async {
+  Future<String> createTurf(Map<String, dynamic> data,
+      {String? turfId, int retryCount = 5}) async {
     data['created_at'] = DateTime.now().toIso8601String();
     data['is_approved'] = false;
     data['verification_status'] = 'PENDING';
-    
+
     // Sanitize data to prevent issues
     data = _sanitizeTurfData(data);
-    
+
     Exception? lastError;
-    
+
     for (int attempt = 1; attempt <= retryCount; attempt++) {
       try {
         if (turfId != null) {
-          data['id'] = turfId;
-          await _client.from('turfs').insert(data);
+          final insertData = Map<String, dynamic>.from(data)..['id'] = turfId;
+          await _client.from('turfs').insert(insertData);
           return turfId;
         }
 
-        final result = await _client.from('turfs').insert(data).select('id').single();
+        final result =
+            await _client.from('turfs').insert(data).select('id').single();
         return result['id'] as String;
       } catch (e) {
+        if (_isMissingRenovationColumnError(e)) {
+          final fallbackData = Map<String, dynamic>.from(data)
+            ..remove('renovation_net_numbers');
+
+          if (data.containsKey('renovation_net_numbers')) {
+            final pricingRules = Map<String, dynamic>.from(
+              (fallbackData['pricing_rules'] as Map?)
+                      ?.cast<String, dynamic>() ??
+                  <String, dynamic>{},
+            );
+            pricingRules['renovation_net_numbers'] =
+                (data['renovation_net_numbers'] as List?) ?? <int>[];
+            fallbackData['pricing_rules'] = pricingRules;
+          }
+
+          if (turfId != null) {
+            fallbackData['id'] = turfId;
+            await _client.from('turfs').insert(fallbackData);
+            return turfId;
+          }
+
+          final fallbackResult = await _client
+              .from('turfs')
+              .insert(fallbackData)
+              .select('id')
+              .single();
+          return fallbackResult['id'] as String;
+        }
+
         lastError = e is Exception ? e : Exception(e.toString());
-        
+
         // Check if it's a retryable error
         final errorStr = e.toString().toLowerCase();
-        final isRetryableError = errorStr.contains('failed to fetch') || 
+        final isRetryableError = errorStr.contains('failed to fetch') ||
             errorStr.contains('network') ||
             errorStr.contains('timeout') ||
             errorStr.contains('connection') ||
@@ -178,28 +214,30 @@ class DatabaseService {
             errorStr.contains('clientexception') ||
             errorStr.contains('postgres') ||
             errorStr.contains('uri');
-        
+
         if (isRetryableError && attempt < retryCount) {
           // Wait before retrying (exponential backoff with jitter)
-          final delay = Duration(milliseconds: (500 * attempt) + (attempt * 100));
+          final delay =
+              Duration(milliseconds: (500 * attempt) + (attempt * 100));
           await Future.delayed(delay);
           continue;
         }
-        
+
         // For non-retryable errors or max retries reached
         if (!isRetryableError) {
           rethrow;
         }
       }
     }
-    
-    throw lastError ?? Exception('Failed to create turf after $retryCount attempts');
+
+    throw lastError ??
+        Exception('Failed to create turf after $retryCount attempts');
   }
-  
+
   /// Sanitize turf data to prevent database/URI errors
   Map<String, dynamic> _sanitizeTurfData(Map<String, dynamic> data) {
     final sanitized = Map<String, dynamic>.from(data);
-    
+
     // Ensure images have valid URLs
     if (sanitized.containsKey('images') && sanitized['images'] is List) {
       final images = sanitized['images'] as List;
@@ -211,10 +249,21 @@ class DatabaseService {
         return false;
       }).toList();
     }
-    
+
+    if (sanitized.containsKey('renovation_net_numbers') &&
+        sanitized['renovation_net_numbers'] is List) {
+      final nets = sanitized['renovation_net_numbers'] as List;
+      sanitized['renovation_net_numbers'] = nets
+          .map<int>((e) => int.tryParse(e.toString()) ?? 0)
+          .where((n) => n > 0)
+          .toSet()
+          .toList()
+        ..sort();
+    }
+
     return sanitized;
   }
-  
+
   /// Validate URL format
   static bool _isValidUrl(String url) {
     if (url.isEmpty) return false;
@@ -226,25 +275,56 @@ class DatabaseService {
     }
   }
 
+  bool _isMissingRenovationColumnError(Object error) {
+    final errorStr = error.toString().toLowerCase();
+    return errorStr.contains('renovation_net_numbers') &&
+        (errorStr.contains('could not find') ||
+            errorStr.contains('column') ||
+            errorStr.contains('pgrst204') ||
+            errorStr.contains('42703'));
+  }
+
   /// Update turf with retry logic for network issues
-  Future<void> updateTurf(String turfId, Map<String, dynamic> data, {int retryCount = 5}) async {
+  Future<void> updateTurf(String turfId, Map<String, dynamic> data,
+      {int retryCount = 5}) async {
     data['updated_at'] = DateTime.now().toIso8601String();
-    
+
     // Sanitize data to prevent issues
     data = _sanitizeTurfData(data);
-    
+
     Exception? lastError;
-    
+
     for (int attempt = 1; attempt <= retryCount; attempt++) {
       try {
         await _client.from('turfs').update(data).eq('id', turfId);
         return; // Success
       } catch (e) {
+        if (_isMissingRenovationColumnError(e)) {
+          final fallbackData = Map<String, dynamic>.from(data)
+            ..remove('renovation_net_numbers');
+
+          if (data.containsKey('renovation_net_numbers')) {
+            final existing = await getTurf(turfId);
+            final existingPricingRulesRaw = existing?['pricing_rules'];
+            final pricingRules = Map<String, dynamic>.from(
+              (existingPricingRulesRaw is Map
+                  ? existingPricingRulesRaw.cast<String, dynamic>()
+                  : <String, dynamic>{}),
+            );
+            pricingRules['renovation_net_numbers'] =
+                (data['renovation_net_numbers'] as List?) ?? <int>[];
+            fallbackData['pricing_rules'] = pricingRules;
+          }
+
+          await _client.from('turfs').update(fallbackData).eq('id', turfId);
+          return;
+        }
+
         lastError = e is Exception ? e : Exception(e.toString());
-        
+
         // Check if it's a retryable error
         final errorStr = e.toString().toLowerCase();
-        final isRetryableError = errorStr.contains('failed to fetch') || 
+        final isRetryableError = errorStr.contains('failed to fetch') ||
             errorStr.contains('network') ||
             errorStr.contains('timeout') ||
             errorStr.contains('connection') ||
@@ -252,22 +332,24 @@ class DatabaseService {
             errorStr.contains('clientexception') ||
             errorStr.contains('postgres') ||
             errorStr.contains('uri');
-        
+
         if (isRetryableError && attempt < retryCount) {
           // Wait before retrying (exponential backoff with jitter)
-          final delay = Duration(milliseconds: (500 * attempt) + (attempt * 100));
+          final delay =
+              Duration(milliseconds: (500 * attempt) + (attempt * 100));
           await Future.delayed(delay);
           continue;
         }
-        
+
         // For non-retryable errors or max retries reached
         if (!isRetryableError) {
           rethrow;
         }
       }
     }
-    
-    throw lastError ?? Exception('Failed to update turf after $retryCount attempts');
+
+    throw lastError ??
+        Exception('Failed to update turf after $retryCount attempts');
   }
 
   // =====================================================
@@ -276,20 +358,20 @@ class DatabaseService {
 
   /// Stream turf slots for a date using the single-filter stream with client-side date filter.
   /// Also provides a direct query method to avoid stream row limit issues.
-  Stream<List<Map<String, dynamic>>> streamTurfSlots(String turfId, String date) {
+  Stream<List<Map<String, dynamic>>> streamTurfSlots(
+      String turfId, String date) {
     return _client
         .from('slots')
         .stream(primaryKey: ['id'])
         .eq('turf_id', turfId)
         .order('start_time', ascending: true)
-        .map((rows) => rows
-            .where((row) => row['date'] == date)
-            .toList());
+        .map((rows) => rows.where((row) => row['date'] == date).toList());
   }
 
   /// Fetch all slots for a specific turf and date (no row limit issues).
   /// Use this instead of streamTurfSlots for reliable full 24-hour slot loading.
-  Future<List<Map<String, dynamic>>> fetchTurfSlotsForDate(String turfId, String date) async {
+  Future<List<Map<String, dynamic>>> fetchTurfSlotsForDate(
+      String turfId, String date) async {
     return await _client
         .from('slots')
         .select()
@@ -310,7 +392,8 @@ class DatabaseService {
   }
 
   /// Check if slots exist for a date and specific net
-  Future<bool> slotsExistForDateAndNet(String turfId, String date, int netNumber) async {
+  Future<bool> slotsExistForDateAndNet(
+      String turfId, String date, int netNumber) async {
     final result = await _client
         .from('slots')
         .select('id')
@@ -326,7 +409,7 @@ class DatabaseService {
   Future<int> deleteFutureAvailableSlots(String turfId) async {
     final tomorrow = DateTime.now().add(const Duration(days: 1));
     final tomorrowStr = tomorrow.toIso8601String().split('T')[0];
-    
+
     // Delete all AVAILABLE slots from tomorrow onwards
     final result = await _client
         .from('slots')
@@ -335,7 +418,7 @@ class DatabaseService {
         .eq('status', 'AVAILABLE')
         .gte('date', tomorrowStr)
         .select('id');
-    
+
     return result.length;
   }
 
@@ -348,16 +431,17 @@ class DatabaseService {
         .eq('status', 'AVAILABLE')
         .eq('date', date)
         .select('id');
-    
+
     return result.length;
   }
 
   /// Delete all available slots for nets that exceed the current net count
   /// Used when owner reduces the number of nets
-  Future<int> deleteSlotsForRemovedNets(String turfId, int currentNetCount) async {
+  Future<int> deleteSlotsForRemovedNets(
+      String turfId, int currentNetCount) async {
     final tomorrow = DateTime.now().add(const Duration(days: 1));
     final tomorrowStr = tomorrow.toIso8601String().split('T')[0];
-    
+
     // Delete all AVAILABLE slots for nets > currentNetCount from tomorrow onwards
     final result = await _client
         .from('slots')
@@ -367,14 +451,15 @@ class DatabaseService {
         .gt('net_number', currentNetCount)
         .gte('date', tomorrowStr)
         .select('id');
-    
+
     return result.length;
   }
 
   /// Delete regeneratable slots for a date and net.
   /// Deletes AVAILABLE + ALL BLOCKED slots for a clean 24-hour regeneration.
   /// Only preserves BOOKED and RESERVED slots.
-  Future<int> deleteAvailableSlotsForDateAndNet(String turfId, String date, int netNumber) async {
+  Future<int> deleteAvailableSlotsForDateAndNet(
+      String turfId, String date, int netNumber) async {
     // Delete AVAILABLE slots
     final result1 = await _client
         .from('slots')
@@ -384,7 +469,7 @@ class DatabaseService {
         .eq('net_number', netNumber)
         .eq('status', 'AVAILABLE')
         .select('id');
-    
+
     // Delete ALL BLOCKED slots (auto-closed, period-closed, manually blocked)
     // This ensures a clean 24-hour set based on current operating hours
     final result2 = await _client
@@ -395,19 +480,20 @@ class DatabaseService {
         .eq('net_number', netNumber)
         .eq('status', 'BLOCKED')
         .select('id');
-    
+
     return result1.length + result2.length;
   }
 
   /// Get existing slot start times for a date and net (to avoid duplicates)
-  Future<Set<String>> getExistingSlotTimes(String turfId, String date, int netNumber) async {
+  Future<Set<String>> getExistingSlotTimes(
+      String turfId, String date, int netNumber) async {
     final result = await _client
         .from('slots')
         .select('start_time')
         .eq('turf_id', turfId)
         .eq('date', date)
         .eq('net_number', netNumber);
-    
+
     return result.map<String>((row) => row['start_time'] as String).toSet();
   }
 
@@ -419,7 +505,8 @@ class DatabaseService {
   ) async {
     return await _client
         .from('slots')
-        .select('id, start_time, end_time, status, price, price_type, block_reason')
+        .select(
+            'id, start_time, end_time, status, price, price_type, block_reason')
         .eq('turf_id', turfId)
         .eq('date', date)
         .eq('net_number', netNumber)
@@ -450,16 +537,17 @@ class DatabaseService {
   /// Batch create slots (upsert with ignore duplicates for robustness)
   Future<void> batchCreateSlots(List<Map<String, dynamic>> slotsData) async {
     await _client.from('slots').upsert(
-      slotsData,
-      onConflict: 'turf_id,date,start_time,net_number',
-      ignoreDuplicates: true,
-    );
+          slotsData,
+          onConflict: 'turf_id,date,start_time,net_number',
+          ignoreDuplicates: true,
+        );
   }
 
   /// Block slot with retry logic
-  Future<void> blockSlot(String slotId, String ownerId, String? reason, {int retryCount = 3}) async {
+  Future<void> blockSlot(String slotId, String ownerId, String? reason,
+      {int retryCount = 3}) async {
     Exception? lastError;
-    
+
     for (int attempt = 1; attempt <= retryCount; attempt++) {
       try {
         await _client.from('slots').update({
@@ -472,12 +560,12 @@ class DatabaseService {
       } catch (e) {
         lastError = e is Exception ? e : Exception(e.toString());
         final errorStr = e.toString().toLowerCase();
-        
+
         final isRetryableError = errorStr.contains('failed to fetch') ||
             errorStr.contains('network') ||
             errorStr.contains('timeout') ||
             errorStr.contains('connection');
-        
+
         if (isRetryableError && attempt < retryCount) {
           await Future.delayed(Duration(milliseconds: 500 * attempt));
           continue;
@@ -486,17 +574,19 @@ class DatabaseService {
         }
       }
     }
-    
-    throw lastError ?? Exception('Failed to block slot after $retryCount attempts');
+
+    throw lastError ??
+        Exception('Failed to block slot after $retryCount attempts');
   }
 
   /// Unblock slot with retry logic.
   /// [overrideMarker] — if provided, stores a marker in block_reason on the
   /// now-AVAILABLE slot so that sync can distinguish manual overrides from
   /// normal available slots (e.g. 'Day opened by owner').
-  Future<void> unblockSlot(String slotId, {int retryCount = 3, String? overrideMarker}) async {
+  Future<void> unblockSlot(String slotId,
+      {int retryCount = 3, String? overrideMarker}) async {
     Exception? lastError;
-    
+
     for (int attempt = 1; attempt <= retryCount; attempt++) {
       try {
         await _client.from('slots').update({
@@ -509,12 +599,12 @@ class DatabaseService {
       } catch (e) {
         lastError = e is Exception ? e : Exception(e.toString());
         final errorStr = e.toString().toLowerCase();
-        
+
         final isRetryableError = errorStr.contains('failed to fetch') ||
             errorStr.contains('network') ||
             errorStr.contains('timeout') ||
             errorStr.contains('connection');
-        
+
         if (isRetryableError && attempt < retryCount) {
           await Future.delayed(Duration(milliseconds: 500 * attempt));
           continue;
@@ -523,8 +613,9 @@ class DatabaseService {
         }
       }
     }
-    
-    throw lastError ?? Exception('Failed to unblock slot after $retryCount attempts');
+
+    throw lastError ??
+        Exception('Failed to unblock slot after $retryCount attempts');
   }
 
   /// Reserve slot (using RPC)
@@ -593,7 +684,8 @@ class DatabaseService {
         .from('bookings')
         .stream(primaryKey: ['id'])
         .order('booking_date', ascending: false)
-        .map((rows) => rows.where((row) => row['owner_id'] == ownerId).toList());
+        .map(
+            (rows) => rows.where((row) => row['owner_id'] == ownerId).toList());
   }
 
   /// Get booking by ID
@@ -619,7 +711,8 @@ class DatabaseService {
   }
 
   /// Stream bookings for owner's turfs
-  Stream<List<Map<String, dynamic>>> streamBookingsByTurfs(List<String> turfIds) {
+  Stream<List<Map<String, dynamic>>> streamBookingsByTurfs(
+      List<String> turfIds) {
     if (turfIds.isEmpty) {
       return Stream.value([]);
     }
@@ -627,7 +720,8 @@ class DatabaseService {
         .from('bookings')
         .stream(primaryKey: ['id'])
         .order('booking_date', ascending: false)
-        .map((rows) => rows.where((row) => turfIds.contains(row['turf_id'])).toList());
+        .map((rows) =>
+            rows.where((row) => turfIds.contains(row['turf_id'])).toList());
   }
 
   /// Get today's bookings
@@ -646,7 +740,8 @@ class DatabaseService {
   }
 
   /// Get pending payments (includes both PENDING and PAY_AT_TURF statuses)
-  Future<List<Map<String, dynamic>>> getPendingPayments(List<String> turfIds) async {
+  Future<List<Map<String, dynamic>>> getPendingPayments(
+      List<String> turfIds) async {
     if (turfIds.isEmpty) return [];
     return await _client
         .from('bookings')
@@ -673,7 +768,8 @@ class DatabaseService {
   }
 
   /// Update booking
-  Future<void> updateBooking(String bookingId, Map<String, dynamic> data) async {
+  Future<void> updateBooking(
+      String bookingId, Map<String, dynamic> data) async {
     data['updated_at'] = DateTime.now().toIso8601String();
     await _client.from('bookings').update(data).eq('id', bookingId);
   }

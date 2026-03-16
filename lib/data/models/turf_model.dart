@@ -21,9 +21,9 @@ class TurfLocation {
 
 /// Time slot pricing for a specific period
 class TimeSlotPricing {
-  final String label;      // "Morning", "Afternoon", "Evening", "Night"
-  final String startTime;  // "06:00"
-  final String endTime;    // "12:00"
+  final String label; // "Morning", "Afternoon", "Evening", "Night"
+  final String startTime; // "06:00"
+  final String endTime; // "12:00"
   final double price;
 
   TimeSlotPricing({
@@ -54,10 +54,10 @@ class TimeSlotPricing {
 
 /// Day type pricing (contains 4 time slots)
 class DayTypePricing {
-  final TimeSlotPricing morning;    // 6:00 AM - 12:00 PM
-  final TimeSlotPricing afternoon;  // 12:00 PM - 6:00 PM
-  final TimeSlotPricing evening;    // 6:00 PM - 12:00 AM
-  final TimeSlotPricing night;      // 12:00 AM - 6:00 AM
+  final TimeSlotPricing morning; // 6:00 AM - 12:00 PM
+  final TimeSlotPricing afternoon; // 12:00 PM - 6:00 PM
+  final TimeSlotPricing evening; // 6:00 PM - 12:00 AM
+  final TimeSlotPricing night; // 12:00 AM - 6:00 AM
 
   DayTypePricing({
     required this.morning,
@@ -72,10 +72,26 @@ class DayTypePricing {
       final dayPrice = (map['day']?['price'] ?? 1000).toDouble();
       final nightPrice = (map['night']?['price'] ?? 1200).toDouble();
       return DayTypePricing(
-        morning: TimeSlotPricing(label: 'Morning', startTime: '06:00', endTime: '12:00', price: dayPrice),
-        afternoon: TimeSlotPricing(label: 'Afternoon', startTime: '12:00', endTime: '18:00', price: dayPrice),
-        evening: TimeSlotPricing(label: 'Evening', startTime: '18:00', endTime: '00:00', price: nightPrice),
-        night: TimeSlotPricing(label: 'Night', startTime: '00:00', endTime: '06:00', price: nightPrice),
+        morning: TimeSlotPricing(
+            label: 'Morning',
+            startTime: '06:00',
+            endTime: '12:00',
+            price: dayPrice),
+        afternoon: TimeSlotPricing(
+            label: 'Afternoon',
+            startTime: '12:00',
+            endTime: '18:00',
+            price: dayPrice),
+        evening: TimeSlotPricing(
+            label: 'Evening',
+            startTime: '18:00',
+            endTime: '00:00',
+            price: nightPrice),
+        night: TimeSlotPricing(
+            label: 'Night',
+            startTime: '00:00',
+            endTime: '06:00',
+            price: nightPrice),
       );
     }
     return DayTypePricing(
@@ -106,18 +122,34 @@ class DayTypePricing {
 
   factory DayTypePricing.defaultPricing({double basePrice = 1000}) {
     return DayTypePricing(
-      morning: TimeSlotPricing(label: 'Morning', startTime: '06:00', endTime: '12:00', price: basePrice),
-      afternoon: TimeSlotPricing(label: 'Afternoon', startTime: '12:00', endTime: '18:00', price: basePrice),
-      evening: TimeSlotPricing(label: 'Evening', startTime: '18:00', endTime: '00:00', price: basePrice * 1.2),
-      night: TimeSlotPricing(label: 'Night', startTime: '00:00', endTime: '06:00', price: basePrice * 1.1),
+      morning: TimeSlotPricing(
+          label: 'Morning',
+          startTime: '06:00',
+          endTime: '12:00',
+          price: basePrice),
+      afternoon: TimeSlotPricing(
+          label: 'Afternoon',
+          startTime: '12:00',
+          endTime: '18:00',
+          price: basePrice),
+      evening: TimeSlotPricing(
+          label: 'Evening',
+          startTime: '18:00',
+          endTime: '00:00',
+          price: basePrice * 1.2),
+      night: TimeSlotPricing(
+          label: 'Night',
+          startTime: '00:00',
+          endTime: '06:00',
+          price: basePrice * 1.1),
     );
   }
 }
 
 /// Net/Box pricing (each net can have different pricing)
 class NetPricing {
-  final int netNumber;          // 1, 2, 3, etc.
-  final String netName;         // "Net 1", "Box A", etc.
+  final int netNumber; // 1, 2, 3, etc.
+  final String netName; // "Net 1", "Box A", etc.
   final DayTypePricing weekday;
   final DayTypePricing weekend;
   final DayTypePricing holiday;
@@ -177,12 +209,12 @@ class PricingRules {
             .toList(),
       );
     }
-    
+
     // Handle legacy format (convert to single net)
     final weekdayData = map['weekday'] ?? {};
     final saturdayData = map['saturday'] ?? map['weekend'] ?? {};
     final holidayData = map['holiday'] ?? {};
-    
+
     return PricingRules(
       netPricing: [
         NetPricing(
@@ -212,7 +244,8 @@ class PricingRules {
   }
 
   /// Get default pricing rules for N nets
-  factory PricingRules.defaultRules({int numberOfNets = 1, double basePrice = 1000}) {
+  factory PricingRules.defaultRules(
+      {int numberOfNets = 1, double basePrice = 1000}) {
     return PricingRules(
       netPricing: List.generate(
         numberOfNets,
@@ -222,12 +255,13 @@ class PricingRules {
   }
 
   /// Get pricing for a specific net, day type, and time
-  double getPrice({required int netNumber, required String dayType, required String time}) {
+  double getPrice(
+      {required int netNumber, required String dayType, required String time}) {
     final net = netPricing.firstWhere(
       (n) => n.netNumber == netNumber,
       orElse: () => netPricing.first,
     );
-    
+
     DayTypePricing dayPricing;
     switch (dayType.toLowerCase()) {
       case 'weekend':
@@ -241,7 +275,7 @@ class PricingRules {
       default:
         dayPricing = net.weekday;
     }
-    
+
     return dayPricing.getPriceForTime(time);
   }
 }
@@ -295,7 +329,7 @@ class TurfImage {
 
   /// Check if this image has a valid URL
   bool get isValid => url.isNotEmpty && _isValidUrl(url);
-  
+
   /// Validate URL format
   static bool _isValidUrl(String url) {
     if (url.isEmpty) return false;
@@ -323,7 +357,7 @@ class TurfImage {
       'isPrimary': isPrimary,
     };
   }
-  
+
   /// Create a copy with modified primary status
   TurfImage copyWith({bool? isPrimary}) {
     return TurfImage(
@@ -351,7 +385,7 @@ class TurfImage {
 class TurfModel {
   final String turfId;
   final String ownerId;
-  
+
   // Basic Details
   final String turfName;
   final String city;
@@ -359,27 +393,28 @@ class TurfModel {
   final TurfLocation? location;
   final TurfType turfType;
   final String? description;
-  final int numberOfNets;  // Number of nets/boxes
-  
+  final int numberOfNets; // Number of nets/boxes
+
   // Operational Details
   final String openTime;
   final String closeTime;
   final int slotDurationMinutes;
   final List<String> daysOpen;
-  final TurfStatus status;  // Open, Closed, Renovation
-  
+  final TurfStatus status; // Open, Closed, Renovation
+  final List<int> renovationNetNumbers; // Nets closed when status is renovation
+
   // Pricing
   final PricingRules pricingRules;
   final List<String> publicHolidays;
-  
+
   // Images
   final List<TurfImage> images;
-  
+
   // Verification Status
   final bool isApproved;
   final VerificationStatus verificationStatus;
   final String? rejectionReason;
-  
+
   // Metadata
   final DateTime createdAt;
   final DateTime? updatedAt;
@@ -399,6 +434,7 @@ class TurfModel {
     this.slotDurationMinutes = 60,
     this.daysOpen = const ['MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT', 'SUN'],
     this.status = TurfStatus.open,
+    this.renovationNetNumbers = const [],
     required this.pricingRules,
     this.publicHolidays = const [],
     this.images = const [],
@@ -417,6 +453,76 @@ class TurfModel {
       return DateTime.now();
     }
 
+    List<int> parseRenovationNets(dynamic value) {
+      if (value is! List) return const <int>[];
+      return value
+          .cast<dynamic>()
+          .map<int>((dynamic e) => int.tryParse(e.toString()) ?? 0)
+          .where((int n) => n > 0)
+          .toSet()
+          .toList()
+        ..sort();
+    }
+
+    List<int> parseRenovationNetsWithFallback() {
+      final fromColumn = parseRenovationNets(
+        data['renovation_net_numbers'] ?? data['renovationNetNumbers'],
+      );
+      if (fromColumn.isNotEmpty) return fromColumn;
+
+      final pricingRulesData = data['pricing_rules'] ?? data['pricingRules'];
+      if (pricingRulesData is Map) {
+        final fallbackValue = pricingRulesData['renovation_net_numbers'];
+        return parseRenovationNets(fallbackValue);
+      }
+
+      return const <int>[];
+    }
+
+    String? normalizeDayCode(dynamic value) {
+      if (value == null) return null;
+      final raw = value.toString().trim();
+      if (raw.isEmpty) return null;
+
+      final upper = raw.toUpperCase();
+      final lettersOnly = upper.replaceAll(RegExp(r'[^A-Z]'), '');
+      final code =
+          lettersOnly.length >= 3 ? lettersOnly.substring(0, 3) : lettersOnly;
+
+      switch (code) {
+        case 'MON':
+          return 'MON';
+        case 'TUE':
+          return 'TUE';
+        case 'WED':
+          return 'WED';
+        case 'THU':
+          return 'THU';
+        case 'FRI':
+          return 'FRI';
+        case 'SAT':
+          return 'SAT';
+        case 'SUN':
+          return 'SUN';
+        default:
+          return null;
+      }
+    }
+
+    List<String> parseDaysOpen(dynamic value) {
+      final source = value is List
+          ? value
+          : const ['MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT', 'SUN'];
+
+      final normalized =
+          source.map(normalizeDayCode).whereType<String>().toSet().toList();
+
+      const order = ['MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT', 'SUN'];
+      normalized.sort((a, b) => order.indexOf(a).compareTo(order.indexOf(b)));
+
+      return normalized.isEmpty ? List<String>.from(order) : normalized;
+    }
+
     return TurfModel(
       turfId: data['id'] ?? data['turfId'] ?? '',
       ownerId: data['owner_id'] ?? data['ownerId'] ?? '',
@@ -426,19 +532,27 @@ class TurfModel {
       location: data['location'] != null
           ? TurfLocation.fromMap(Map<String, dynamic>.from(data['location']))
           : null,
-      turfType: TurfTypeExtension.fromString(data['turf_type'] ?? data['turfType'] ?? 'BOX_CRICKET'),
+      turfType: TurfTypeExtension.fromString(
+          data['turf_type'] ?? data['turfType'] ?? 'BOX_CRICKET'),
       description: data['description'],
       numberOfNets: data['number_of_nets'] ?? data['numberOfNets'] ?? 1,
       openTime: data['open_time'] ?? data['openTime'] ?? '06:00',
       closeTime: data['close_time'] ?? data['closeTime'] ?? '23:00',
-      slotDurationMinutes: data['slot_duration_minutes'] ?? data['slotDurationMinutes'] ?? 60,
-      daysOpen: List<String>.from(data['days_open'] ?? data['daysOpen'] ?? ['MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT', 'SUN']),
+      slotDurationMinutes:
+          data['slot_duration_minutes'] ?? data['slotDurationMinutes'] ?? 60,
+      daysOpen: parseDaysOpen(data['days_open'] ?? data['daysOpen']),
       status: TurfStatusExtension.fromString(data['status'] ?? 'OPEN'),
-      pricingRules: PricingRules.fromMap(data['pricing_rules'] ?? data['pricingRules'] ?? {}),
-      publicHolidays: List<String>.from(data['public_holidays'] ?? data['publicHolidays'] ?? []),
+      renovationNetNumbers: parseRenovationNetsWithFallback(),
+      pricingRules: PricingRules.fromMap(
+          data['pricing_rules'] ?? data['pricingRules'] ?? {}),
+      publicHolidays: List<String>.from(
+          data['public_holidays'] ?? data['publicHolidays'] ?? []),
       images: _parseImages(data['images']),
       isApproved: data['is_approved'] ?? data['isApproved'] ?? false,
-      verificationStatus: VerificationStatusExtension.fromString(data['verification_status'] ?? data['verificationStatus'] ?? 'PENDING'),
+      verificationStatus: VerificationStatusExtension.fromString(
+          data['verification_status'] ??
+              data['verificationStatus'] ??
+              'PENDING'),
       rejectionReason: data['rejection_reason'] ?? data['rejectionReason'],
       createdAt: parseDate(data['created_at'] ?? data['createdAt']),
       updatedAt: data['updated_at'] != null || data['updatedAt'] != null
@@ -446,12 +560,12 @@ class TurfModel {
           : null,
     );
   }
-  
+
   /// Parse and filter images, removing invalid ones
   static List<TurfImage> _parseImages(dynamic imagesData) {
     if (imagesData == null) return [];
     if (imagesData is! List) return [];
-    
+
     final List<TurfImage> result = [];
     for (final item in imagesData) {
       if (item is Map<String, dynamic>) {
@@ -481,6 +595,7 @@ class TurfModel {
       'slot_duration_minutes': slotDurationMinutes,
       'days_open': daysOpen,
       'status': status.value,
+      'renovation_net_numbers': renovationNetNumbers,
       'pricing_rules': pricingRules.toMap(),
       'public_holidays': publicHolidays,
       'images': images.map((e) => e.toMap()).toList(),
@@ -495,14 +610,15 @@ class TurfModel {
   /// Get primary image URL (only returns valid URLs)
   String? get primaryImageUrl {
     // First try to find a primary image with a valid URL
-    final primary = images.where((img) => img.isPrimary && img.isValid).firstOrNull;
+    final primary =
+        images.where((img) => img.isPrimary && img.isValid).firstOrNull;
     if (primary != null) return primary.url;
-    
+
     // Fallback to first valid image
     final firstValid = images.where((img) => img.isValid).firstOrNull;
     return firstValid?.url;
   }
-  
+
   /// Get all valid image URLs
   List<String> get validImageUrls {
     return images.where((img) => img.isValid).map((img) => img.url).toList();
@@ -522,6 +638,7 @@ class TurfModel {
     int? slotDurationMinutes,
     List<String>? daysOpen,
     TurfStatus? status,
+    List<int>? renovationNetNumbers,
     PricingRules? pricingRules,
     List<String>? publicHolidays,
     List<TurfImage>? images,
@@ -545,6 +662,7 @@ class TurfModel {
       slotDurationMinutes: slotDurationMinutes ?? this.slotDurationMinutes,
       daysOpen: daysOpen ?? this.daysOpen,
       status: status ?? this.status,
+      renovationNetNumbers: renovationNetNumbers ?? this.renovationNetNumbers,
       pricingRules: pricingRules ?? this.pricingRules,
       publicHolidays: publicHolidays ?? this.publicHolidays,
       images: images ?? this.images,
