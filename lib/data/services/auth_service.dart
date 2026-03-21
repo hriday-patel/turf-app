@@ -1,9 +1,12 @@
+import 'package:flutter/foundation.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 /// Authentication Service
 /// Handles all Supabase Auth operations
 class AuthService {
   SupabaseClient get _client => Supabase.instance.client;
+  static const String _androidOAuthRedirect =
+      'com.example.turf_app://login-callback/';
 
   // Current user getters
   User? get currentUser => _client.auth.currentUser;
@@ -65,6 +68,37 @@ class AuthService {
   }) async {
     return await _client.auth.verifyOTP(
       type: OtpType.sms,
+      phone: phone,
+      token: token,
+    );
+  }
+
+  /// Start Google OAuth sign-in flow.
+  ///
+  /// Returns true when external browser is launched successfully.
+  Future<bool> signInWithGoogle() async {
+    final redirectTo = kIsWeb ? Uri.base.origin : _androidOAuthRedirect;
+
+    return await _client.auth.signInWithOAuth(
+      OAuthProvider.google,
+      redirectTo: redirectTo,
+    );
+  }
+
+  /// Send OTP for linking/updating current user's phone.
+  Future<void> sendPhoneChangeOtp({required String phone}) async {
+    await _client.auth.updateUser(
+      UserAttributes(phone: phone),
+    );
+  }
+
+  /// Verify OTP for phone change flow.
+  Future<AuthResponse> verifyPhoneChangeOtp({
+    required String phone,
+    required String token,
+  }) async {
+    return await _client.auth.verifyOTP(
+      type: OtpType.phoneChange,
       phone: phone,
       token: token,
     );

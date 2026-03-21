@@ -15,7 +15,8 @@ class OwnerAuthScreen extends StatefulWidget {
   State<OwnerAuthScreen> createState() => _OwnerAuthScreenState();
 }
 
-class _OwnerAuthScreenState extends State<OwnerAuthScreen> with SingleTickerProviderStateMixin {
+class _OwnerAuthScreenState extends State<OwnerAuthScreen>
+    with SingleTickerProviderStateMixin {
   late TabController _tabController;
   bool _isLoginWithEmail = true; // Toggle for Login Tab
   bool _otpSent = false;
@@ -77,9 +78,20 @@ class _OwnerAuthScreenState extends State<OwnerAuthScreen> with SingleTickerProv
     return hasMinLength && hasUpper && hasLower && hasNumber && hasSpecial;
   }
 
+  bool _isValidEmail(String email) {
+    final normalized = email.trim();
+    final emailRegex = RegExp(r'^[^\s@]+@[^\s@]+\.[^\s@]+$');
+    return emailRegex.hasMatch(normalized);
+  }
+
+  bool _isValidIndianPhone(String phone) {
+    final normalized = phone.trim();
+    return RegExp(r'^\d{10}$').hasMatch(normalized);
+  }
+
   Future<void> _handleEmailLogin() async {
     if (!_loginEmailFormKey.currentState!.validate()) return;
-    
+
     final authProvider = Provider.of<AuthProvider>(context, listen: false);
     final success = await authProvider.signIn(
       email: _loginEmailController.text.trim(),
@@ -87,7 +99,7 @@ class _OwnerAuthScreenState extends State<OwnerAuthScreen> with SingleTickerProv
     );
 
     if (success && mounted) {
-      Navigator.pushReplacementNamed(context, AppRoutes.ownerDashboard);
+      await _continueToOwnerDashboardOrPhoneGate(authProvider);
     } else if (mounted && authProvider.errorMessage != null) {
       _showError(authProvider.errorMessage!);
     }
@@ -103,7 +115,12 @@ class _OwnerAuthScreenState extends State<OwnerAuthScreen> with SingleTickerProv
     final success = await authProvider.verifyPhone(phone);
     if (success && mounted) {
       setState(() => _otpSent = true);
-      _showSuccess('OTP Sent to $phone');
+      final isPhoneVerificationGate = authProvider.currentOwner != null;
+      _showSuccess(
+        isPhoneVerificationGate
+            ? 'OTP sent for phone verification'
+            : 'OTP sent to $phone',
+      );
     } else if (mounted && authProvider.errorMessage != null) {
       _showError(authProvider.errorMessage!);
     }
@@ -116,10 +133,11 @@ class _OwnerAuthScreenState extends State<OwnerAuthScreen> with SingleTickerProv
     }
 
     final authProvider = Provider.of<AuthProvider>(context, listen: false);
-    final success = await authProvider.verifyOTP(_loginOtpController.text.trim());
+    final success =
+        await authProvider.verifyOTP(_loginOtpController.text.trim());
 
     if (success && mounted) {
-      Navigator.pushReplacementNamed(context, AppRoutes.ownerDashboard);
+      await _continueToOwnerDashboardOrPhoneGate(authProvider);
     } else if (mounted && authProvider.errorMessage != null) {
       _showError(authProvider.errorMessage!);
     }
@@ -141,10 +159,44 @@ class _OwnerAuthScreenState extends State<OwnerAuthScreen> with SingleTickerProv
     );
 
     if (success && mounted) {
-      Navigator.pushReplacementNamed(context, AppRoutes.ownerDashboard);
+      await _continueToOwnerDashboardOrPhoneGate(authProvider);
     } else if (mounted && authProvider.errorMessage != null) {
       _showError(authProvider.errorMessage!);
     }
+  }
+
+  Future<void> _handleGoogleLogin() async {
+    final authProvider = Provider.of<AuthProvider>(context, listen: false);
+    final success = await authProvider.signInOwnerWithGoogle(
+      allowCreate: false,
+    );
+
+    if (success && mounted) {
+      await _continueToOwnerDashboardOrPhoneGate(authProvider);
+    } else if (mounted && authProvider.errorMessage != null) {
+      _showError(authProvider.errorMessage!);
+    }
+  }
+
+  Future<void> _handleGoogleSignup() async {
+    final authProvider = Provider.of<AuthProvider>(context, listen: false);
+
+    final success = await authProvider.signInOwnerWithGoogle(
+      allowCreate: true,
+    );
+
+    if (success && mounted) {
+      await _continueToOwnerDashboardOrPhoneGate(authProvider);
+    } else if (mounted && authProvider.errorMessage != null) {
+      _showError(authProvider.errorMessage!);
+    }
+  }
+
+  Future<void> _continueToOwnerDashboardOrPhoneGate(
+      AuthProvider authProvider) async {
+    await authProvider.refreshProfile();
+    if (!mounted) return;
+    Navigator.pushReplacementNamed(context, AppRoutes.ownerDashboard);
   }
 
   void _showError(String message) {
@@ -167,86 +219,88 @@ class _OwnerAuthScreenState extends State<OwnerAuthScreen> with SingleTickerProv
           children: [
             const AbstractBgShapes(),
             SafeArea(
-          child: Column(
-            children: [
-              // Custom glass app bar
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
-                child: Row(
-                  children: [
-                    IconButton(
-                      icon: Icon(Icons.arrow_back_ios, color: c.textPrimary, size: 20),
-                      onPressed: () => Navigator.pop(context),
-                    ),
-                    Expanded(
-                      child: Text(
-                        'Owner Portal',
-                        textAlign: TextAlign.center,
-                        style: TextStyle(
-                          color: c.textPrimary,
-                          fontWeight: FontWeight.bold,
-                          fontSize: 18,
+              child: Column(
+                children: [
+                  // Custom glass app bar
+                  Padding(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+                    child: Row(
+                      children: [
+                        IconButton(
+                          icon: Icon(Icons.arrow_back_ios,
+                              color: c.textPrimary, size: 20),
+                          onPressed: () => Navigator.pop(context),
                         ),
-                      ),
+                        Expanded(
+                          child: Text(
+                            'Owner Portal',
+                            textAlign: TextAlign.center,
+                            style: TextStyle(
+                              color: c.textPrimary,
+                              fontWeight: FontWeight.bold,
+                              fontSize: 18,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 48), // balance the back button
+                      ],
                     ),
-                    const SizedBox(width: 48), // balance the back button
-                  ],
-                ),
+                  ),
+                  // Branding
+                  const SizedBox(height: 8),
+                  Text(
+                    'FieldPass Business',
+                    style: TextStyle(
+                      fontSize: 24,
+                      fontWeight: FontWeight.bold,
+                      color: c.textPrimary,
+                      letterSpacing: 0.5,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    'Pitch Perfect Management',
+                    style: TextStyle(
+                      fontSize: 14,
+                      color: c.textSecondary,
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  // Tab bar
+                  Container(
+                    margin: const EdgeInsets.symmetric(horizontal: 24),
+                    decoration: BoxDecoration(
+                      color: c.glassFill,
+                      borderRadius: BorderRadius.circular(16),
+                      border: Border.all(color: c.glassBorder),
+                    ),
+                    child: TabBar(
+                      controller: _tabController,
+                      labelColor: c.primary,
+                      unselectedLabelColor: c.textSecondary,
+                      indicatorColor: c.primary,
+                      indicatorSize: TabBarIndicatorSize.label,
+                      dividerColor: Colors.transparent,
+                      tabs: const [
+                        Tab(text: 'LOGIN'),
+                        Tab(text: 'SIGN UP'),
+                      ],
+                    ),
+                  ),
+                  // Body
+                  Expanded(
+                    child: TabBarView(
+                      controller: _tabController,
+                      children: [
+                        _buildLoginTab(),
+                        _buildSignupTab(),
+                      ],
+                    ),
+                  ),
+                ],
               ),
-              // Branding
-              const SizedBox(height: 8),
-              Text(
-                'FieldPass Business',
-                style: TextStyle(
-                  fontSize: 24,
-                  fontWeight: FontWeight.bold,
-                  color: c.textPrimary,
-                  letterSpacing: 0.5,
-                ),
-              ),
-              const SizedBox(height: 4),
-              Text(
-                'Pitch Perfect Management',
-                style: TextStyle(
-                  fontSize: 14,
-                  color: c.textSecondary,
-                ),
-              ),
-              const SizedBox(height: 16),
-              // Tab bar
-              Container(
-                margin: const EdgeInsets.symmetric(horizontal: 24),
-                decoration: BoxDecoration(
-                  color: c.glassFill,
-                  borderRadius: BorderRadius.circular(16),
-                  border: Border.all(color: c.glassBorder),
-                ),
-                child: TabBar(
-                  controller: _tabController,
-                  labelColor: c.primary,
-                  unselectedLabelColor: c.textSecondary,
-                  indicatorColor: c.primary,
-                  indicatorSize: TabBarIndicatorSize.label,
-                  dividerColor: Colors.transparent,
-                  tabs: const [
-                    Tab(text: 'LOGIN'),
-                    Tab(text: 'SIGN UP'),
-                  ],
-                ),
-              ),
-              // Body
-              Expanded(
-                child: TabBarView(
-                  controller: _tabController,
-                  children: [
-                    _buildLoginTab(),
-                    _buildSignupTab(),
-                  ],
-                ),
-              ),
-            ],
-          ),
-          ),
+            ),
           ],
         ),
       ),
@@ -286,13 +340,20 @@ class _OwnerAuthScreenState extends State<OwnerAuthScreen> with SingleTickerProv
           ),
           const SizedBox(height: 32),
 
-          if (_isLoginWithEmail) _buildEmailLoginForm() else _buildPhoneLoginForm(),
+          if (_isLoginWithEmail)
+            _buildEmailLoginForm()
+          else
+            _buildPhoneLoginForm(),
         ],
       ),
     );
   }
 
-  Widget _buildMethodToggle({required BuildContext context, required String title, required bool isSelected, required VoidCallback onTap}) {
+  Widget _buildMethodToggle(
+      {required BuildContext context,
+      required String title,
+      required bool isSelected,
+      required VoidCallback onTap}) {
     final c = AppColors.of(context);
     return GestureDetector(
       onTap: onTap,
@@ -302,7 +363,8 @@ class _OwnerAuthScreenState extends State<OwnerAuthScreen> with SingleTickerProv
           color: isSelected ? c.primary.withValues(alpha: 0.1) : c.glassFill,
           borderRadius: BorderRadius.circular(14),
           border: Border.all(
-            color: isSelected ? c.primary.withValues(alpha: 0.5) : c.glassBorder,
+            color:
+                isSelected ? c.primary.withValues(alpha: 0.5) : c.glassBorder,
             width: 1.5,
           ),
           boxShadow: isSelected ? AppColors.neonGlow(blur: 10) : null,
@@ -327,24 +389,44 @@ class _OwnerAuthScreenState extends State<OwnerAuthScreen> with SingleTickerProv
         children: [
           TextFormField(
             controller: _loginEmailController,
-            decoration: _inputDecoration(context, 'Email Address', Icons.email_outlined),
+            decoration: _inputDecoration(
+                context, 'Email Address', Icons.email_outlined),
             keyboardType: TextInputType.emailAddress,
-            validator: (val) => val != null && val.contains('@') ? null : 'Invalid email',
+            validator: (val) {
+              if (val == null || val.trim().isEmpty) {
+                return 'Email is required';
+              }
+              return _isValidEmail(val) ? null : 'Enter a valid email address';
+            },
           ),
           const SizedBox(height: 16),
           TextFormField(
             controller: _loginPasswordController,
-            decoration: _inputDecoration(context, 'Password', Icons.lock_outline),
+            decoration:
+                _inputDecoration(context, 'Password', Icons.lock_outline),
             obscureText: true,
-            validator: (val) => val != null && val.length >= 6 ? null : 'Min 6 chars',
+            validator: (val) {
+              if (val == null || val.isEmpty) {
+                return 'Password is required';
+              }
+              return val.length >= 8
+                  ? null
+                  : 'Password must be at least 8 characters';
+            },
           ),
           const SizedBox(height: 24),
           _buildSubmitButton('Login with Email', _handleEmailLogin),
+          const SizedBox(height: 12),
+          _buildGoogleButton(
+            text: 'Continue with Google',
+            onPressed: _handleGoogleLogin,
+          ),
           TextButton(
             onPressed: () {
               // TODO: Implement Forgot Password
             },
-            child: Text('Forgot Password?', style: TextStyle(color: c.textSecondary)),
+            child: Text('Forgot Password?',
+                style: TextStyle(color: c.textSecondary)),
           ),
         ],
       ),
@@ -359,32 +441,44 @@ class _OwnerAuthScreenState extends State<OwnerAuthScreen> with SingleTickerProv
         children: [
           TextFormField(
             controller: _loginPhoneController,
-            decoration: _inputDecoration(context, 'Phone Number', Icons.phone).copyWith(
+            decoration:
+                _inputDecoration(context, 'Phone Number', Icons.phone).copyWith(
               prefixText: '+91 ',
               prefixStyle: const TextStyle(fontWeight: FontWeight.bold),
             ),
             keyboardType: TextInputType.phone,
             maxLength: 10,
             enabled: !_otpSent,
-            validator: (val) => val != null && val.length == 10 ? null : '10 digits required',
+            validator: (val) {
+              if (val == null || val.trim().isEmpty) {
+                return 'Phone number is required';
+              }
+              return _isValidIndianPhone(val)
+                  ? null
+                  : 'Enter a valid 10-digit phone number';
+            },
           ),
-          
           if (_otpSent) ...[
             const SizedBox(height: 16),
             TextFormField(
               controller: _loginOtpController,
-              decoration: _inputDecoration(context, 'Enter 6-digit OTP', Icons.security),
+              decoration: _inputDecoration(
+                  context, 'Enter 6-digit OTP', Icons.security),
               keyboardType: TextInputType.number,
               maxLength: 6,
               textAlign: TextAlign.center,
-              style: TextStyle(letterSpacing: 8, fontWeight: FontWeight.bold, color: c.textPrimary),
+              style: TextStyle(
+                  letterSpacing: 8,
+                  fontWeight: FontWeight.bold,
+                  color: c.textPrimary),
             ),
             const SizedBox(height: 24),
-            _buildSubmitButton('Verify & Login', _handlePhoneLoginVerifyOtp),
+            _buildSubmitButton('Verify & Continue', _handlePhoneLoginVerifyOtp),
             const SizedBox(height: 16),
             TextButton(
               onPressed: () => setState(() => _otpSent = false),
-              child: Text('Change Number', style: TextStyle(color: c.secondary)),
+              child:
+                  Text('Change Number', style: TextStyle(color: c.secondary)),
             ),
           ] else ...[
             const SizedBox(height: 24),
@@ -399,71 +493,158 @@ class _OwnerAuthScreenState extends State<OwnerAuthScreen> with SingleTickerProv
     final c = AppColors.of(context);
     return SingleChildScrollView(
       padding: const EdgeInsets.all(24),
-      child: Form(
-        key: _signupFormKey,
-        child: Column(
-          children: [
-            TextFormField(
-              controller: _signupNameController,
-              decoration: _inputDecoration(context, 'Full Name', Icons.person_outline),
-              validator: (val) => val != null && val.length >= 3 ? null : 'Min 3 chars',
+      child: Column(
+        children: [
+          _buildGoogleSignupPathCard(),
+          const SizedBox(height: 18),
+          Text(
+            'OR SIGN UP MANUALLY',
+            style: TextStyle(
+              color: c.textSecondary,
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+              letterSpacing: 0.8,
             ),
-            const SizedBox(height: 16),
-            TextFormField(
-              controller: _signupEmailController,
-              decoration: _inputDecoration(context, 'Email Address', Icons.email_outlined),
-              keyboardType: TextInputType.emailAddress,
-              validator: (val) => val != null && val.contains('@') ? null : 'Invalid email',
+          ),
+          const SizedBox(height: 18),
+          Form(
+            key: _signupFormKey,
+            child: Column(
+              children: [
+                TextFormField(
+                  controller: _signupNameController,
+                  decoration: _inputDecoration(
+                      context, 'Full Name', Icons.person_outline),
+                  validator: (val) {
+                    if (val == null || val.trim().isEmpty) {
+                      return 'Full name is required';
+                    }
+                    return val.trim().length >= 3
+                        ? null
+                        : 'Name must be at least 3 characters';
+                  },
+                ),
+                const SizedBox(height: 16),
+                TextFormField(
+                  controller: _signupEmailController,
+                  decoration: _inputDecoration(
+                      context, 'Email Address', Icons.email_outlined),
+                  keyboardType: TextInputType.emailAddress,
+                  validator: (val) {
+                    if (val == null || val.trim().isEmpty) {
+                      return 'Email is required';
+                    }
+                    return _isValidEmail(val)
+                        ? null
+                        : 'Enter a valid email address';
+                  },
+                ),
+                const SizedBox(height: 16),
+                TextFormField(
+                  controller: _signupPhoneController,
+                  decoration:
+                      _inputDecoration(context, 'Phone Number', Icons.phone)
+                          .copyWith(
+                    prefixText: '+91 ',
+                    prefixStyle: const TextStyle(fontWeight: FontWeight.bold),
+                  ),
+                  keyboardType: TextInputType.phone,
+                  maxLength: 10,
+                  validator: (val) {
+                    if (val == null || val.trim().isEmpty) {
+                      return 'Phone number is required';
+                    }
+                    return _isValidIndianPhone(val)
+                        ? null
+                        : 'Enter a valid 10-digit phone number';
+                  },
+                ),
+                const SizedBox(height: 16),
+                TextFormField(
+                  controller: _signupPasswordController,
+                  decoration:
+                      _inputDecoration(context, 'Password', Icons.lock_outline),
+                  obscureText: true,
+                  validator: (val) {
+                    if (val == null || val.isEmpty)
+                      return 'Password is required';
+                    if (!_isStrongPassword(val)) {
+                      return 'Min 8 chars, upper, lower, number, special';
+                    }
+                    return null;
+                  },
+                ),
+                const SizedBox(height: 16),
+                TextFormField(
+                  controller: _signupConfirmPasswordController,
+                  decoration: _inputDecoration(
+                      context, 'Confirm Password', Icons.lock_outline),
+                  obscureText: true,
+                  validator: (val) {
+                    if (val == null || val.isEmpty)
+                      return 'Confirm password is required';
+                    if (val != _signupPasswordController.text)
+                      return 'Passwords do not match';
+                    return null;
+                  },
+                ),
+                const SizedBox(height: 32),
+                _buildSubmitButton('Sign Up', _handleSignup),
+                const SizedBox(height: 24),
+                Text(
+                  'By signing up, you agree to our Terms & Conditions',
+                  style: TextStyle(color: c.textSecondary, fontSize: 12),
+                  textAlign: TextAlign.center,
+                ),
+              ],
             ),
-            const SizedBox(height: 16),
-            TextFormField(
-              controller: _signupPhoneController,
-              decoration: _inputDecoration(context, 'Phone Number', Icons.phone).copyWith(
-                prefixText: '+91 ',
-                prefixStyle: const TextStyle(fontWeight: FontWeight.bold),
-              ),
-              keyboardType: TextInputType.phone,
-              maxLength: 10,
-              validator: (val) => val != null && val.length == 10 ? null : '10 digits required',
-            ),
-            const SizedBox(height: 16),
-            TextFormField(
-              controller: _signupPasswordController,
-              decoration: _inputDecoration(context, 'Password', Icons.lock_outline),
-              obscureText: true,
-              validator: (val) {
-                if (val == null || val.isEmpty) return 'Password is required';
-                if (!_isStrongPassword(val)) {
-                  return 'Min 8 chars, upper, lower, number, special';
-                }
-                return null;
-              },
-            ),
-            const SizedBox(height: 16),
-            TextFormField(
-              controller: _signupConfirmPasswordController,
-              decoration: _inputDecoration(context, 'Confirm Password', Icons.lock_outline),
-              obscureText: true,
-              validator: (val) {
-                if (val != _signupPasswordController.text) return 'Passwords do not match';
-                return null;
-              },
-            ),
-            const SizedBox(height: 32),
-            _buildSubmitButton('Sign Up', _handleSignup),
-            const SizedBox(height: 24),
-            Text(
-              'By signing up, you agree to our Terms & Conditions',
-              style: TextStyle(color: c.textSecondary, fontSize: 12),
-              textAlign: TextAlign.center,
-            ),
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }
 
-  InputDecoration _inputDecoration(BuildContext context, String label, IconData icon) {
+  Widget _buildGoogleSignupPathCard() {
+    final c = AppColors.of(context);
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: c.glassFill,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: c.glassBorder),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Quick Sign Up',
+            style: TextStyle(
+              color: c.textPrimary,
+              fontSize: 16,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            'Name and email will be pulled from Google. Phone OTP verification is required.',
+            style: TextStyle(
+              color: c.textSecondary,
+              fontSize: 12,
+            ),
+          ),
+          const SizedBox(height: 12),
+          _buildGoogleButton(
+            text: 'Sign up with Google',
+            onPressed: _handleGoogleSignup,
+          ),
+        ],
+      ),
+    );
+  }
+
+  InputDecoration _inputDecoration(
+      BuildContext context, String label, IconData icon) {
     final c = AppColors.of(context);
     return InputDecoration(
       labelText: label,
@@ -494,6 +675,41 @@ class _OwnerAuthScreenState extends State<OwnerAuthScreen> with SingleTickerProv
           label: text,
           onPressed: onPressed,
           isLoading: auth.isLoading,
+        );
+      },
+    );
+  }
+
+  Widget _buildGoogleButton({
+    required String text,
+    required VoidCallback onPressed,
+  }) {
+    final c = AppColors.of(context);
+    return Consumer<AuthProvider>(
+      builder: (context, auth, _) {
+        return SizedBox(
+          width: double.infinity,
+          child: OutlinedButton.icon(
+            onPressed: auth.isLoading ? null : onPressed,
+            style: OutlinedButton.styleFrom(
+              side: BorderSide(color: c.glassBorder),
+              foregroundColor: c.textPrimary,
+              backgroundColor: c.glassFill,
+              minimumSize: const Size.fromHeight(52),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(14),
+              ),
+            ),
+            icon: Icon(Icons.g_mobiledata_rounded,
+                color: c.textPrimary, size: 26),
+            label: Text(
+              text,
+              style: TextStyle(
+                color: c.textPrimary,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
         );
       },
     );

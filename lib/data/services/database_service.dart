@@ -33,6 +33,7 @@ class DatabaseService {
     required String name,
     required String email,
     required String phone,
+    bool hasPassword = false,
   }) async {
     try {
       await _client.rpc('create_owner_profile', params: {
@@ -40,6 +41,7 @@ class DatabaseService {
         'user_name': name.trim(),
         'user_email': email.trim().toLowerCase(),
         'user_phone': phone.trim(),
+        'user_has_password': hasPassword,
       });
     } on PostgrestException catch (e) {
       if (e.message.contains('unique') || e.message.contains('duplicate')) {
@@ -70,6 +72,15 @@ class DatabaseService {
         .from('owners')
         .select('*')
         .eq('phone', phone)
+        .maybeSingle();
+  }
+
+  /// Get owner by email
+  Future<Map<String, dynamic>?> getOwnerByEmail(String email) async {
+    return await _client
+        .from('owners')
+        .select('*')
+        .eq('email', email.trim().toLowerCase())
         .maybeSingle();
   }
 

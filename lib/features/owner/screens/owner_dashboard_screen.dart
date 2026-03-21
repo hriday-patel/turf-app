@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:ui';
 
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
@@ -6,7 +7,6 @@ import '../../../config/colors.dart';
 import '../../../config/glass_widgets.dart';
 import '../../../config/section_container.dart';
 import '../../../config/theme_provider.dart';
-import '../../../core/constants/strings.dart';
 import '../../../core/constants/enums.dart';
 import '../../../app/routes.dart';
 import '../../../data/models/booking_model.dart';
@@ -36,7 +36,15 @@ class _OwnerDashboardScreenState extends State<OwnerDashboardScreen>
   static const int _carouselRealCount = 4;
   // Large multiplier for infinite loop illusion
   static const int _carouselLoopMultiplier = 1000;
-  static const int _carouselInitialPage = _carouselLoopMultiplier ~/ 2 * _carouselRealCount;
+  static const int _carouselInitialPage =
+      _carouselLoopMultiplier ~/ 2 * _carouselRealCount;
+
+  final TextEditingController _phoneGatePhoneController =
+      TextEditingController();
+  final TextEditingController _phoneGateOtpController = TextEditingController();
+  bool _phoneGateOtpSent = false;
+  bool _phoneGateBusy = false;
+  String? _phoneGateError;
 
   @override
   void initState() {
@@ -63,21 +71,31 @@ class _OwnerDashboardScreenState extends State<OwnerDashboardScreen>
       final start = i * 0.15;
       final end = (start + 0.45).clamp(0.0, 1.0);
       return Tween<double>(begin: 0.0, end: 1.0).animate(
-        CurvedAnimation(parent: _actionAnimController, curve: Interval(start, end, curve: Curves.easeOut)),
+        CurvedAnimation(
+            parent: _actionAnimController,
+            curve: Interval(start, end, curve: Curves.easeOut)),
       );
     });
     _actionSlideAnims = List.generate(4, (i) {
       final start = i * 0.15;
       final end = (start + 0.45).clamp(0.0, 1.0);
-      return Tween<Offset>(begin: const Offset(0, 10), end: Offset.zero).animate(
-        CurvedAnimation(parent: _actionAnimController, curve: Interval(start, end, curve: Curves.easeOut)),
+      return Tween<Offset>(begin: const Offset(0, 10), end: Offset.zero)
+          .animate(
+        CurvedAnimation(
+            parent: _actionAnimController,
+            curve: Interval(start, end, curve: Curves.easeOut)),
       );
     });
     _actionAnimController.forward();
 
     _loadData();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        _forceRefreshData();
+      }
+    });
   }
-  
+
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
@@ -87,15 +105,295 @@ class _OwnerDashboardScreenState extends State<OwnerDashboardScreen>
       AppRoutes.routeObserver.subscribe(this, route);
     }
   }
-  
+
   @override
   void dispose() {
     _autoSlideTimer?.cancel();
     _actionAnimController.dispose();
+    _phoneGatePhoneController.dispose();
+    _phoneGateOtpController.dispose();
     WidgetsBinding.instance.removeObserver(this);
     AppRoutes.routeObserver.unsubscribe(this);
     _carouselController.dispose();
     super.dispose();
+  }
+
+  String _normalizeToE164Indian(String raw) {
+    final digits = raw.replaceAll(RegExp(r'\D'), '');
+    if (digits.isEmpty) return '';
+    if (digits.length == 10) return '+91$digits';
+    if (digits.length == 12 && digits.startsWith('91')) return '+$digits';
+    if (raw.startsWith('+') && digits.length >= 10) return raw;
+    return '';
+  }
+
+  String _displayIndianNumber(String e164) {
+    if (e164.startsWith('+91') && e164.length >= 13) {
+      return e164.substring(3);
+    }
+    return e164;
+  }
+
+  void _seedPhoneGateIfNeeded(AuthProvider authProvider) {
+    if (_phoneGatePhoneController.text.trim().isNotEmpty) return;
+
+    // Option A: for manual deferred signup, prefill the signup phone.
+    if (authProvider.isInDeferredSignupFlow) {
+      final deferredPhone = authProvider.deferredSignupPhone;
+      if (deferredPhone.isNotEmpty && !deferredPhone.startsWith('pending_')) {
+        _phoneGatePhoneController.text = _displayIndianNumber(deferredPhone);
+      }
+      return;
+    }
+
+    final ownerPhone = authProvider.currentOwner?.phone ?? '';
+    if (ownerPhone.startsWith('pending_')) return;
+    _phoneGatePhoneController.text = _displayIndianNumber(ownerPhone);
+  }
+
+  Future<void> _sendPhoneVerificationOtp(AuthProvider authProvider) async {
+    final enteredPhone = _phoneGatePhoneController.text.trim();
+    if (!RegExp(r'^\d{10}$').hasMatch(enteredPhone)) {
+      setState(() {
+        _phoneGateError = 'Enter a valid 10-digit phone number';
+      });
+      return;
+    }
+
+    setState(() {
+      _phoneGateBusy = true;
+      _phoneGateError = null;
+    });
+
+    final normalizedPhone = _normalizeToE164Indian(enteredPhone);
+    final sent = await authProvider.verifyPhone(normalizedPhone);
+
+    if (!mounted) return;
+
+    setState(() {
+      _phoneGateBusy = false;
+      _phoneGateOtpSent = sent;
+      _phoneGateError = sent
+          ? null
+          : (authProvider.errorMessage ??
+              'Could not send OTP. Please try again.');
+    });
+  }
+
+  Future<void> _verifyPhoneVerificationOtp(AuthProvider authProvider) async {
+    final otp = _phoneGateOtpController.text.trim();
+    if (!RegExp(r'^\d{6}$').hasMatch(otp)) {
+      setState(() {
+        _phoneGateError = 'Enter a valid 6-digit OTP';
+      });
+      return;
+    }
+
+    setState(() {
+      _phoneGateBusy = true;
+      _phoneGateError = null;
+    });
+
+    final verified = await authProvider.verifyOTP(otp);
+    if (!mounted) return;
+
+    if (verified) {
+      // If in deferred signup flow, complete the owner profile creation
+      if (authProvider.isInDeferredSignupFlow) {
+        final completed = await authProvider.completeDeferredOwnerSignup();
+        if (!mounted) return;
+
+        if (!completed) {
+          setState(() {
+            _phoneGateBusy = false;
+            _phoneGateError = authProvider.errorMessage ??
+                'Could not complete signup. Please try again.';
+          });
+          return;
+        }
+      }
+
+      setState(() {
+        _phoneGateBusy = false;
+        _phoneGateError = null;
+        _phoneGateOtpSent = false;
+        _phoneGateOtpController.clear();
+      });
+    } else {
+      setState(() {
+        _phoneGateBusy = false;
+        _phoneGateError = authProvider.errorMessage ??
+            'Could not verify OTP. Please try again.';
+      });
+    }
+  }
+
+  Widget _buildPhoneVerificationLock(AuthProvider authProvider) {
+    final c = AppColors.of(context);
+    _seedPhoneGateIfNeeded(authProvider);
+
+    return Positioned.fill(
+      child: Stack(
+        children: [
+          Positioned.fill(
+            child: BackdropFilter(
+              filter: ImageFilter.blur(sigmaX: 8, sigmaY: 8),
+              child: Container(color: Colors.black.withValues(alpha: 0.22)),
+            ),
+          ),
+          Center(
+            child: Material(
+              color: Colors.transparent,
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 420),
+                child: Container(
+                  margin: const EdgeInsets.all(20),
+                  padding: const EdgeInsets.all(18),
+                  decoration: BoxDecoration(
+                    color: c.surface,
+                    borderRadius: BorderRadius.circular(18),
+                    border: Border.all(color: c.glassBorder),
+                  ),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Verify Phone To Continue',
+                        style: TextStyle(
+                          color: c.textPrimary,
+                          fontSize: 18,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        'Phone OTP verification is mandatory for Owner access.',
+                        style: TextStyle(color: c.textSecondary),
+                      ),
+                      const SizedBox(height: 16),
+                      TextField(
+                        controller: _phoneGatePhoneController,
+                        keyboardType: TextInputType.phone,
+                        maxLength: 10,
+                        enabled: !_phoneGateOtpSent,
+                        decoration: const InputDecoration(
+                          labelText: 'Phone Number',
+                          prefixText: '+91 ',
+                          hintText: '10-digit mobile number',
+                        ),
+                      ),
+                      if (_phoneGateOtpSent) ...[
+                        const SizedBox(height: 12),
+                        TextField(
+                          controller: _phoneGateOtpController,
+                          keyboardType: TextInputType.number,
+                          maxLength: 6,
+                          decoration: const InputDecoration(
+                            labelText: 'Enter OTP',
+                            hintText: '6-digit code',
+                          ),
+                        ),
+                      ],
+                      if (_phoneGateError != null) ...[
+                        const SizedBox(height: 8),
+                        Text(
+                          _phoneGateError!,
+                          style: TextStyle(
+                              color: c.error, fontWeight: FontWeight.w600),
+                        ),
+                      ],
+                      const SizedBox(height: 12),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: ElevatedButton(
+                              onPressed: _phoneGateBusy
+                                  ? null
+                                  : () => _phoneGateOtpSent
+                                      ? _verifyPhoneVerificationOtp(
+                                          authProvider)
+                                      : _sendPhoneVerificationOtp(authProvider),
+                              child: _phoneGateBusy
+                                  ? const SizedBox(
+                                      width: 18,
+                                      height: 18,
+                                      child: CircularProgressIndicator(
+                                          strokeWidth: 2),
+                                    )
+                                  : Text(_phoneGateOtpSent
+                                      ? 'Verify OTP'
+                                      : 'Send OTP'),
+                            ),
+                          ),
+                          if (_phoneGateOtpSent) ...[
+                            const SizedBox(width: 10),
+                            TextButton(
+                              onPressed: _phoneGateBusy
+                                  ? null
+                                  : () {
+                                      setState(() {
+                                        _phoneGateOtpSent = false;
+                                        _phoneGateOtpController.clear();
+                                        _phoneGateError = null;
+                                      });
+                                    },
+                              child: const Text('Edit Number'),
+                            ),
+                          ],
+                        ],
+                      ),
+                      const SizedBox(height: 12),
+                      SizedBox(
+                        width: double.infinity,
+                        child: TextButton(
+                          onPressed: _phoneGateBusy
+                              ? null
+                              : () async {
+                                  final confirmed = await showDialog<bool>(
+                                    context: context,
+                                    builder: (ctx) => AlertDialog(
+                                      title: const Text('Go Back?'),
+                                      content: const Text(
+                                        'You\'ll need to complete phone verification to access the dashboard.',
+                                      ),
+                                      actions: [
+                                        TextButton(
+                                          onPressed: () =>
+                                              Navigator.pop(ctx, false),
+                                          child: const Text('Cancel'),
+                                        ),
+                                        TextButton(
+                                          onPressed: () =>
+                                              Navigator.pop(ctx, true),
+                                          child: const Text('Go Back to Login'),
+                                        ),
+                                      ],
+                                    ),
+                                  );
+                                  if (confirmed ?? false) {
+                                    await authProvider.signOut();
+                                    if (mounted) {
+                                      Navigator.pushReplacementNamed(
+                                        context,
+                                        AppRoutes.ownerAuth,
+                                      );
+                                    }
+                                  }
+                                },
+                          child: const Text('Back to Login',
+                              style: TextStyle(fontSize: 12)),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
   }
 
   void _startAutoSlide() {
@@ -117,14 +415,20 @@ class _OwnerDashboardScreenState extends State<OwnerDashboardScreen>
       if (mounted) _startAutoSlide();
     });
   }
-  
+
+  @override
+  void didPush() {
+    // Called when this route has been pushed.
+    _forceRefreshData();
+  }
+
   @override
   void didPopNext() {
     // Called when returning to this screen from another screen
     debugPrint('Dashboard: didPopNext - refreshing data');
     _forceRefreshData();
   }
-  
+
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
@@ -136,19 +440,21 @@ class _OwnerDashboardScreenState extends State<OwnerDashboardScreen>
   Future<void> _forceRefreshData() async {
     final authProvider = Provider.of<AuthProvider>(context, listen: false);
     final turfProvider = Provider.of<TurfProvider>(context, listen: false);
-    final bookingProvider = Provider.of<BookingProvider>(context, listen: false);
+    final bookingProvider =
+        Provider.of<BookingProvider>(context, listen: false);
 
     if (authProvider.currentUserId != null) {
       // Force refresh from database to get latest verification status
       await turfProvider.refreshTurfs(authProvider.currentUserId!);
-      
+
       // Refresh Quick Overview stats for approved turfs
-      final approvedTurfIds = turfProvider.approvedTurfs.map((t) => t.turfId).toList();
+      final approvedTurfIds =
+          turfProvider.approvedTurfs.map((t) => t.turfId).toList();
       if (approvedTurfIds.isNotEmpty) {
         bookingProvider.loadTodaysBookings(approvedTurfIds);
         bookingProvider.loadPendingPayments(approvedTurfIds);
       }
-      
+
       // Refresh Recent Bookings for ALL turfs
       final allTurfIds = turfProvider.turfIds;
       if (allTurfIds.isNotEmpty) {
@@ -168,15 +474,17 @@ class _OwnerDashboardScreenState extends State<OwnerDashboardScreen>
 
   void _refreshBookings() {
     final turfProvider = Provider.of<TurfProvider>(context, listen: false);
-    final bookingProvider = Provider.of<BookingProvider>(context, listen: false);
-    
+    final bookingProvider =
+        Provider.of<BookingProvider>(context, listen: false);
+
     // Load Quick Overview stats for approved turfs
-    final approvedTurfIds = turfProvider.approvedTurfs.map((t) => t.turfId).toList();
+    final approvedTurfIds =
+        turfProvider.approvedTurfs.map((t) => t.turfId).toList();
     if (approvedTurfIds.isNotEmpty) {
       bookingProvider.loadTodaysBookings(approvedTurfIds);
       bookingProvider.loadPendingPayments(approvedTurfIds);
     }
-    
+
     // Load Recent Bookings for ALL turfs
     final allTurfIds = turfProvider.turfIds;
     if (allTurfIds.isNotEmpty) {
@@ -186,66 +494,79 @@ class _OwnerDashboardScreenState extends State<OwnerDashboardScreen>
 
   @override
   Widget build(BuildContext context) {
+    final authProvider = Provider.of<AuthProvider>(context);
+    final isPhoneLocked = authProvider.isInDeferredSignupFlow ||
+        (authProvider.currentOwner != null &&
+            !authProvider.isOwnerPhoneVerified);
+
     final c = AppColors.of(context);
-    return Scaffold(
-      backgroundColor: c.background,
-      body: GlassScaffoldBackground(
-        child: SafeArea(
-          child: RefreshIndicator(
-            onRefresh: _forceRefreshData,
-            color: c.primary,
-            backgroundColor: c.surface,
-            child: CustomScrollView(
-              slivers: [
-                SliverToBoxAdapter(child: _buildHeader()),
-                SliverToBoxAdapter(child: _buildQuickStats()),
-                SliverToBoxAdapter(child: _buildActionCards()),
-                SliverToBoxAdapter(child: _buildRecentActivity()),
-                const SliverToBoxAdapter(child: SizedBox(height: 100)),
+    return Stack(
+      children: [
+        Scaffold(
+          backgroundColor: c.background,
+          body: GlassScaffoldBackground(
+            child: SafeArea(
+              child: RefreshIndicator(
+                onRefresh: _forceRefreshData,
+                color: c.primary,
+                backgroundColor: c.surface,
+                child: CustomScrollView(
+                  slivers: [
+                    SliverToBoxAdapter(child: _buildHeader()),
+                    SliverToBoxAdapter(child: _buildQuickStats()),
+                    SliverToBoxAdapter(child: _buildActionCards()),
+                    SliverToBoxAdapter(child: _buildRecentActivity()),
+                    const SliverToBoxAdapter(child: SizedBox(height: 100)),
+                  ],
+                ),
+              ),
+            ),
+          ),
+          floatingActionButton: Container(
+            height: 58,
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(30),
+              gradient: LinearGradient(
+                colors: [c.primary, c.primaryDark],
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+              ),
+              boxShadow: [
+                BoxShadow(
+                  color: c.primary.withValues(alpha: 0.18),
+                  blurRadius: 18,
+                  offset: const Offset(0, 6),
+                ),
               ],
             ),
-          ),
-        ),
-      ),
-      floatingActionButton: Container(
-        height: 58,
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(30),
-          gradient: LinearGradient(
-            colors: [c.primary, c.primaryDark],
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-          ),
-          boxShadow: [
-            BoxShadow(
-              color: c.primary.withValues(alpha: 0.18),
-              blurRadius: 18,
-              offset: const Offset(0, 6),
-            ),
-          ],
-        ),
-        child: Material(
-          color: Colors.transparent,
-          child: InkWell(
-            borderRadius: BorderRadius.circular(30),
-            onTap: () => Navigator.pushNamed(context, AppRoutes.addTurf),
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 22),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(Icons.add, color: c.onPrimary, size: 22),
-                  const SizedBox(width: 8),
-                  Text(
-                    'Add Turf',
-                    style: TextStyle(color: c.onPrimary, fontWeight: FontWeight.w600, fontSize: 15),
+            child: Material(
+              color: Colors.transparent,
+              child: InkWell(
+                borderRadius: BorderRadius.circular(30),
+                onTap: () => Navigator.pushNamed(context, AppRoutes.addTurf),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 22),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(Icons.add, color: c.onPrimary, size: 22),
+                      const SizedBox(width: 8),
+                      Text(
+                        'Add Turf',
+                        style: TextStyle(
+                            color: c.onPrimary,
+                            fontWeight: FontWeight.w600,
+                            fontSize: 15),
+                      ),
+                    ],
                   ),
-                ],
+                ),
               ),
             ),
           ),
         ),
-      ),
+        if (isPhoneLocked) _buildPhoneVerificationLock(authProvider),
+      ],
     );
   }
 
@@ -319,12 +640,15 @@ class _OwnerDashboardScreenState extends State<OwnerDashboardScreen>
                           decoration: BoxDecoration(
                             color: c.glassFill,
                             shape: BoxShape.circle,
-                            border: Border.all(color: c.primary.withValues(alpha: 0.3)),
+                            border: Border.all(
+                                color: c.primary.withValues(alpha: 0.3)),
                             boxShadow: AppColors.neonGlow(blur: 8),
                           ),
                           child: Center(
                             child: Text(
-                              (owner?.name ?? 'O').substring(0, 1).toUpperCase(),
+                              (owner?.name ?? 'O')
+                                  .substring(0, 1)
+                                  .toUpperCase(),
                               style: TextStyle(
                                 color: c.primary,
                                 fontWeight: FontWeight.bold,
@@ -340,19 +664,30 @@ class _OwnerDashboardScreenState extends State<OwnerDashboardScreen>
                             final didLogout =
                                 await _confirmAndSignOut(authProvider);
                             if (mounted && didLogout) {
-                              Navigator.pushReplacementNamed(context, AppRoutes.loginSelection);
+                              Navigator.pushReplacementNamed(
+                                  context, AppRoutes.loginSelection);
                             }
                           }
                         },
                         itemBuilder: (context) => [
                           PopupMenuItem(
                             value: 'settings',
-                            child: Row(children: [Icon(Icons.person_outline, color: c.textSecondary), const SizedBox(width: 8), Text('Profile', style: TextStyle(color: c.textPrimary))]),
+                            child: Row(children: [
+                              Icon(Icons.person_outline,
+                                  color: c.textSecondary),
+                              const SizedBox(width: 8),
+                              Text('Profile',
+                                  style: TextStyle(color: c.textPrimary))
+                            ]),
                           ),
                           const PopupMenuDivider(),
                           PopupMenuItem(
                             value: 'logout',
-                            child: Row(children: [Icon(Icons.logout, color: c.error), const SizedBox(width: 8), Text('Logout', style: TextStyle(color: c.error))]),
+                            child: Row(children: [
+                              Icon(Icons.logout, color: c.error),
+                              const SizedBox(width: 8),
+                              Text('Logout', style: TextStyle(color: c.error))
+                            ]),
                           ),
                         ],
                       ),
@@ -363,7 +698,8 @@ class _OwnerDashboardScreenState extends State<OwnerDashboardScreen>
               const SizedBox(height: 16),
               // Date pill
               GlassCard(
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
                 borderRadius: 14,
                 child: Row(
                   mainAxisSize: MainAxisSize.min,
@@ -372,7 +708,8 @@ class _OwnerDashboardScreenState extends State<OwnerDashboardScreen>
                     const SizedBox(width: 8),
                     Text(
                       _getFormattedDate(),
-                      style: TextStyle(color: c.textPrimary, fontWeight: FontWeight.w500),
+                      style: TextStyle(
+                          color: c.textPrimary, fontWeight: FontWeight.w500),
                     ),
                   ],
                 ),
@@ -616,63 +953,6 @@ class _OwnerDashboardScreenState extends State<OwnerDashboardScreen>
     );
   }
 
-  Widget _buildStatCard({
-    required String title,
-    required String value,
-    required IconData icon,
-    required Color color,
-    required String subtitle,
-  }) {
-    final c = AppColors.of(context);
-    return GlassCard(
-      padding: const EdgeInsets.all(16),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Container(
-                padding: const EdgeInsets.all(8),
-                decoration: BoxDecoration(
-                  color: color.withValues(alpha: 0.1),
-                  borderRadius: BorderRadius.circular(10),
-                  border: Border.all(color: color.withValues(alpha: 0.2)),
-                ),
-                child: Icon(icon, color: color, size: 22),
-              ),
-              Text(
-                value,
-                style: TextStyle(
-                  fontSize: 28,
-                  fontWeight: FontWeight.bold,
-                  color: color,
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 12),
-          Text(
-            title,
-            style: TextStyle(
-              fontSize: 13,
-              fontWeight: FontWeight.w600,
-              color: c.textPrimary,
-            ),
-          ),
-          const SizedBox(height: 2),
-          Text(
-            subtitle,
-            style: TextStyle(
-              fontSize: 11,
-              color: c.textSecondary,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
   Widget _buildActionCards() {
     final c = AppColors.of(context);
     return SectionContainer(
@@ -703,7 +983,8 @@ class _OwnerDashboardScreenState extends State<OwnerDashboardScreen>
                       subtitle: 'Create bookings and manage slot availability',
                       icon: Icons.access_time_outlined,
                       bgColor: const Color(0xFF1F2937),
-                      onTap: () => Navigator.pushNamed(context, AppRoutes.slotBooking),
+                      onTap: () =>
+                          Navigator.pushNamed(context, AppRoutes.slotBooking),
                       tall: true,
                     ),
                   ),
@@ -718,10 +999,12 @@ class _OwnerDashboardScreenState extends State<OwnerDashboardScreen>
                           index: 1,
                           child: _buildDashCard(
                             title: 'View Turfs',
-                            subtitle: 'Manage your turfs, view status and edit details',
+                            subtitle:
+                                'Manage your turfs, view status and edit details',
                             icon: Icons.stadium_outlined,
                             bgColor: const Color(0xFF273445),
-                            onTap: () => Navigator.pushNamed(context, AppRoutes.myTurfs),
+                            onTap: () =>
+                                Navigator.pushNamed(context, AppRoutes.myTurfs),
                           ),
                         ),
                       ),
@@ -734,7 +1017,8 @@ class _OwnerDashboardScreenState extends State<OwnerDashboardScreen>
                             subtitle: 'View all bookings and manage payments',
                             icon: Icons.calendar_month_outlined,
                             bgColor: const Color(0xFF334155),
-                            onTap: () => Navigator.pushNamed(context, AppRoutes.bookingManagement),
+                            onTap: () => Navigator.pushNamed(
+                                context, AppRoutes.bookingManagement),
                           ),
                         ),
                       ),
@@ -750,7 +1034,8 @@ class _OwnerDashboardScreenState extends State<OwnerDashboardScreen>
             index: 3,
             child: _buildDashCard(
               title: 'Analytics Dashboard',
-              subtitle: 'View trends, analyse peak hours and utilisation metrics',
+              subtitle:
+                  'View trends, analyse peak hours and utilisation metrics',
               icon: Icons.analytics_outlined,
               bgColor: const Color(0xFF3F4D63),
               onTap: () => Navigator.pushNamed(context, AppRoutes.analytics),
@@ -845,49 +1130,12 @@ class _OwnerDashboardScreenState extends State<OwnerDashboardScreen>
     );
   }
 
-  Widget _buildActionCard({
-    required String title,
-    required String subtitle,
-    required IconData icon,
-    required Color color,
-    required VoidCallback onTap,
-  }) {
-    final c = AppColors.of(context);
-    return GlassCard(
-      onTap: onTap,
-      padding: const EdgeInsets.all(16),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Icon(icon, color: color, size: 32),
-          const SizedBox(height: 12),
-          Text(
-            title,
-            style: TextStyle(
-              fontSize: 16,
-              fontWeight: FontWeight.bold,
-              color: c.textPrimary,
-            ),
-          ),
-          const SizedBox(height: 2),
-          Text(
-            subtitle,
-            style: TextStyle(
-              fontSize: 12,
-              color: c.textSecondary,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
   Widget _buildRecentActivity() {
     return Consumer<BookingProvider>(
       builder: (context, bookingProvider, _) {
         final c = AppColors.of(context);
         final recentBookings = bookingProvider.recentBookings;
-        
+
         return NotchedSectionContainer(
           margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
           child: Column(
@@ -956,7 +1204,20 @@ class _OwnerDashboardScreenState extends State<OwnerDashboardScreen>
       if (parts.length == 3) {
         final day = parts[2];
         final monthIndex = int.parse(parts[1]);
-        const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+        const months = [
+          'Jan',
+          'Feb',
+          'Mar',
+          'Apr',
+          'May',
+          'Jun',
+          'Jul',
+          'Aug',
+          'Sep',
+          'Oct',
+          'Nov',
+          'Dec'
+        ];
         return '$day\n${months[monthIndex - 1]}';
       }
     } catch (_) {}
@@ -1050,7 +1311,9 @@ class _OwnerDashboardScreenState extends State<OwnerDashboardScreen>
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  booking.customerName.isNotEmpty ? booking.customerName : 'Customer',
+                  booking.customerName.isNotEmpty
+                      ? booking.customerName
+                      : 'Customer',
                   overflow: TextOverflow.ellipsis,
                   maxLines: 1,
                   style: TextStyle(
@@ -1062,7 +1325,8 @@ class _OwnerDashboardScreenState extends State<OwnerDashboardScreen>
                 const SizedBox(height: 6),
                 Row(
                   children: [
-                    Icon(Icons.access_time_outlined, size: 13, color: c.textSecondary),
+                    Icon(Icons.access_time_outlined,
+                        size: 13, color: c.textSecondary),
                     const SizedBox(width: 5),
                     Flexible(
                       child: Text(
@@ -1109,11 +1373,21 @@ class _OwnerDashboardScreenState extends State<OwnerDashboardScreen>
   String _getFormattedDate() {
     final now = DateTime.now();
     final months = [
-      'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
-      'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'
+      'Jan',
+      'Feb',
+      'Mar',
+      'Apr',
+      'May',
+      'Jun',
+      'Jul',
+      'Aug',
+      'Sep',
+      'Oct',
+      'Nov',
+      'Dec'
     ];
     final days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
-    
+
     return '${days[now.weekday - 1]}, ${now.day} ${months[now.month - 1]} ${now.year}';
   }
 }

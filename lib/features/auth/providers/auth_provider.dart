@@ -28,6 +28,16 @@ class AuthProvider extends ChangeNotifier {
   String? _errorMessage;
   bool _isLoading = false;
   String? _phoneNumber;
+  bool _isOwnerPhoneVerificationFlow = false;
+
+  // Temporary signup state (deferred account creation until OTP verified)
+  String? _tempSignupName;
+  String? _tempSignupEmail;
+  String? _tempSignupPhone;
+  String? _tempSignupUid;
+  String _tempSignupMethod = 'email';
+  bool _tempSignupHasPassword = true;
+  bool _isInDeferredSignupFlow = false;
 
   // Getters
   AuthStatus get authState => _authState;
@@ -38,6 +48,14 @@ class AuthProvider extends ChangeNotifier {
   bool get isAuthenticated => _authState == AuthStatus.authenticated;
   bool get isLoading => _authState == AuthStatus.loading || _isLoading;
   String? get currentUserId => _authService.currentUserId;
+  bool get isInDeferredSignupFlow => _isInDeferredSignupFlow;
+  String get deferredSignupPhone => _tempSignupPhone ?? '';
+  bool get isOwnerPhoneVerified {
+    final owner = _currentOwner;
+    if (owner == null) return false;
+    final phone = owner.phone.trim();
+    return phone.isNotEmpty && !phone.startsWith('pending_');
+  }
 
   UserRole? get currentUserRole {
     if (_currentOwner != null) return UserRole.owner;
@@ -99,6 +117,15 @@ class AuthProvider extends ChangeNotifier {
         return;
       }
 
+      // During deferred signup, keep session authenticated even before profile exists.
+      if (_isInDeferredSignupFlow && _tempSignupUid == uid) {
+        _authState = AuthStatus.authenticated;
+        _currentOwner = null;
+        _currentPlayer = null;
+        notifyListeners();
+        return;
+      }
+
       // No profile found - user is authenticated but not registered
       _authState = AuthStatus.unauthenticated;
       _currentOwner = null;
@@ -144,7 +171,119 @@ class AuthProvider extends ChangeNotifier {
     return true;
   }
 
+  String _friendlyAuthError(
+    Object error, {
+    required String fallback,
+  }) {
+    if (error is AuthApiException) {
+      final mapped = _mapAuthApiCode(error.code);
+      if (mapped != null) return mapped;
+      return _mapAuthMessage(error.message, fallback: fallback);
+    }
+
+    if (error is AuthException) {
+      return _mapAuthMessage(error.message, fallback: fallback);
+    }
+
+    if (error is String) {
+      return _mapAuthMessage(error, fallback: fallback);
+    }
+
+    return _mapAuthMessage(error.toString(), fallback: fallback);
+  }
+
+  String? _mapAuthApiCode(String? code) {
+    final normalized = code?.trim().toLowerCase();
+    switch (normalized) {
+      case 'invalid_credentials':
+        return 'Invalid email or password.';
+      case 'user_already_exists':
+        return 'Account already exists. Please log in instead.';
+      case 'email_not_confirmed':
+        return 'Please verify your email before logging in.';
+      case 'weak_password':
+        return 'Password is too weak. Use a stronger password.';
+      case 'email_address_invalid':
+        return 'Please enter a valid email address.';
+      case 'otp_expired':
+        return 'OTP expired. Please request a new OTP.';
+      case 'otp_disabled':
+        return 'OTP login is currently unavailable. Try again later.';
+      case 'sms_send_failed':
+      case 'sms_provider_disabled':
+        return 'Phone OTP is not configured yet. Please use email login for now.';
+      case 'too_many_requests':
+      case 'over_request_rate_limit':
+      case 'over_email_send_rate_limit':
+      case 'over_sms_send_rate_limit':
+        return 'Too many attempts. Please wait and try again.';
+      default:
+        return null;
+    }
+  }
+
+  String _mapAuthMessage(
+    String? rawMessage, {
+    required String fallback,
+  }) {
+    final message = (rawMessage ?? '').trim();
+    final lower = message.toLowerCase();
+
+    if (message == 'Account not found. Please sign up.' ||
+        message == 'Phone number not registered. Please sign up.' ||
+        message ==
+            'Password must be at least 8 characters with uppercase, lowercase, number, and special character.' ||
+        message == 'Please verify your new email and try again.') {
+      return message;
+    }
+
+    if (lower.contains('invalid login credentials') ||
+        lower.contains('invalid credentials')) {
+      return 'Invalid email or password.';
+    }
+
+    if (lower.contains('user already registered') ||
+        lower.contains('already exists') ||
+        lower.contains('already registered')) {
+      return 'Account already exists. Please log in instead.';
+    }
+
+    if (lower.contains('email not confirmed')) {
+      return 'Please verify your email before logging in.';
+    }
+
+    if (lower.contains('password')) {
+      return 'Password is invalid. Please try again.';
+    }
+
+    if (lower.contains('network') ||
+        lower.contains('socket') ||
+        lower.contains('timeout')) {
+      return 'Network issue. Please check your connection and try again.';
+    }
+
+    if (lower.contains('provider') && lower.contains('not enabled')) {
+      return 'Google login is not configured yet. Please contact support.';
+    }
+
+    if (lower.contains('sms') &&
+        (lower.contains('not configured') || lower.contains('provider'))) {
+      return 'Phone OTP is not configured yet. Please use email login for now.';
+    }
+
+    if (lower.contains('redirect') && lower.contains('uri')) {
+      return 'Google login redirect is not configured correctly.';
+    }
+
+    if (kDebugMode && message.isNotEmpty) {
+      debugPrint('Auth error: $message');
+    }
+
+    return fallback;
+  }
+
   /// Sign up new user (Owner or Player)
+  /// For Owners: Creates auth account but defers DB profile creation until OTP verified
   Future<bool> signUp({
     required String name,
     required String email,
@@ -168,46 +307,40 @@ class AuthProvider extends ChangeNotifier {
         password: password,
       );
 
-      // Create profile in database using RPC
-      // If profile creation fails, we must clean up the orphaned auth user
+      // For Owners: Defer database profile creation until OTP verified
+      if (role == UserRole.owner) {
+        _tempSignupName = name;
+        _tempSignupEmail = email;
+        _tempSignupPhone = phone;
+        _tempSignupUid = uid;
+        _tempSignupMethod = 'email';
+        _tempSignupHasPassword = true;
+        _isInDeferredSignupFlow = true;
+
+        _authState = AuthStatus.authenticated;
+        notifyListeners();
+        return true;
+      }
+
+      // For Players: Create profile immediately
       try {
-        if (role == UserRole.owner) {
-          await _dbService.createOwnerProfile(
-            id: uid,
-            name: name,
-            email: email,
-            phone: phone,
-          );
+        await _dbService.createPlayerProfile(
+          id: uid,
+          name: name,
+          email: email,
+          phone: phone,
+        );
 
-          _currentOwner = OwnerModel(
-            uid: uid,
-            name: name,
-            email: email,
-            phone: phone,
-            role: UserRole.owner,
-            isVerified: false,
-            createdAt: DateTime.now(),
-          );
-          _currentPlayer = null;
-        } else {
-          await _dbService.createPlayerProfile(
-            id: uid,
-            name: name,
-            email: email,
-            phone: phone,
-          );
-
-          _currentPlayer = PlayerModel(
-            uid: uid,
-            name: name,
-            email: email,
-            phone: phone,
-            role: UserRole.player,
-            createdAt: DateTime.now(),
-            favoriteTurfs: [],
-          );
-          _currentOwner = null;
-        }
+        _currentPlayer = PlayerModel(
+          uid: uid,
+          name: name,
+          email: email,
+          phone: phone,
+          role: UserRole.player,
+          createdAt: DateTime.now(),
+          favoriteTurfs: [],
+        );
+        _currentOwner = null;
       } catch (profileError) {
         // Profile creation failed — sign out the orphaned auth user
         try {
@@ -221,7 +354,152 @@ class AuthProvider extends ChangeNotifier {
       return true;
     } catch (e) {
       _authState = AuthStatus.error;
-      _errorMessage = e.toString();
+      _errorMessage = _friendlyAuthError(
+        e,
+        fallback: 'Could not create account. Please try again.',
+      );
+      notifyListeners();
+      return false;
+    }
+  }
+
+  List<String> _mergeAuthMethods({
+    required List<String> existing,
+    required String add,
+  }) {
+    final merged = <String>{
+      ...existing.where((m) => m.trim().isNotEmpty),
+      add,
+    };
+    return merged.toList()..sort();
+  }
+
+  Future<String?> _waitForCurrentUserId({
+    Duration timeout = const Duration(seconds: 30),
+  }) async {
+    final startedAt = DateTime.now();
+    while (DateTime.now().difference(startedAt) < timeout) {
+      final uid = _authService.currentUserId;
+      if (uid != null && uid.isNotEmpty) {
+        return uid;
+      }
+      await Future.delayed(const Duration(milliseconds: 300));
+    }
+    return null;
+  }
+
+  Future<void> _ensureOwnerAuthMethods(Set<String> requiredMethods) async {
+    if (_currentOwner == null) return;
+    final owner = _currentOwner!;
+    final methods = <String>{...owner.authMethods, ...requiredMethods};
+    if (methods.length == owner.authMethods.length) return;
+
+    await _dbService.updateOwner(owner.uid, {
+      'auth_methods': methods.toList()..sort(),
+    });
+    await _loadUserProfile(owner.uid);
+  }
+
+  /// Owner-only Google OAuth login/signup.
+  ///
+  /// Missing owner profile auto-enters deferred signup flow.
+  Future<bool> signInOwnerWithGoogle({
+    required bool allowCreate,
+  }) async {
+    try {
+      _isLoading = true;
+      _errorMessage = null;
+      notifyListeners();
+
+      final launched = await _authService.signInWithGoogle();
+      if (!launched) {
+        throw 'Google login could not be launched.';
+      }
+
+      final uid = await _waitForCurrentUserId();
+      if (uid == null) {
+        throw 'Google sign-in was not completed. Please try again.';
+      }
+
+      final email = _authService.currentUserEmail?.trim().toLowerCase();
+      if (email == null || email.isEmpty) {
+        throw 'Google account email is missing. Please use another account.';
+      }
+
+      await _loadUserProfile(uid);
+
+      if (_currentOwner != null) {
+        await _ensureOwnerAuthMethods({'google'});
+
+        final updatedName =
+            _authService.currentUser?.userMetadata?['full_name'] as String? ??
+                _authService.currentUser?.userMetadata?['name'] as String?;
+        if (updatedName != null && updatedName.trim().isNotEmpty) {
+          await _dbService.updateOwner(_currentOwner!.uid, {
+            'name': updatedName.trim(),
+            'email': email,
+          });
+          await _loadUserProfile(_currentOwner!.uid);
+        }
+
+        _isLoading = false;
+        notifyListeners();
+        return true;
+      }
+
+      final ownerByEmail = await _dbService.getOwnerByEmail(email);
+      if (ownerByEmail != null) {
+        final existingOwnerId = ownerByEmail['id'] as String?;
+        if (existingOwnerId == uid) {
+          final resolvedName =
+              _authService.currentUser?.userMetadata?['full_name'] as String? ??
+                  _authService.currentUser?.userMetadata?['name'] as String? ??
+                  email.split('@').first;
+          await _dbService.updateOwner(uid, {
+            'name': resolvedName.trim(),
+            'email': email,
+          });
+          await _loadUserProfile(uid);
+          await _ensureOwnerAuthMethods({'google'});
+          _isLoading = false;
+          notifyListeners();
+          return true;
+        }
+
+        // Supabase should normally auto-link identities for the same email.
+        // If IDs differ, keep session safe and ask user to use existing method.
+        throw 'Account already exists with email login. Please log in with email once, then try Google again.';
+      }
+
+      if (!allowCreate && kDebugMode) {
+        debugPrint('Google login: owner not found, entering deferred signup.');
+      }
+
+      // Defer owner profile creation until phone OTP verification succeeds.
+      final resolvedName =
+          _authService.currentUser?.userMetadata?['full_name'] as String? ??
+              _authService.currentUser?.userMetadata?['name'] as String? ??
+              email.split('@').first;
+
+      _tempSignupName = resolvedName.trim();
+      _tempSignupEmail = email;
+      _tempSignupPhone = '';
+      _tempSignupUid = uid;
+      _tempSignupMethod = 'google';
+      _tempSignupHasPassword = false;
+      _isInDeferredSignupFlow = true;
+
+      _authState = AuthStatus.authenticated;
+      _isLoading = false;
+      notifyListeners();
+      return true;
+    } catch (e) {
+      _isLoading = false;
+      _authState = AuthStatus.error;
+      _errorMessage = _friendlyAuthError(
+        e,
+        fallback: 'Could not sign in with Google. Please try again.',
+      );
       notifyListeners();
       return false;
     }
@@ -252,7 +530,28 @@ class AuthProvider extends ChangeNotifier {
       return true;
     } catch (e) {
       _authState = AuthStatus.error;
-      _errorMessage = e.toString();
+
+      final baseMessage = _friendlyAuthError(
+        e,
+        fallback: 'Could not sign in. Please try again.',
+      );
+
+      final normalizedEmail = email.trim().toLowerCase();
+      final ownerByEmail = await _dbService.getOwnerByEmail(normalizedEmail);
+      final ownerMethods = ownerByEmail?['auth_methods'];
+      final authMethods = ownerMethods is List
+          ? List<String>.from(ownerMethods.map((m) => m.toString()))
+          : const <String>[];
+
+      if (baseMessage == 'Invalid email or password.' &&
+          authMethods.contains('google') &&
+          !authMethods.contains('email')) {
+        _errorMessage =
+            'This account uses Google sign-in. Continue with Google, or set a password using Forgot Password.';
+      } else {
+        _errorMessage = baseMessage;
+      }
+
       notifyListeners();
       return false;
     }
@@ -266,28 +565,57 @@ class AuthProvider extends ChangeNotifier {
       _phoneNumber = phone;
       notifyListeners();
 
-      // Pre-check if owner exists (best-effort; RPC may not be deployed)
-      // If the check fails we still try to send OTP
+      // Deferred signup also needs OTP while user is authenticated.
+      if (_isInDeferredSignupFlow && _authService.currentUserId != null) {
+        await _authService.sendPhoneChangeOtp(phone: phone);
+        _isOwnerPhoneVerificationFlow = true;
+        _isLoading = false;
+        notifyListeners();
+        return true;
+      }
+
+      // Authenticated owners must verify phone to unlock app access.
+      if (_currentOwner != null && _authService.currentUserId != null) {
+        await _authService.sendPhoneChangeOtp(phone: phone);
+        _isOwnerPhoneVerificationFlow = true;
+        _isLoading = false;
+        notifyListeners();
+        return true;
+      }
+
+      // Login OTP: owner must exist by phone.
+      bool ownerExistsByPhone = false;
       try {
-        final exists = await _dbService.ownerExists(phone: phone);
-        if (!exists) {
-          _isLoading = false;
-          _errorMessage = 'Phone number not registered. Please sign up.';
-          notifyListeners();
-          return false;
-        }
+        ownerExistsByPhone = await _dbService.ownerExists(phone: phone);
       } catch (e) {
-        debugPrint('ownerExists check failed, proceeding with OTP: $e');
+        debugPrint(
+            'ownerExists check failed, falling back to table lookup: $e');
+      }
+
+      if (!ownerExistsByPhone) {
+        final owner = await _dbService.getOwnerByPhone(phone);
+        ownerExistsByPhone = owner != null;
+      }
+
+      if (!ownerExistsByPhone) {
+        _isLoading = false;
+        _errorMessage = 'Phone number not registered. Please sign up.';
+        notifyListeners();
+        return false;
       }
 
       await _authService.sendPhoneOtp(phone: phone);
+      _isOwnerPhoneVerificationFlow = false;
 
       _isLoading = false;
       notifyListeners();
       return true;
     } catch (e) {
       _isLoading = false;
-      _errorMessage = e.toString();
+      _errorMessage = _friendlyAuthError(
+        e,
+        fallback: 'Could not send OTP. Please try again.',
+      );
       notifyListeners();
       return false;
     }
@@ -302,6 +630,45 @@ class AuthProvider extends ChangeNotifier {
 
       if (_phoneNumber == null || _phoneNumber!.isEmpty) {
         throw 'Phone number is missing';
+      }
+
+      // Verification flow for logged-in Owner (phone-link gate).
+      if (_isOwnerPhoneVerificationFlow) {
+        await _authService.verifyPhoneChangeOtp(
+          phone: _phoneNumber!,
+          token: smsCode,
+        );
+
+        if (_isInDeferredSignupFlow) {
+          // Store verified phone and complete DB profile creation in dashboard step.
+          _tempSignupPhone = _phoneNumber!;
+          _isOwnerPhoneVerificationFlow = false;
+          _isLoading = false;
+          notifyListeners();
+          return true;
+        }
+
+        final ownerId = _currentOwner?.uid ?? _authService.currentUserId;
+        if (ownerId == null || ownerId.isEmpty) {
+          throw 'Could not verify owner account.';
+        }
+
+        final mergedMethods = _mergeAuthMethods(
+          existing: _currentOwner?.authMethods ?? const ['email'],
+          add: 'otp',
+        );
+
+        await _dbService.updateOwner(ownerId, {
+          'phone': _phoneNumber!,
+          'auth_methods': mergedMethods,
+        });
+
+        await _loadUserProfile(ownerId);
+
+        _isOwnerPhoneVerificationFlow = false;
+        _isLoading = false;
+        notifyListeners();
+        return true;
       }
 
       final response = await _authService.verifyPhoneOtp(
@@ -322,16 +689,86 @@ class AuthProvider extends ChangeNotifier {
       }
 
       // Update auth methods
+      final mergedMethods = _mergeAuthMethods(
+        existing: _currentOwner?.authMethods ?? const ['email'],
+        add: 'otp',
+      );
       await _dbService.updateOwner(uid, {
-        'auth_methods': ['email', 'otp'],
+        'auth_methods': mergedMethods,
       });
+
+      await _loadUserProfile(uid);
 
       _isLoading = false;
       notifyListeners();
       return true;
     } catch (e) {
       _isLoading = false;
-      _errorMessage = e.toString();
+      _errorMessage = _friendlyAuthError(
+        e,
+        fallback: 'Could not verify OTP. Please try again.',
+      );
+      notifyListeners();
+      return false;
+    }
+  }
+
+  /// Complete deferred signup for Owner after OTP verification
+  /// This creates the database profile that was deferred until OTP was verified
+  Future<bool> completeDeferredOwnerSignup() async {
+    try {
+      if (!_isInDeferredSignupFlow) {
+        throw 'Not in deferred signup flow.';
+      }
+
+      if (_tempSignupUid == null ||
+          _tempSignupName == null ||
+          _tempSignupEmail == null ||
+          _tempSignupPhone == null) {
+        throw 'Signup information missing.';
+      }
+
+      _isLoading = true;
+      notifyListeners();
+
+      // Create owner profile in database
+      await _dbService.createOwnerProfile(
+        id: _tempSignupUid!,
+        name: _tempSignupName!,
+        email: _tempSignupEmail!,
+        phone: _tempSignupPhone!,
+        hasPassword: _tempSignupHasPassword,
+      );
+
+      final mergedMethods = _mergeAuthMethods(
+        existing: [_tempSignupMethod],
+        add: 'otp',
+      );
+      await _dbService.updateOwner(_tempSignupUid!, {
+        'auth_methods': mergedMethods,
+      });
+
+      // Load the created profile
+      await _loadUserProfile(_tempSignupUid!);
+
+      // Clear temporary state
+      _tempSignupName = null;
+      _tempSignupEmail = null;
+      _tempSignupPhone = null;
+      _tempSignupUid = null;
+      _tempSignupMethod = 'email';
+      _tempSignupHasPassword = true;
+      _isInDeferredSignupFlow = false;
+
+      _isLoading = false;
+      notifyListeners();
+      return true;
+    } catch (e) {
+      _isLoading = false;
+      _errorMessage = _friendlyAuthError(
+        e,
+        fallback: 'Could not complete signup. Please try again.',
+      );
       notifyListeners();
       return false;
     }
@@ -344,6 +781,15 @@ class AuthProvider extends ChangeNotifier {
       _currentOwner = null;
       _currentPlayer = null;
       _phoneNumber = null;
+      _isOwnerPhoneVerificationFlow = false;
+      // Clear deferred signup state
+      _tempSignupName = null;
+      _tempSignupEmail = null;
+      _tempSignupPhone = null;
+      _tempSignupUid = null;
+      _tempSignupMethod = 'email';
+      _tempSignupHasPassword = true;
+      _isInDeferredSignupFlow = false;
       _authState = AuthStatus.unauthenticated;
       notifyListeners();
     } catch (e) {
@@ -358,7 +804,10 @@ class AuthProvider extends ChangeNotifier {
       await _authService.sendPasswordResetEmail(email);
       return true;
     } catch (e) {
-      _errorMessage = e.toString();
+      _errorMessage = _friendlyAuthError(
+        e,
+        fallback: 'Could not send password reset email. Please try again.',
+      );
       notifyListeners();
       return false;
     }
@@ -399,7 +848,10 @@ class AuthProvider extends ChangeNotifier {
       return true;
     } catch (e) {
       _isLoading = false;
-      _errorMessage = e.toString();
+      _errorMessage = _friendlyAuthError(
+        e,
+        fallback: 'Could not update email. Please try again.',
+      );
       notifyListeners();
       return false;
     }
@@ -437,7 +889,10 @@ class AuthProvider extends ChangeNotifier {
       return true;
     } catch (e) {
       _isLoading = false;
-      _errorMessage = e.toString();
+      _errorMessage = _friendlyAuthError(
+        e,
+        fallback: 'Could not confirm email update. Please try again.',
+      );
       notifyListeners();
       return false;
     }
@@ -457,7 +912,45 @@ class AuthProvider extends ChangeNotifier {
       return true;
     } catch (e) {
       _isLoading = false;
-      _errorMessage = e.toString();
+      _errorMessage = _friendlyAuthError(
+        e,
+        fallback: 'Could not update password. Please try again.',
+      );
+      notifyListeners();
+      return false;
+    }
+  }
+
+  /// Set password for Google user (unlocks manual login option)
+  Future<bool> setPasswordForGoogleUser(String newPassword) async {
+    try {
+      _isLoading = true;
+      _errorMessage = null;
+      notifyListeners();
+
+      if (!_isStrongPassword(newPassword)) {
+        throw 'Password must be at least 8 characters with uppercase, lowercase, number, and special character.';
+      }
+
+      await _authService.updatePassword(newPassword);
+
+      // Mark that this Google user now has a password
+      if (_currentOwner != null) {
+        await _dbService.updateOwner(_currentOwner!.uid, {
+          'has_password': true,
+        });
+        await _loadUserProfile(_currentOwner!.uid);
+      }
+
+      _isLoading = false;
+      notifyListeners();
+      return true;
+    } catch (e) {
+      _isLoading = false;
+      _errorMessage = _friendlyAuthError(
+        e,
+        fallback: 'Could not set password. Please try again.',
+      );
       notifyListeners();
       return false;
     }
@@ -527,7 +1020,10 @@ class AuthProvider extends ChangeNotifier {
       return true;
     } catch (e) {
       _isLoading = false;
-      _errorMessage = e.toString();
+      _errorMessage = _friendlyAuthError(
+        e,
+        fallback: 'Could not complete profile. Please try again.',
+      );
       notifyListeners();
       return false;
     }

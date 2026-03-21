@@ -10,6 +10,7 @@ class OwnerModel {
   final bool isVerified;
   final List<String> authMethods;
   final String? profileImage;
+  final bool hasPassword;
   final DateTime createdAt;
   final DateTime? updatedAt;
 
@@ -22,6 +23,7 @@ class OwnerModel {
     this.isVerified = false,
     this.authMethods = const ['email'],
     this.profileImage,
+    this.hasPassword = false,
     required this.createdAt,
     this.updatedAt,
   });
@@ -45,6 +47,7 @@ class OwnerModel {
           ? List<String>.from(data['auth_methods'] as List)
           : const ['email'],
       profileImage: data['profile_image'] ?? data['profileImage'],
+      hasPassword: data['has_password'] ?? data['hasPassword'] ?? false,
       createdAt: parseDate(data['created_at'] ?? data['createdAt']),
       updatedAt: data['updated_at'] != null || data['updatedAt'] != null
           ? parseDate(data['updated_at'] ?? data['updatedAt'])
@@ -62,6 +65,7 @@ class OwnerModel {
       'is_verified': isVerified,
       'auth_methods': authMethods,
       'profile_image': profileImage,
+      'has_password': hasPassword,
       'created_at': createdAt.toIso8601String(),
       'updated_at': updatedAt?.toIso8601String(),
     };
@@ -75,6 +79,7 @@ class OwnerModel {
     bool? isVerified,
     List<String>? authMethods,
     String? profileImage,
+    bool? hasPassword,
     DateTime? updatedAt,
   }) {
     return OwnerModel(
@@ -86,6 +91,7 @@ class OwnerModel {
       isVerified: isVerified ?? this.isVerified,
       authMethods: authMethods ?? this.authMethods,
       profileImage: profileImage ?? this.profileImage,
+      hasPassword: hasPassword ?? this.hasPassword,
       createdAt: createdAt,
       updatedAt: updatedAt ?? this.updatedAt,
     );

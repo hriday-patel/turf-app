@@ -90,7 +90,7 @@ class _SplashScreenState extends State<SplashScreen>
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
               const Spacer(),
-              
+
               // Logo and App Name
               AnimatedBuilder(
                 animation: _animationController,
@@ -112,7 +112,8 @@ class _SplashScreenState extends State<SplashScreen>
                       decoration: BoxDecoration(
                         color: c.glassFill,
                         borderRadius: BorderRadius.circular(30),
-                        border: Border.all(color: c.primary.withValues(alpha: 0.3)),
+                        border:
+                            Border.all(color: c.primary.withValues(alpha: 0.3)),
                         boxShadow: AppColors.neonGlow(blur: 28, spread: 2),
                       ),
                       child: Icon(
@@ -122,7 +123,7 @@ class _SplashScreenState extends State<SplashScreen>
                       ),
                     ),
                     const SizedBox(height: 24),
-                    
+
                     // App Name
                     Text(
                       AppStrings.appName,
@@ -134,7 +135,7 @@ class _SplashScreenState extends State<SplashScreen>
                       ),
                     ),
                     const SizedBox(height: 8),
-                    
+
                     // Tagline
                     Text(
                       AppStrings.appTagline,
@@ -147,9 +148,9 @@ class _SplashScreenState extends State<SplashScreen>
                   ],
                 ),
               ),
-              
+
               const Spacer(),
-              
+
               // Loading Indicator
               SizedBox(
                 width: 24,
@@ -159,7 +160,7 @@ class _SplashScreenState extends State<SplashScreen>
                   valueColor: AlwaysStoppedAnimation<Color>(c.primary),
                 ),
               ),
-              
+
               const SizedBox(height: 48),
             ],
           ),
