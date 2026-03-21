@@ -88,6 +88,12 @@ class _OwnerDashboardScreenState extends State<OwnerDashboardScreen>
     });
     _actionAnimController.forward();
 
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      final authProvider = Provider.of<AuthProvider>(context, listen: false);
+      authProvider.ensureOwnerReadyForDashboard(allowDeferredSignup: true);
+    });
+
     _loadData();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) {
@@ -166,6 +172,20 @@ class _OwnerDashboardScreenState extends State<OwnerDashboardScreen>
     });
 
     final normalizedPhone = _normalizeToE164Indian(enteredPhone);
+
+    // Check if phone is already registered to another account
+    final phoneError =
+        await authProvider.checkPhoneAvailability(normalizedPhone);
+    if (!mounted) return;
+
+    if (phoneError != null) {
+      setState(() {
+        _phoneGateBusy = false;
+        _phoneGateError = phoneError;
+      });
+      return;
+    }
+
     final sent = await authProvider.verifyPhone(normalizedPhone);
 
     if (!mounted) return;
@@ -178,6 +198,36 @@ class _OwnerDashboardScreenState extends State<OwnerDashboardScreen>
           : (authProvider.errorMessage ??
               'Could not send OTP. Please try again.');
     });
+  }
+
+  Future<void> _resendPhoneVerificationOtp(AuthProvider authProvider) async {
+    setState(() {
+      _phoneGateBusy = true;
+      _phoneGateError = null;
+      _phoneGateOtpController.clear();
+    });
+
+    final enteredPhone = _phoneGatePhoneController.text.trim();
+    final normalizedPhone = _normalizeToE164Indian(enteredPhone);
+    final sent = await authProvider.verifyPhone(normalizedPhone);
+
+    if (!mounted) return;
+
+    setState(() {
+      _phoneGateBusy = false;
+      _phoneGateError = sent
+          ? 'OTP resent successfully'
+          : (authProvider.errorMessage ?? 'Could not resend OTP.');
+    });
+
+    // Clear success message after 3 seconds
+    if (sent) {
+      Future.delayed(const Duration(seconds: 3), () {
+        if (mounted && _phoneGateError == 'OTP resent successfully') {
+          setState(() => _phoneGateError = null);
+        }
+      });
+    }
   }
 
   Future<void> _verifyPhoneVerificationOtp(AuthProvider authProvider) async {
@@ -232,6 +282,11 @@ class _OwnerDashboardScreenState extends State<OwnerDashboardScreen>
     final c = AppColors.of(context);
     _seedPhoneGateIfNeeded(authProvider);
 
+    final isGoogleSignup = authProvider.isInDeferredSignupFlow &&
+        authProvider.deferredSignupMethod == 'google';
+    final hasPhonePrefilled =
+        _phoneGatePhoneController.text.trim().isNotEmpty && !isGoogleSignup;
+
     return Positioned.fill(
       child: Stack(
         children: [
@@ -268,7 +323,11 @@ class _OwnerDashboardScreenState extends State<OwnerDashboardScreen>
                       ),
                       const SizedBox(height: 8),
                       Text(
-                        'Phone OTP verification is mandatory for Owner access.',
+                        isGoogleSignup
+                            ? 'Please enter your phone number and verify with OTP to complete account setup.'
+                            : hasPhonePrefilled
+                                ? 'Verify your phone number with OTP to complete account setup.'
+                                : 'Phone OTP verification is mandatory for Owner access.',
                         style: TextStyle(color: c.textSecondary),
                       ),
                       const SizedBox(height: 16),
@@ -343,6 +402,24 @@ class _OwnerDashboardScreenState extends State<OwnerDashboardScreen>
                           ],
                         ],
                       ),
+                      if (_phoneGateOtpSent) ...[
+                        const SizedBox(height: 8),
+                        Center(
+                          child: TextButton(
+                            onPressed: _phoneGateBusy
+                                ? null
+                                : () =>
+                                    _resendPhoneVerificationOtp(authProvider),
+                            child: Text(
+                              'Resend OTP',
+                              style: TextStyle(
+                                color: c.secondary,
+                                fontSize: 13,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ],
                       const SizedBox(height: 12),
                       SizedBox(
                         width: double.infinity,
@@ -354,8 +431,10 @@ class _OwnerDashboardScreenState extends State<OwnerDashboardScreen>
                                     context: context,
                                     builder: (ctx) => AlertDialog(
                                       title: const Text('Go Back?'),
-                                      content: const Text(
-                                        'You\'ll need to complete phone verification to access the dashboard.',
+                                      content: Text(
+                                        authProvider.isInDeferredSignupFlow
+                                            ? 'Your signup will be cancelled. You\'ll need to sign up again to create an account.'
+                                            : 'You\'ll need to complete phone verification to access the dashboard.',
                                       ),
                                       actions: [
                                         TextButton(
@@ -366,13 +445,22 @@ class _OwnerDashboardScreenState extends State<OwnerDashboardScreen>
                                         TextButton(
                                           onPressed: () =>
                                               Navigator.pop(ctx, true),
-                                          child: const Text('Go Back to Login'),
+                                          child: Text(
+                                            authProvider.isInDeferredSignupFlow
+                                                ? 'Cancel Signup'
+                                                : 'Go Back to Login',
+                                          ),
                                         ),
                                       ],
                                     ),
                                   );
                                   if (confirmed ?? false) {
-                                    await authProvider.signOut();
+                                    // Use cancelDeferredSignup to properly clean up
+                                    if (authProvider.isInDeferredSignupFlow) {
+                                      await authProvider.cancelDeferredSignup();
+                                    } else {
+                                      await authProvider.signOut();
+                                    }
                                     if (mounted) {
                                       Navigator.pushReplacementNamed(
                                         context,
@@ -381,8 +469,11 @@ class _OwnerDashboardScreenState extends State<OwnerDashboardScreen>
                                     }
                                   }
                                 },
-                          child: const Text('Back to Login',
-                              style: TextStyle(fontSize: 12)),
+                          child: Text(
+                              authProvider.isInDeferredSignupFlow
+                                  ? 'Cancel Signup'
+                                  : 'Back to Login',
+                              style: const TextStyle(fontSize: 12)),
                         ),
                       ),
                     ],
@@ -574,7 +665,6 @@ class _OwnerDashboardScreenState extends State<OwnerDashboardScreen>
     return Consumer<AuthProvider>(
       builder: (context, authProvider, _) {
         final c = AppColors.of(context);
-        final owner = authProvider.currentOwner;
         return Padding(
           padding: const EdgeInsets.fromLTRB(20, 16, 20, 8),
           child: Column(
@@ -596,7 +686,7 @@ class _OwnerDashboardScreenState extends State<OwnerDashboardScreen>
                       ),
                       const SizedBox(height: 4),
                       Text(
-                        owner?.name ?? 'Owner',
+                        authProvider.ownerDisplayName,
                         style: TextStyle(
                           fontSize: 26,
                           fontWeight: FontWeight.w800,
@@ -646,7 +736,7 @@ class _OwnerDashboardScreenState extends State<OwnerDashboardScreen>
                           ),
                           child: Center(
                             child: Text(
-                              (owner?.name ?? 'O')
+                              authProvider.ownerDisplayName
                                   .substring(0, 1)
                                   .toUpperCase(),
                               style: TextStyle(

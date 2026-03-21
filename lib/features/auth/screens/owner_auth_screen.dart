@@ -21,6 +21,14 @@ class _OwnerAuthScreenState extends State<OwnerAuthScreen>
   bool _isLoginWithEmail = true; // Toggle for Login Tab
   bool _otpSent = false;
 
+  // Forgot password flow state
+  bool _showForgotPassword = false;
+  int _forgotPasswordStep = 0; // 0=email, 1=otp, 2=new password
+  final _forgotEmailController = TextEditingController();
+  final _forgotOtpController = TextEditingController();
+  final _forgotNewPasswordController = TextEditingController();
+  final _forgotConfirmPasswordController = TextEditingController();
+
   // Controllers
   final _loginEmailController = TextEditingController();
   final _loginPasswordController = TextEditingController();
@@ -37,6 +45,7 @@ class _OwnerAuthScreenState extends State<OwnerAuthScreen>
   final _loginEmailFormKey = GlobalKey<FormState>();
   final _loginPhoneFormKey = GlobalKey<FormState>();
   final _signupFormKey = GlobalKey<FormState>();
+  final _forgotPasswordFormKey = GlobalKey<FormState>();
 
   @override
   void initState() {
@@ -64,6 +73,10 @@ class _OwnerAuthScreenState extends State<OwnerAuthScreen>
     _signupPhoneController.dispose();
     _signupPasswordController.dispose();
     _signupConfirmPasswordController.dispose();
+    _forgotEmailController.dispose();
+    _forgotOtpController.dispose();
+    _forgotNewPasswordController.dispose();
+    _forgotConfirmPasswordController.dispose();
     super.dispose();
   }
 
@@ -192,10 +205,112 @@ class _OwnerAuthScreenState extends State<OwnerAuthScreen>
     }
   }
 
+  // ==================== FORGOT PASSWORD HANDLERS ====================
+
+  void _startForgotPassword() {
+    final authProvider = Provider.of<AuthProvider>(context, listen: false);
+    authProvider.clearForgotPasswordState();
+    setState(() {
+      _showForgotPassword = true;
+      _forgotPasswordStep = 0;
+      _forgotEmailController.clear();
+      _forgotOtpController.clear();
+      _forgotNewPasswordController.clear();
+      _forgotConfirmPasswordController.clear();
+    });
+  }
+
+  void _cancelForgotPassword() {
+    final authProvider = Provider.of<AuthProvider>(context, listen: false);
+    authProvider.clearForgotPasswordState();
+    setState(() {
+      _showForgotPassword = false;
+      _forgotPasswordStep = 0;
+    });
+  }
+
+  Future<void> _handleForgotPasswordEmailSubmit() async {
+    if (!_forgotPasswordFormKey.currentState!.validate()) return;
+
+    final authProvider = Provider.of<AuthProvider>(context, listen: false);
+    final success =
+        await authProvider.initForgotPassword(_forgotEmailController.text);
+
+    if (success && mounted) {
+      // Found user with phone, now send OTP
+      final otpSent = await authProvider.sendForgotPasswordOtp();
+      if (otpSent && mounted) {
+        setState(() => _forgotPasswordStep = 1);
+        _showSuccess(
+            'OTP sent to ${_maskPhone(authProvider.forgotPasswordPhone ?? '')}');
+      } else if (mounted && authProvider.errorMessage != null) {
+        _showError(authProvider.errorMessage!);
+      }
+    } else if (mounted && authProvider.errorMessage != null) {
+      _showError(authProvider.errorMessage!);
+    }
+  }
+
+  Future<void> _handleForgotPasswordOtpVerify() async {
+    if (_forgotOtpController.text.length != 6) {
+      _showError('Please enter a valid 6-digit OTP');
+      return;
+    }
+
+    final authProvider = Provider.of<AuthProvider>(context, listen: false);
+    final success =
+        await authProvider.verifyForgotPasswordOtp(_forgotOtpController.text);
+
+    if (success && mounted) {
+      setState(() => _forgotPasswordStep = 2);
+    } else if (mounted && authProvider.errorMessage != null) {
+      _showError(authProvider.errorMessage!);
+    }
+  }
+
+  Future<void> _handleForgotPasswordSetNew() async {
+    if (!_forgotPasswordFormKey.currentState!.validate()) return;
+
+    if (_forgotNewPasswordController.text !=
+        _forgotConfirmPasswordController.text) {
+      _showError('Passwords do not match');
+      return;
+    }
+
+    final authProvider = Provider.of<AuthProvider>(context, listen: false);
+    final success = await authProvider
+        .setNewPasswordAfterOtpVerification(_forgotNewPasswordController.text);
+
+    if (success && mounted) {
+      _showSuccess('Password updated successfully! Please login.');
+      _cancelForgotPassword();
+    } else if (mounted && authProvider.errorMessage != null) {
+      _showError(authProvider.errorMessage!);
+    }
+  }
+
+  String _maskPhone(String phone) {
+    final compact = phone.replaceAll(RegExp(r'\s+'), '');
+    if (compact.length <= 4) return compact;
+    final last4 = compact.substring(compact.length - 4);
+    return 'xxxxxx$last4';
+  }
+
   Future<void> _continueToOwnerDashboardOrPhoneGate(
       AuthProvider authProvider) async {
-    await authProvider.refreshProfile();
+    final ready = await authProvider.ensureOwnerReadyForDashboard(
+      allowDeferredSignup: true,
+    );
     if (!mounted) return;
+
+    if (!ready) {
+      _showError(
+        authProvider.errorMessage ??
+            'Could not load your owner profile. Please try again.',
+      );
+      return;
+    }
+
     Navigator.pushReplacementNamed(context, AppRoutes.ownerDashboard);
   }
 
@@ -212,6 +327,12 @@ class _OwnerAuthScreenState extends State<OwnerAuthScreen>
   @override
   Widget build(BuildContext context) {
     final c = AppColors.of(context);
+
+    // Show forgot password flow if active
+    if (_showForgotPassword) {
+      return _buildForgotPasswordScreen();
+    }
+
     return Scaffold(
       backgroundColor: c.background,
       body: GlassScaffoldBackground(
@@ -422,9 +543,7 @@ class _OwnerAuthScreenState extends State<OwnerAuthScreen>
             onPressed: _handleGoogleLogin,
           ),
           TextButton(
-            onPressed: () {
-              // TODO: Implement Forgot Password
-            },
+            onPressed: _startForgotPassword,
             child: Text('Forgot Password?',
                 style: TextStyle(color: c.textSecondary)),
           ),
@@ -712,6 +831,309 @@ class _OwnerAuthScreenState extends State<OwnerAuthScreen>
           ),
         );
       },
+    );
+  }
+
+  // ==================== FORGOT PASSWORD UI ====================
+
+  Widget _buildForgotPasswordScreen() {
+    final c = AppColors.of(context);
+    return Scaffold(
+      backgroundColor: c.background,
+      body: GlassScaffoldBackground(
+        child: Stack(
+          children: [
+            const AbstractBgShapes(),
+            SafeArea(
+              child: Column(
+                children: [
+                  // App bar
+                  Padding(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+                    child: Row(
+                      children: [
+                        IconButton(
+                          icon: Icon(Icons.arrow_back_ios,
+                              color: c.textPrimary, size: 20),
+                          onPressed: _cancelForgotPassword,
+                        ),
+                        Expanded(
+                          child: Text(
+                            'Reset Password',
+                            textAlign: TextAlign.center,
+                            style: TextStyle(
+                              color: c.textPrimary,
+                              fontWeight: FontWeight.bold,
+                              fontSize: 18,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 48),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 24),
+                  // Step indicator
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 24),
+                    child: Row(
+                      children: [
+                        _buildStepIndicator(0, 'Email'),
+                        _buildStepConnector(0),
+                        _buildStepIndicator(1, 'OTP'),
+                        _buildStepConnector(1),
+                        _buildStepIndicator(2, 'Password'),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 32),
+                  // Form content
+                  Expanded(
+                    child: SingleChildScrollView(
+                      padding: const EdgeInsets.all(24),
+                      child: _buildForgotPasswordStepContent(),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildStepIndicator(int step, String label) {
+    final c = AppColors.of(context);
+    final isActive = _forgotPasswordStep >= step;
+    final isCurrent = _forgotPasswordStep == step;
+
+    return Expanded(
+      child: Column(
+        children: [
+          Container(
+            width: 36,
+            height: 36,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: isActive
+                  ? c.primary.withValues(alpha: isCurrent ? 1.0 : 0.7)
+                  : c.glassFill,
+              border: Border.all(color: isActive ? c.primary : c.glassBorder),
+            ),
+            child: Center(
+              child: isActive && !isCurrent
+                  ? Icon(Icons.check, color: c.onPrimary, size: 18)
+                  : Text(
+                      '${step + 1}',
+                      style: TextStyle(
+                        color: isActive ? c.onPrimary : c.textSecondary,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            label,
+            style: TextStyle(
+              fontSize: 12,
+              color: isCurrent ? c.primary : c.textSecondary,
+              fontWeight: isCurrent ? FontWeight.bold : FontWeight.normal,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildStepConnector(int afterStep) {
+    final c = AppColors.of(context);
+    final isActive = _forgotPasswordStep > afterStep;
+
+    return Container(
+      width: 40,
+      height: 2,
+      margin: const EdgeInsets.only(bottom: 20),
+      color: isActive ? c.primary : c.glassBorder,
+    );
+  }
+
+  Widget _buildForgotPasswordStepContent() {
+    switch (_forgotPasswordStep) {
+      case 0:
+        return _buildForgotPasswordEmailStep();
+      case 1:
+        return _buildForgotPasswordOtpStep();
+      case 2:
+        return _buildForgotPasswordNewPasswordStep();
+      default:
+        return const SizedBox.shrink();
+    }
+  }
+
+  Widget _buildForgotPasswordEmailStep() {
+    final c = AppColors.of(context);
+    return Form(
+      key: _forgotPasswordFormKey,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Enter your email',
+            style: TextStyle(
+              fontSize: 20,
+              fontWeight: FontWeight.bold,
+              color: c.textPrimary,
+            ),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            'We\'ll send an OTP to your registered phone number to verify your identity.',
+            style: TextStyle(color: c.textSecondary),
+          ),
+          const SizedBox(height: 24),
+          TextFormField(
+            controller: _forgotEmailController,
+            decoration: _inputDecoration(
+                context, 'Email Address', Icons.email_outlined),
+            keyboardType: TextInputType.emailAddress,
+            validator: (val) {
+              if (val == null || val.trim().isEmpty) {
+                return 'Email is required';
+              }
+              return _isValidEmail(val) ? null : 'Enter a valid email address';
+            },
+          ),
+          const SizedBox(height: 24),
+          _buildSubmitButton('Continue', _handleForgotPasswordEmailSubmit),
+          const SizedBox(height: 16),
+          Center(
+            child: TextButton(
+              onPressed: _cancelForgotPassword,
+              child: Text('Back to Login',
+                  style: TextStyle(color: c.textSecondary)),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildForgotPasswordOtpStep() {
+    final c = AppColors.of(context);
+    final authProvider = Provider.of<AuthProvider>(context);
+    final maskedPhone = _maskPhone(authProvider.forgotPasswordPhone ?? '');
+
+    return Form(
+      key: _forgotPasswordFormKey,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Verify OTP',
+            style: TextStyle(
+              fontSize: 20,
+              fontWeight: FontWeight.bold,
+              color: c.textPrimary,
+            ),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            'Enter the 6-digit OTP sent to $maskedPhone',
+            style: TextStyle(color: c.textSecondary),
+          ),
+          const SizedBox(height: 24),
+          TextFormField(
+            controller: _forgotOtpController,
+            decoration:
+                _inputDecoration(context, 'Enter 6-digit OTP', Icons.security),
+            keyboardType: TextInputType.number,
+            maxLength: 6,
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              letterSpacing: 8,
+              fontWeight: FontWeight.bold,
+              color: c.textPrimary,
+            ),
+          ),
+          const SizedBox(height: 24),
+          _buildSubmitButton('Verify OTP', _handleForgotPasswordOtpVerify),
+          const SizedBox(height: 16),
+          Center(
+            child: TextButton(
+              onPressed: () async {
+                final authProvider =
+                    Provider.of<AuthProvider>(context, listen: false);
+                final success = await authProvider.sendForgotPasswordOtp();
+                if (success && mounted) {
+                  _showSuccess('OTP resent to $maskedPhone');
+                } else if (mounted && authProvider.errorMessage != null) {
+                  _showError(authProvider.errorMessage!);
+                }
+              },
+              child: Text('Resend OTP', style: TextStyle(color: c.secondary)),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildForgotPasswordNewPasswordStep() {
+    final c = AppColors.of(context);
+    return Form(
+      key: _forgotPasswordFormKey,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Set New Password',
+            style: TextStyle(
+              fontSize: 20,
+              fontWeight: FontWeight.bold,
+              color: c.textPrimary,
+            ),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            'Create a strong password with at least 8 characters including uppercase, lowercase, number, and special character.',
+            style: TextStyle(color: c.textSecondary),
+          ),
+          const SizedBox(height: 24),
+          TextFormField(
+            controller: _forgotNewPasswordController,
+            decoration:
+                _inputDecoration(context, 'New Password', Icons.lock_outline),
+            obscureText: true,
+            validator: (val) {
+              if (val == null || val.isEmpty) return 'Password is required';
+              if (!_isStrongPassword(val)) {
+                return 'Min 8 chars, upper, lower, number, special';
+              }
+              return null;
+            },
+          ),
+          const SizedBox(height: 16),
+          TextFormField(
+            controller: _forgotConfirmPasswordController,
+            decoration: _inputDecoration(
+                context, 'Confirm Password', Icons.lock_outline),
+            obscureText: true,
+            validator: (val) {
+              if (val == null || val.isEmpty)
+                return 'Confirm password is required';
+              if (val != _forgotNewPasswordController.text) {
+                return 'Passwords do not match';
+              }
+              return null;
+            },
+          ),
+          const SizedBox(height: 24),
+          _buildSubmitButton('Set Password', _handleForgotPasswordSetNew),
+        ],
+      ),
     );
   }
 }

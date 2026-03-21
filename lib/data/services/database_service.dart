@@ -75,6 +75,17 @@ class DatabaseService {
         .maybeSingle();
   }
 
+  /// Check if phone is already registered to another owner
+  /// Returns the owner's email if phone exists, null otherwise
+  Future<String?> checkPhoneAlreadyRegistered(String phone) async {
+    final result = await _client
+        .from('owners')
+        .select('email')
+        .eq('phone', phone)
+        .maybeSingle();
+    return result?['email'] as String?;
+  }
+
   /// Get owner by email
   Future<Map<String, dynamic>?> getOwnerByEmail(String email) async {
     return await _client

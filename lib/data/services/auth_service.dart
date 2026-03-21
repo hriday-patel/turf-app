@@ -76,12 +76,17 @@ class AuthService {
   /// Start Google OAuth sign-in flow.
   ///
   /// Returns true when external browser is launched successfully.
+  /// Uses 'select_account' prompt to always show the Google account picker,
+  /// allowing users to choose a different account or switch accounts.
   Future<bool> signInWithGoogle() async {
     final redirectTo = kIsWeb ? Uri.base.origin : _androidOAuthRedirect;
 
     return await _client.auth.signInWithOAuth(
       OAuthProvider.google,
       redirectTo: redirectTo,
+      queryParams: {
+        'prompt': 'select_account', // Always show account picker
+      },
     );
   }
 

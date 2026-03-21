@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'package:flutter/foundation.dart';
-import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../../data/services/auth_service.dart';
 import '../../../data/services/database_service.dart';
@@ -50,6 +49,7 @@ class AuthProvider extends ChangeNotifier {
   String? get currentUserId => _authService.currentUserId;
   bool get isInDeferredSignupFlow => _isInDeferredSignupFlow;
   String get deferredSignupPhone => _tempSignupPhone ?? '';
+  String get deferredSignupMethod => _tempSignupMethod;
   bool get isOwnerPhoneVerified {
     final owner = _currentOwner;
     if (owner == null) return false;
@@ -400,6 +400,178 @@ class AuthProvider extends ChangeNotifier {
     await _loadUserProfile(owner.uid);
   }
 
+  String _normalizedEmail(String? value) {
+    return (value ?? '').trim().toLowerCase();
+  }
+
+  String _resolveOwnerName({String? emailFallback}) {
+    final fromOwner = _currentOwner?.name.trim();
+    if (fromOwner != null && fromOwner.isNotEmpty) {
+      return fromOwner;
+    }
+
+    final fromTemp = _tempSignupName?.trim();
+    if (fromTemp != null && fromTemp.isNotEmpty) {
+      return fromTemp;
+    }
+
+    final metadata = _authService.currentUser?.userMetadata;
+    final fromMeta =
+        ((metadata?['full_name'] ?? metadata?['name']) as String?)?.trim();
+    if (fromMeta != null && fromMeta.isNotEmpty) {
+      return fromMeta;
+    }
+
+    final normalizedEmail = _normalizedEmail(
+      emailFallback ?? _tempSignupEmail ?? _authService.currentUserEmail,
+    );
+    if (normalizedEmail.contains('@')) {
+      final prefix = normalizedEmail.split('@').first.trim();
+      if (prefix.isNotEmpty) {
+        return prefix;
+      }
+    }
+
+    return 'Owner';
+  }
+
+  Future<bool> _recoverMissingOwnerProfile({
+    required String uid,
+    String? preferredPhone,
+    bool allowCreate = true,
+  }) async {
+    try {
+      await _loadUserProfile(uid);
+      if (_currentOwner != null) {
+        return true;
+      }
+
+      if (_currentPlayer != null) {
+        _errorMessage = 'This account is not an owner account.';
+        notifyListeners();
+        return false;
+      }
+
+      final email =
+          _normalizedEmail(_tempSignupEmail ?? _authService.currentUserEmail);
+      if (email.isEmpty) {
+        _errorMessage = 'Owner email not found. Please complete sign in again.';
+        notifyListeners();
+        return false;
+      }
+
+      final existingByEmail = await _dbService.getOwnerByEmail(email);
+      if (existingByEmail != null) {
+        final existingId = existingByEmail['id']?.toString();
+        if (existingId != uid) {
+          _errorMessage =
+              'Email is already linked to another owner account. Please use the original login method.';
+          notifyListeners();
+          return false;
+        }
+
+        _currentOwner = OwnerModel.fromMap(existingByEmail);
+        _currentPlayer = null;
+        _authState = AuthStatus.authenticated;
+        notifyListeners();
+        return true;
+      }
+
+      final resolvedPhone = (preferredPhone ??
+              _tempSignupPhone ??
+              _phoneNumber ??
+              _authService.currentUserPhone ??
+              '')
+          .trim();
+
+      if (resolvedPhone.isNotEmpty) {
+        final existingByPhone = await _dbService.getOwnerByPhone(resolvedPhone);
+        if (existingByPhone != null) {
+          final existingPhoneOwnerId = existingByPhone['id']?.toString();
+          if (existingPhoneOwnerId != uid) {
+            _errorMessage =
+                'This phone number is already registered with another account.';
+            notifyListeners();
+            return false;
+          }
+        }
+      }
+
+      if (!allowCreate) {
+        _errorMessage = 'Owner profile not found.';
+        notifyListeners();
+        return false;
+      }
+
+      final ownerName = _resolveOwnerName(emailFallback: email);
+      final phoneForCreate = resolvedPhone.isEmpty
+          ? 'pending_${uid.substring(0, 8)}'
+          : resolvedPhone;
+
+      await _dbService.createOwnerProfile(
+        id: uid,
+        name: ownerName,
+        email: email,
+        phone: phoneForCreate,
+        hasPassword: _tempSignupHasPassword,
+      );
+
+      final methods = <String>{
+        if (_tempSignupMethod.trim().isNotEmpty) _tempSignupMethod.trim(),
+        if (resolvedPhone.isNotEmpty) 'otp',
+      };
+      if (methods.isNotEmpty) {
+        await _dbService.updateOwner(uid, {
+          'auth_methods': methods.toList()..sort(),
+        });
+      }
+
+      await _loadUserProfile(uid);
+
+      if (_currentOwner == null) {
+        _errorMessage =
+            'Could not load owner profile after saving. Please try again.';
+        notifyListeners();
+        return false;
+      }
+
+      return true;
+    } catch (e) {
+      _errorMessage = _friendlyAuthError(
+        e,
+        fallback: 'Could not sync owner profile. Please try again.',
+      );
+      notifyListeners();
+      return false;
+    }
+  }
+
+  Future<bool> ensureOwnerReadyForDashboard({
+    bool allowDeferredSignup = true,
+  }) async {
+    final uid = _authService.currentUserId;
+    if (uid == null || uid.isEmpty) {
+      _errorMessage = 'Session expired. Please login again.';
+      notifyListeners();
+      return false;
+    }
+
+    if (_isInDeferredSignupFlow) {
+      return allowDeferredSignup;
+    }
+
+    final recovered = await _recoverMissingOwnerProfile(
+      uid: uid,
+      preferredPhone: _phoneNumber,
+      allowCreate: true,
+    );
+    if (!recovered || _currentOwner == null) {
+      return false;
+    }
+
+    return true;
+  }
+
   /// Owner-only Google OAuth login/signup.
   ///
   /// Missing owner profile auto-enters deferred signup flow.
@@ -427,6 +599,10 @@ class AuthProvider extends ChangeNotifier {
       }
 
       await _loadUserProfile(uid);
+
+      if (_currentPlayer != null) {
+        throw 'This account is not an owner account.';
+      }
 
       if (_currentOwner != null) {
         await _ensureOwnerAuthMethods({'google'});
@@ -522,9 +698,12 @@ class AuthProvider extends ChangeNotifier {
 
       await _loadUserProfile(uid);
 
-      if (_currentOwner == null && _currentPlayer == null) {
+      if (_currentOwner == null) {
         await signOut();
-        throw 'Account not found. Please sign up.';
+        if (_currentPlayer != null) {
+          throw 'This account is not an owner account.';
+        }
+        throw 'Owner account not found. Please sign up.';
       }
 
       return true;
@@ -665,6 +844,18 @@ class AuthProvider extends ChangeNotifier {
 
         await _loadUserProfile(ownerId);
 
+        if (_currentOwner == null) {
+          final recovered = await _recoverMissingOwnerProfile(
+            uid: ownerId,
+            preferredPhone: _phoneNumber,
+            allowCreate: true,
+          );
+          if (!recovered || _currentOwner == null) {
+            throw _errorMessage ??
+                'Owner profile could not be synced after verification.';
+          }
+        }
+
         _isOwnerPhoneVerificationFlow = false;
         _isLoading = false;
         notifyListeners();
@@ -684,8 +875,15 @@ class AuthProvider extends ChangeNotifier {
       await _loadUserProfile(uid);
 
       if (_currentOwner == null) {
-        await signOut();
-        throw 'Phone number not registered. Please sign up.';
+        final recovered = await _recoverMissingOwnerProfile(
+          uid: uid,
+          preferredPhone: _phoneNumber,
+          allowCreate: true,
+        );
+        if (!recovered || _currentOwner == null) {
+          await signOut();
+          throw _errorMessage ?? 'Phone number not registered. Please sign up.';
+        }
       }
 
       // Update auth methods
@@ -751,6 +949,10 @@ class AuthProvider extends ChangeNotifier {
       // Load the created profile
       await _loadUserProfile(_tempSignupUid!);
 
+      if (_currentOwner == null) {
+        throw 'Could not load owner profile after signup completion.';
+      }
+
       // Clear temporary state
       _tempSignupName = null;
       _tempSignupEmail = null;
@@ -798,6 +1000,39 @@ class AuthProvider extends ChangeNotifier {
     }
   }
 
+  /// Cancel deferred signup and sign out.
+  /// This is called when user goes back from phone verification modal.
+  /// The Supabase auth user will be signed out (account deletion requires admin SDK).
+  Future<void> cancelDeferredSignup() async {
+    try {
+      // Clear deferred signup state first
+      _tempSignupName = null;
+      _tempSignupEmail = null;
+      _tempSignupPhone = null;
+      _tempSignupUid = null;
+      _tempSignupMethod = 'email';
+      _tempSignupHasPassword = true;
+      _isInDeferredSignupFlow = false;
+      _isOwnerPhoneVerificationFlow = false;
+      _phoneNumber = null;
+
+      // Sign out the Supabase auth user
+      await _authService.signOut();
+
+      _currentOwner = null;
+      _currentPlayer = null;
+      _authState = AuthStatus.unauthenticated;
+      notifyListeners();
+    } catch (e) {
+      // Even if signout fails, clear all local state
+      _currentOwner = null;
+      _currentPlayer = null;
+      _authState = AuthStatus.unauthenticated;
+      _errorMessage = 'Failed to cancel signup: ${e.toString()}';
+      notifyListeners();
+    }
+  }
+
   /// Send password reset email
   Future<bool> sendPasswordResetEmail(String email) async {
     try {
@@ -810,6 +1045,221 @@ class AuthProvider extends ChangeNotifier {
       );
       notifyListeners();
       return false;
+    }
+  }
+
+  // State for forgot password OTP flow
+  String? _forgotPasswordEmail;
+  String? _forgotPasswordPhone;
+  bool _isForgotPasswordOtpSent = false;
+  bool _isForgotPasswordOtpVerified = false;
+
+  String? get forgotPasswordEmail => _forgotPasswordEmail;
+  String? get forgotPasswordPhone => _forgotPasswordPhone;
+  bool get isForgotPasswordOtpSent => _isForgotPasswordOtpSent;
+  bool get isForgotPasswordOtpVerified => _isForgotPasswordOtpVerified;
+
+  /// Initialize forgot password flow - find user by email and get their phone
+  Future<bool> initForgotPassword(String email) async {
+    try {
+      _isLoading = true;
+      _errorMessage = null;
+      notifyListeners();
+
+      final normalizedEmail = email.trim().toLowerCase();
+      final ownerData = await _dbService.getOwnerByEmail(normalizedEmail);
+
+      if (ownerData == null) {
+        _isLoading = false;
+        _errorMessage = 'No account found with this email.';
+        notifyListeners();
+        return false;
+      }
+
+      final phone = ownerData['phone'] as String?;
+      if (phone == null || phone.isEmpty || phone.startsWith('pending_')) {
+        _isLoading = false;
+        _errorMessage =
+            'No verified phone number linked to this account. Please contact support.';
+        notifyListeners();
+        return false;
+      }
+
+      _forgotPasswordEmail = normalizedEmail;
+      _forgotPasswordPhone = phone;
+      _isForgotPasswordOtpSent = false;
+      _isForgotPasswordOtpVerified = false;
+      _isLoading = false;
+      notifyListeners();
+      return true;
+    } catch (e) {
+      _isLoading = false;
+      _errorMessage = _friendlyAuthError(
+        e,
+        fallback: 'Could not find account. Please try again.',
+      );
+      notifyListeners();
+      return false;
+    }
+  }
+
+  /// Send OTP to the phone number for password reset
+  Future<bool> sendForgotPasswordOtp() async {
+    try {
+      if (_forgotPasswordPhone == null || _forgotPasswordPhone!.isEmpty) {
+        _errorMessage = 'Phone number not found. Please start over.';
+        notifyListeners();
+        return false;
+      }
+
+      _isLoading = true;
+      _errorMessage = null;
+      notifyListeners();
+
+      // Use signInWithOtp for existing users
+      await _authService.sendPhoneOtp(phone: _forgotPasswordPhone!);
+
+      _isForgotPasswordOtpSent = true;
+      _phoneNumber = _forgotPasswordPhone;
+      _isLoading = false;
+      notifyListeners();
+      return true;
+    } catch (e) {
+      _isLoading = false;
+      _errorMessage = _friendlyAuthError(
+        e,
+        fallback: 'Could not send OTP. Please try again.',
+      );
+      notifyListeners();
+      return false;
+    }
+  }
+
+  /// Verify OTP for password reset flow
+  Future<bool> verifyForgotPasswordOtp(String otp) async {
+    try {
+      if (_forgotPasswordPhone == null || _forgotPasswordPhone!.isEmpty) {
+        _errorMessage = 'Phone number not found. Please start over.';
+        notifyListeners();
+        return false;
+      }
+
+      _isLoading = true;
+      _errorMessage = null;
+      notifyListeners();
+
+      await _authService.verifyPhoneOtp(
+        phone: _forgotPasswordPhone!,
+        token: otp,
+      );
+
+      _isForgotPasswordOtpVerified = true;
+      _isLoading = false;
+      notifyListeners();
+      return true;
+    } catch (e) {
+      _isLoading = false;
+      _errorMessage = _friendlyAuthError(
+        e,
+        fallback: 'Invalid OTP. Please try again.',
+      );
+      notifyListeners();
+      return false;
+    }
+  }
+
+  /// Set new password after OTP verification (for forgot password flow)
+  Future<bool> setNewPasswordAfterOtpVerification(String newPassword) async {
+    try {
+      if (!_isForgotPasswordOtpVerified) {
+        _errorMessage = 'Please verify OTP first.';
+        notifyListeners();
+        return false;
+      }
+
+      _isLoading = true;
+      _errorMessage = null;
+      notifyListeners();
+
+      if (!_isStrongPassword(newPassword)) {
+        _isLoading = false;
+        _errorMessage =
+            'Password must be at least 8 characters with uppercase, lowercase, number, and special character.';
+        notifyListeners();
+        return false;
+      }
+
+      await _authService.updatePassword(newPassword);
+
+      // Update has_password flag in database
+      final uid = _authService.currentUserId;
+      if (uid != null) {
+        await _dbService.updateOwner(uid, {
+          'has_password': true,
+          'auth_methods': await _getUpdatedAuthMethods(uid, 'email'),
+        });
+        await _loadUserProfile(uid);
+      }
+
+      // Clear forgot password state
+      _forgotPasswordEmail = null;
+      _forgotPasswordPhone = null;
+      _isForgotPasswordOtpSent = false;
+      _isForgotPasswordOtpVerified = false;
+
+      _isLoading = false;
+      notifyListeners();
+      return true;
+    } catch (e) {
+      _isLoading = false;
+      _errorMessage = _friendlyAuthError(
+        e,
+        fallback: 'Could not set password. Please try again.',
+      );
+      notifyListeners();
+      return false;
+    }
+  }
+
+  /// Helper to get updated auth methods
+  Future<List<String>> _getUpdatedAuthMethods(
+      String uid, String addMethod) async {
+    final ownerData = await _dbService.getOwner(uid);
+    final existingMethods = ownerData?['auth_methods'];
+    final methods = existingMethods is List
+        ? List<String>.from(existingMethods.map((m) => m.toString()))
+        : <String>[];
+    return _mergeAuthMethods(existing: methods, add: addMethod);
+  }
+
+  /// Clear forgot password state
+  void clearForgotPasswordState() {
+    _forgotPasswordEmail = null;
+    _forgotPasswordPhone = null;
+    _isForgotPasswordOtpSent = false;
+    _isForgotPasswordOtpVerified = false;
+    _errorMessage = null;
+    notifyListeners();
+  }
+
+  /// Check if phone number is already registered to another owner.
+  /// Returns null if phone is available, or returns error message if taken.
+  Future<String?> checkPhoneAvailability(String phone) async {
+    try {
+      final existingEmail = await _dbService.checkPhoneAlreadyRegistered(phone);
+      if (existingEmail != null) {
+        // Check if it's the current user's phone (for re-verification scenarios)
+        final currentEmail = _tempSignupEmail ?? _currentOwner?.email;
+        if (currentEmail != null &&
+            existingEmail.toLowerCase() == currentEmail.toLowerCase()) {
+          return null; // Same user, phone is available for them
+        }
+        return 'This phone number is already registered with another account.';
+      }
+      return null; // Phone is available
+    } catch (e) {
+      // If check fails, allow to proceed (unique constraint will catch duplicates)
+      return null;
     }
   }
 
@@ -905,7 +1355,28 @@ class AuthProvider extends ChangeNotifier {
       _errorMessage = null;
       notifyListeners();
 
+      if (!_isStrongPassword(newPassword)) {
+        _isLoading = false;
+        _errorMessage =
+            'Password must be at least 8 characters with uppercase, lowercase, number, and special character.';
+        notifyListeners();
+        return false;
+      }
+
       await _authService.updatePassword(newPassword);
+
+      // Update has_password flag and add email to auth methods
+      if (_currentOwner != null) {
+        final updatedMethods = _mergeAuthMethods(
+          existing: _currentOwner!.authMethods,
+          add: 'email',
+        );
+        await _dbService.updateOwner(_currentOwner!.uid, {
+          'has_password': true,
+          'auth_methods': updatedMethods,
+        });
+        await _loadUserProfile(_currentOwner!.uid);
+      }
 
       _isLoading = false;
       notifyListeners();
@@ -922,6 +1393,7 @@ class AuthProvider extends ChangeNotifier {
   }
 
   /// Set password for Google user (unlocks manual login option)
+  /// Requires phone OTP verification to be done first in the calling screen
   Future<bool> setPasswordForGoogleUser(String newPassword) async {
     try {
       _isLoading = true;
@@ -929,15 +1401,24 @@ class AuthProvider extends ChangeNotifier {
       notifyListeners();
 
       if (!_isStrongPassword(newPassword)) {
-        throw 'Password must be at least 8 characters with uppercase, lowercase, number, and special character.';
+        _isLoading = false;
+        _errorMessage =
+            'Password must be at least 8 characters with uppercase, lowercase, number, and special character.';
+        notifyListeners();
+        return false;
       }
 
       await _authService.updatePassword(newPassword);
 
-      // Mark that this Google user now has a password
+      // Mark that this Google user now has a password and add email to auth methods
       if (_currentOwner != null) {
+        final updatedMethods = _mergeAuthMethods(
+          existing: _currentOwner!.authMethods,
+          add: 'email',
+        );
         await _dbService.updateOwner(_currentOwner!.uid, {
           'has_password': true,
+          'auth_methods': updatedMethods,
         });
         await _loadUserProfile(_currentOwner!.uid);
       }
@@ -961,6 +1442,29 @@ class AuthProvider extends ChangeNotifier {
 
   /// Get current phone
   String? get currentPhone => _authService.currentUserPhone;
+
+  /// Best-effort owner display values for UI while profile sync catches up.
+  String get ownerDisplayName => _resolveOwnerName();
+
+  String get ownerDisplayEmail {
+    final ownerEmail = _currentOwner?.email.trim() ?? '';
+    if (ownerEmail.isNotEmpty) {
+      return ownerEmail;
+    }
+    return _normalizedEmail(_tempSignupEmail ?? _authService.currentUserEmail);
+  }
+
+  String get ownerDisplayPhone {
+    final ownerPhone = _currentOwner?.phone.trim() ?? '';
+    if (ownerPhone.isNotEmpty) {
+      return ownerPhone;
+    }
+    return (_tempSignupPhone ??
+            _phoneNumber ??
+            _authService.currentUserPhone ??
+            '')
+        .trim();
+  }
 
   /// Complete profile for player after phone OTP verification
   Future<bool> completeProfile({

@@ -1,4 +1,3 @@
-import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
@@ -7,8 +6,9 @@ import '../../../config/glass_widgets.dart';
 import '../../../config/abstract_bg.dart';
 import '../../auth/providers/auth_provider.dart';
 import '../../../core/utils/app_toast.dart';
+import '../../../data/services/auth_service.dart';
 
-enum OtpDeliveryChannel { mobile, email }
+// OtpDeliveryChannel enum removed - now using only phone OTP
 
 /// Settings Screen
 /// Change email, change password with validation
@@ -20,9 +20,6 @@ class SettingsScreen extends StatefulWidget {
 }
 
 class _SettingsScreenState extends State<SettingsScreen> {
-  static const int _maxOtpSends = 3;
-  static const Duration _otpCooldownDuration = Duration(minutes: 30);
-
   final _emailController = TextEditingController();
   final _currentPasswordController = TextEditingController();
   final _newPasswordController = TextEditingController();
@@ -32,14 +29,21 @@ class _SettingsScreenState extends State<SettingsScreen> {
   bool _isPasswordLoading = false;
   bool _obscureNewPassword = true;
   bool _obscureConfirmPassword = true;
-  DateTime? _emailOtpBlockedUntil;
-  DateTime? _passwordOtpBlockedUntil;
 
   @override
   void initState() {
     super.initState();
     final authProvider = Provider.of<AuthProvider>(context, listen: false);
-    _emailController.text = authProvider.currentEmail ?? '';
+    _emailController.text = authProvider.ownerDisplayEmail;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) {
+        return;
+      }
+      authProvider.ensureOwnerReadyForDashboard(allowDeferredSignup: true);
+      if (_emailController.text.trim().isEmpty) {
+        _emailController.text = authProvider.ownerDisplayEmail;
+      }
+    });
   }
 
   @override
@@ -79,21 +83,19 @@ class _SettingsScreenState extends State<SettingsScreen> {
     }
 
     final authProvider = Provider.of<AuthProvider>(context, listen: false);
-    final ownerPhone = authProvider.currentOwner?.phone?.trim();
-    if (ownerPhone == null || ownerPhone.isEmpty) {
-      _showSnackBar('Registered mobile number not found.', isError: true);
+    final ownerPhone = authProvider.currentOwner?.phone.trim();
+    if (ownerPhone == null ||
+        ownerPhone.isEmpty ||
+        ownerPhone.startsWith('pending_')) {
+      _showSnackBar('No verified phone number found.', isError: true);
       return;
     }
 
-    final otpVerified = await _runOtpFlow(
+    final otpVerified = await _runRealOtpFlow(
+      phone: ownerPhone,
       purpose: 'email update',
-      destinationLabel: 'registered mobile ${_maskPhone(ownerPhone)}',
-      blockedUntil: _emailOtpBlockedUntil,
-      onBlockedUntilChanged: (value) {
-        setState(() => _emailOtpBlockedUntil = value);
-      },
     );
-    if (!otpVerified) return;
+    if (!mounted || !otpVerified) return;
 
     setState(() => _isEmailLoading = true);
     final success = await authProvider.updateEmail(newEmail);
@@ -240,36 +242,20 @@ class _SettingsScreenState extends State<SettingsScreen> {
     }
 
     final authProvider = Provider.of<AuthProvider>(context, listen: false);
-    final selectedChannel = await _selectOtpChannel();
-    if (!mounted || selectedChannel == null) return;
-
     final owner = authProvider.currentOwner;
-    String? destinationLabel;
-    if (selectedChannel == OtpDeliveryChannel.mobile) {
-      final phone = owner?.phone?.trim();
-      if (phone == null || phone.isEmpty) {
-        _showSnackBar('Registered mobile number not found.', isError: true);
-        return;
-      }
-      destinationLabel = 'registered mobile ${_maskPhone(phone)}';
-    } else {
-      final email = owner?.email.trim();
-      if (email == null || email.isEmpty) {
-        _showSnackBar('Registered email not found.', isError: true);
-        return;
-      }
-      destinationLabel = 'registered email ${_maskEmail(email)}';
+    final phone = owner?.phone.trim();
+
+    if (phone == null || phone.isEmpty || phone.startsWith('pending_')) {
+      _showSnackBar('No verified phone number found.', isError: true);
+      return;
     }
 
-    final otpVerified = await _runOtpFlow(
+    // Run phone OTP verification flow
+    final otpVerified = await _runRealOtpFlow(
+      phone: phone,
       purpose: 'password update',
-      destinationLabel: destinationLabel,
-      blockedUntil: _passwordOtpBlockedUntil,
-      onBlockedUntilChanged: (value) {
-        setState(() => _passwordOtpBlockedUntil = value);
-      },
     );
-    if (!otpVerified) return;
+    if (!mounted || !otpVerified) return;
 
     setState(() => _isPasswordLoading = true);
     final success = await authProvider.updatePassword(newPassword);
@@ -283,7 +269,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
         builder: (ctx) => AlertDialog(
           title: const Text('Password Updated'),
           content: const Text(
-            'Password changed successfully. Please use the updated password next time you login.',
+            'Password changed successfully. You can now use this password to login.',
           ),
           actions: [
             TextButton(
@@ -302,108 +288,76 @@ class _SettingsScreenState extends State<SettingsScreen> {
     }
   }
 
-  Future<OtpDeliveryChannel?> _selectOtpChannel() async {
-    return showDialog<OtpDeliveryChannel>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Receive OTP On'),
-        content: const Text(
-            'Choose where you want to receive the OTP for password update.'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, OtpDeliveryChannel.mobile),
-            child: const Text('Mobile'),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, OtpDeliveryChannel.email),
-            child: const Text('Email'),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Future<bool> _runOtpFlow({
+  /// Real Supabase OTP flow for verifying phone before sensitive actions
+  Future<bool> _runRealOtpFlow({
+    required String phone,
     required String purpose,
-    required String destinationLabel,
-    required DateTime? blockedUntil,
-    required ValueChanged<DateTime?> onBlockedUntilChanged,
   }) async {
-    final now = DateTime.now();
-    if (blockedUntil != null && now.isBefore(blockedUntil)) {
-      final remaining = blockedUntil.difference(now).inMinutes;
-      _showSnackBar(
-        'Too many OTP attempts. Try again later (${remaining + 1} min remaining).',
-        isError: true,
-      );
+    final authService = AuthService();
+    final otpController = TextEditingController();
+    bool isLoading = false;
+    String? errorText;
+
+    // Send OTP first
+    try {
+      await authService.sendPhoneChangeOtp(phone: phone);
+    } catch (e) {
+      _showSnackBar('Could not send OTP. Please try again.', isError: true);
       return false;
     }
-
-    final otpController = TextEditingController();
-    String currentOtp = _generateOtp();
-    int sendCount = 1;
-    _showSnackBar('Simulation OTP for $destinationLabel: $currentOtp');
 
     final verified = await showDialog<bool>(
       context: context,
       barrierDismissible: false,
       builder: (ctx) {
-        String? errorText;
-
         return StatefulBuilder(
           builder: (dialogContext, setDialogState) {
-            final canResend = sendCount < _maxOtpSends;
-
-            Future<void> handleResend() async {
-              if (!canResend) {
-                final until = DateTime.now().add(_otpCooldownDuration);
-                onBlockedUntilChanged(until);
-                if (Navigator.canPop(dialogContext)) {
-                  Navigator.pop(dialogContext, false);
-                }
-                _showSnackBar(
-                    'Try again later. OTP limit reached for 30 minutes.',
-                    isError: true);
+            Future<void> handleVerify() async {
+              final entered = otpController.text.trim();
+              if (entered.length != 6) {
+                setDialogState(() => errorText = 'Enter 6-digit OTP');
                 return;
               }
 
               setDialogState(() {
-                sendCount++;
-                currentOtp = _generateOtp();
-                otpController.clear();
+                isLoading = true;
                 errorText = null;
               });
-              _showSnackBar(
-                  'Simulation OTP for $destinationLabel: $currentOtp');
+
+              try {
+                await authService.verifyPhoneChangeOtp(
+                  phone: phone,
+                  token: entered,
+                );
+                if (Navigator.canPop(dialogContext)) {
+                  Navigator.pop(dialogContext, true);
+                }
+              } catch (e) {
+                setDialogState(() {
+                  isLoading = false;
+                  errorText = 'Invalid OTP. Please try again.';
+                });
+              }
             }
 
-            Future<void> handleVerify() async {
-              final entered = otpController.text.trim();
-              if (entered.length != 4) {
-                setDialogState(() => errorText = 'Enter 4-digit OTP');
-                return;
-              }
+            Future<void> handleResend() async {
+              setDialogState(() {
+                isLoading = true;
+                errorText = null;
+              });
 
-              if (entered != currentOtp) {
-                if (canResend) {
-                  setDialogState(() {
-                    errorText = 'Invalid OTP. Try again or regenerate OTP.';
-                  });
-                } else {
-                  final until = DateTime.now().add(_otpCooldownDuration);
-                  onBlockedUntilChanged(until);
-                  if (Navigator.canPop(dialogContext)) {
-                    Navigator.pop(dialogContext, false);
-                  }
-                  _showSnackBar(
-                      'Try again later. OTP limit reached for 30 minutes.',
-                      isError: true);
-                }
-                return;
-              }
-
-              if (Navigator.canPop(dialogContext)) {
-                Navigator.pop(dialogContext, true);
+              try {
+                await authService.sendPhoneChangeOtp(phone: phone);
+                setDialogState(() {
+                  isLoading = false;
+                  otpController.clear();
+                });
+                _showSnackBar('OTP resent to ${_maskPhone(phone)}');
+              } catch (e) {
+                setDialogState(() {
+                  isLoading = false;
+                  errorText = 'Could not resend OTP.';
+                });
               }
             }
 
@@ -413,49 +367,54 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text('Enter the 4-digit OTP sent to $destinationLabel.'),
+                  Text('Enter the 6-digit OTP sent to ${_maskPhone(phone)}.'),
                   const SizedBox(height: 12),
                   TextField(
                     controller: otpController,
                     keyboardType: TextInputType.number,
                     inputFormatters: [
                       FilteringTextInputFormatter.digitsOnly,
-                      LengthLimitingTextInputFormatter(4),
+                      LengthLimitingTextInputFormatter(6),
                     ],
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(
+                      letterSpacing: 8,
+                      fontWeight: FontWeight.bold,
+                    ),
                     decoration: InputDecoration(
-                      hintText: '4-digit OTP',
+                      hintText: '6-digit OTP',
                       errorText: errorText,
                       border: OutlineInputBorder(
                         borderRadius: BorderRadius.circular(10),
                       ),
                     ),
                   ),
-                  const SizedBox(height: 8),
-                  Text(
-                    'Simulation OTP: $currentOtp',
-                    style:
-                        Theme.of(dialogContext).textTheme.bodySmall?.copyWith(
-                              fontWeight: FontWeight.w600,
-                            ),
-                  ),
                 ],
               ),
               actions: [
                 TextButton(
-                  onPressed: () {
-                    if (Navigator.canPop(dialogContext)) {
-                      Navigator.pop(dialogContext, false);
-                    }
-                  },
+                  onPressed: isLoading
+                      ? null
+                      : () {
+                          if (Navigator.canPop(dialogContext)) {
+                            Navigator.pop(dialogContext, false);
+                          }
+                        },
                   child: const Text('Cancel'),
                 ),
                 TextButton(
-                  onPressed: handleResend,
-                  child: Text(canResend ? 'Regenerate OTP' : 'Limit Reached'),
+                  onPressed: isLoading ? null : handleResend,
+                  child: const Text('Resend OTP'),
                 ),
                 ElevatedButton(
-                  onPressed: handleVerify,
-                  child: const Text('Verify'),
+                  onPressed: isLoading ? null : handleVerify,
+                  child: isLoading
+                      ? const SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Text('Verify'),
                 ),
               ],
             );
@@ -468,25 +427,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
     return verified == true;
   }
 
-  String _generateOtp() {
-    final random = Random();
-    return (1000 + random.nextInt(9000)).toString();
-  }
-
   String _maskPhone(String phone) {
     final compact = phone.replaceAll(RegExp(r'\s+'), '');
     if (compact.length <= 4) return compact;
     final last4 = compact.substring(compact.length - 4);
     return 'xxxxxx$last4';
-  }
-
-  String _maskEmail(String email) {
-    final parts = email.split('@');
-    if (parts.length != 2) return email;
-    final local = parts[0];
-    if (local.isEmpty) return '***@${parts[1]}';
-    if (local.length <= 2) return '${local[0]}***@${parts[1]}';
-    return '${local.substring(0, 2)}***@${parts[1]}';
   }
 
   String _capitalize(String text) {
@@ -568,7 +513,17 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final c = AppColors.of(context);
     return Consumer<AuthProvider>(
       builder: (context, authProvider, _) {
-        final owner = authProvider.currentOwner;
+        final ownerName = authProvider.ownerDisplayName.trim();
+        final ownerEmail = authProvider.ownerDisplayEmail.trim();
+        final ownerPhone = authProvider.ownerDisplayPhone.trim();
+
+        final safeName = ownerName.isEmpty ? '-' : ownerName;
+        final safeEmail = ownerEmail.isEmpty ? '-' : ownerEmail;
+        final safePhone =
+            ownerPhone.isEmpty || ownerPhone.startsWith('pending_')
+                ? '-'
+                : ownerPhone;
+
         return Container(
           padding: const EdgeInsets.all(16),
           decoration: BoxDecoration(
@@ -578,11 +533,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ),
           child: Column(
             children: [
-              _buildInfoRow(Icons.person, 'Name', owner?.name ?? '-'),
+              _buildInfoRow(Icons.person, 'Name', safeName),
               const Divider(height: 24),
-              _buildInfoRow(Icons.email, 'Email', owner?.email ?? '-'),
+              _buildInfoRow(Icons.email, 'Email', safeEmail),
               const Divider(height: 24),
-              _buildInfoRow(Icons.phone, 'Phone', owner?.phone ?? '-'),
+              _buildInfoRow(Icons.phone, 'Phone', safePhone),
             ],
           ),
         );
