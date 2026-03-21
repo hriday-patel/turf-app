@@ -58,10 +58,19 @@ class _AddTurfScreenState extends State<AddTurfScreen> with RouteAware {
   TimeOfDay _openTime = const TimeOfDay(hour: 6, minute: 0);
   TimeOfDay _closeTime = const TimeOfDay(hour: 23, minute: 0);
   int _slotDuration = 60;
-  List<String> _selectedDays = ['MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT', 'SUN'];
+  List<String> _selectedDays = [
+    'MON',
+    'TUE',
+    'WED',
+    'THU',
+    'FRI',
+    'SAT',
+    'SUN'
+  ];
 
   // Pricing Controllers - per net, per day type, per time slot
-  List<Map<String, Map<String, TextEditingController>>> _netPricingControllers = [];
+  List<Map<String, Map<String, TextEditingController>>> _netPricingControllers =
+      [];
 
   // Time slots
   static const List<Map<String, String>> _timeSlots = [
@@ -72,11 +81,22 @@ class _AddTurfScreenState extends State<AddTurfScreen> with RouteAware {
   ];
 
   static const List<String> _dayTypes = ['weekday', 'weekend', 'holiday'];
+  static const List<String> _cityOptions = [
+    'Ahmedabad',
+    'Bengaluru',
+    'Chennai',
+    'Delhi',
+    'Hyderabad',
+    'Kolkata',
+    'Mumbai',
+    'Pune',
+    'Surat',
+  ];
 
   // Images - store as XFile for cross-platform support (new images)
   final List<XFile> _selectedImages = [];
   final ImagePicker _imagePicker = ImagePicker();
-  
+
   // Existing images from server (for edit mode)
   List<TurfImage> _existingImages = [];
 
@@ -88,7 +108,7 @@ class _AddTurfScreenState extends State<AddTurfScreen> with RouteAware {
       _populateFromTurf(widget.editTurf!);
     }
   }
-  
+
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
@@ -97,7 +117,7 @@ class _AddTurfScreenState extends State<AddTurfScreen> with RouteAware {
       AppRoutes.routeObserver.subscribe(this, route);
     }
   }
-  
+
   @override
   void didPopNext() {
     debugPrint('AddTurf: didPopNext - refreshing data if editing');
@@ -119,7 +139,7 @@ class _AddTurfScreenState extends State<AddTurfScreen> with RouteAware {
         }
       }
     }
-    
+
     _netPricingControllers = List.generate(_numberOfNets, (netIndex) {
       return {
         for (var dayType in _dayTypes)
@@ -149,7 +169,7 @@ class _AddTurfScreenState extends State<AddTurfScreen> with RouteAware {
     _descriptionController.text = turf.description ?? '';
     _selectedTurfType = turf.turfType;
     _numberOfNets = turf.numberOfNets;
-    
+
     // Store original basic info values for change detection
     _originalTurfName = turf.turfName;
     _originalCity = turf.city;
@@ -157,41 +177,41 @@ class _AddTurfScreenState extends State<AddTurfScreen> with RouteAware {
     _originalTurfType = turf.turfType;
     _originalNumberOfNets = turf.numberOfNets;
     _originalDescription = turf.description ?? '';
-    
+
     final openParts = turf.openTime.split(':');
     _openTime = TimeOfDay(
       hour: int.parse(openParts[0]),
       minute: int.parse(openParts[1]),
     );
-    
+
     final closeParts = turf.closeTime.split(':');
     _closeTime = TimeOfDay(
       hour: int.parse(closeParts[0]),
       minute: int.parse(closeParts[1]),
     );
-    
+
     _slotDuration = turf.slotDurationMinutes;
     _selectedDays = List.from(turf.daysOpen);
-    
+
     // Load existing images - filter out any invalid ones
     _existingImages = turf.images.where((img) => img.isValid).toList();
-    
+
     // Initialize pricing controllers with existing values from turf
     _initializePricingControllersFromTurf(turf);
   }
-  
+
   /// Check if basic info has changed (requires re-approval)
   bool _hasBasicInfoChanged() {
     if (!isEditing) return false;
-    
+
     return _turfNameController.text.trim() != _originalTurfName ||
-           _cityController.text.trim() != _originalCity ||
-           _addressController.text.trim() != _originalAddress ||
-           _selectedTurfType != _originalTurfType ||
-           _numberOfNets != _originalNumberOfNets ||
-           _descriptionController.text.trim() != _originalDescription;
+        _cityController.text.trim() != _originalCity ||
+        _addressController.text.trim() != _originalAddress ||
+        _selectedTurfType != _originalTurfType ||
+        _numberOfNets != _originalNumberOfNets ||
+        _descriptionController.text.trim() != _originalDescription;
   }
-  
+
   /// Initialize pricing controllers with values from existing turf
   void _initializePricingControllersFromTurf(TurfModel turf) {
     // Dispose old controllers if any
@@ -202,64 +222,64 @@ class _AddTurfScreenState extends State<AddTurfScreen> with RouteAware {
         }
       }
     }
-    
+
     _netPricingControllers = List.generate(_numberOfNets, (netIndex) {
       // Get pricing for this net from the turf's pricing rules
       final netPricing = turf.pricingRules.getNetPricing(netIndex + 1);
-      
+
       return {
         'weekday': {
           'Morning': TextEditingController(
-            text: netPricing?.weekday.morning.price.toInt().toString() ?? 
-                  _getDefaultPrice('weekday', 'Morning').toString(),
+            text: netPricing?.weekday.morning.price.toInt().toString() ??
+                _getDefaultPrice('weekday', 'Morning').toString(),
           ),
           'Afternoon': TextEditingController(
-            text: netPricing?.weekday.afternoon.price.toInt().toString() ?? 
-                  _getDefaultPrice('weekday', 'Afternoon').toString(),
+            text: netPricing?.weekday.afternoon.price.toInt().toString() ??
+                _getDefaultPrice('weekday', 'Afternoon').toString(),
           ),
           'Evening': TextEditingController(
-            text: netPricing?.weekday.evening.price.toInt().toString() ?? 
-                  _getDefaultPrice('weekday', 'Evening').toString(),
+            text: netPricing?.weekday.evening.price.toInt().toString() ??
+                _getDefaultPrice('weekday', 'Evening').toString(),
           ),
           'Night': TextEditingController(
-            text: netPricing?.weekday.night.price.toInt().toString() ?? 
-                  _getDefaultPrice('weekday', 'Night').toString(),
+            text: netPricing?.weekday.night.price.toInt().toString() ??
+                _getDefaultPrice('weekday', 'Night').toString(),
           ),
         },
         'weekend': {
           'Morning': TextEditingController(
-            text: netPricing?.weekend.morning.price.toInt().toString() ?? 
-                  _getDefaultPrice('weekend', 'Morning').toString(),
+            text: netPricing?.weekend.morning.price.toInt().toString() ??
+                _getDefaultPrice('weekend', 'Morning').toString(),
           ),
           'Afternoon': TextEditingController(
-            text: netPricing?.weekend.afternoon.price.toInt().toString() ?? 
-                  _getDefaultPrice('weekend', 'Afternoon').toString(),
+            text: netPricing?.weekend.afternoon.price.toInt().toString() ??
+                _getDefaultPrice('weekend', 'Afternoon').toString(),
           ),
           'Evening': TextEditingController(
-            text: netPricing?.weekend.evening.price.toInt().toString() ?? 
-                  _getDefaultPrice('weekend', 'Evening').toString(),
+            text: netPricing?.weekend.evening.price.toInt().toString() ??
+                _getDefaultPrice('weekend', 'Evening').toString(),
           ),
           'Night': TextEditingController(
-            text: netPricing?.weekend.night.price.toInt().toString() ?? 
-                  _getDefaultPrice('weekend', 'Night').toString(),
+            text: netPricing?.weekend.night.price.toInt().toString() ??
+                _getDefaultPrice('weekend', 'Night').toString(),
           ),
         },
         'holiday': {
           'Morning': TextEditingController(
-            text: netPricing?.holiday.morning.price.toInt().toString() ?? 
-                  _getDefaultPrice('holiday', 'Morning').toString(),
+            text: netPricing?.holiday.morning.price.toInt().toString() ??
+                _getDefaultPrice('holiday', 'Morning').toString(),
           ),
           'Afternoon': TextEditingController(
-            text: netPricing?.holiday.afternoon.price.toInt().toString() ?? 
-                  _getDefaultPrice('holiday', 'Afternoon').toString(),
+            text: netPricing?.holiday.afternoon.price.toInt().toString() ??
+                _getDefaultPrice('holiday', 'Afternoon').toString(),
           ),
           'Evening': TextEditingController(
-            text: netPricing?.holiday.evening.price.toInt().toString() ?? 
-                  _getDefaultPrice('holiday', 'Evening').toString(),
+            text: netPricing?.holiday.evening.price.toInt().toString() ??
+                _getDefaultPrice('holiday', 'Evening').toString(),
           ),
           'Night': TextEditingController(
-            text: netPricing?.holiday.night.price.toInt().toString() ?? 
-                  _getDefaultPrice('holiday', 'Night').toString(),
+            text: netPricing?.holiday.night.price.toInt().toString() ??
+                _getDefaultPrice('holiday', 'Night').toString(),
           ),
         },
       };
@@ -335,39 +355,43 @@ class _AddTurfScreenState extends State<AddTurfScreen> with RouteAware {
 
   PricingRules _buildPricingRules() {
     List<NetPricing> netPricingList = [];
-    
+
     for (int i = 0; i < _numberOfNets; i++) {
       final controllers = _netPricingControllers[i];
-      
+
       DayTypePricing buildDayTypePricing(String dayType) {
         return DayTypePricing(
           morning: TimeSlotPricing(
             label: 'Morning',
             startTime: '06:00',
             endTime: '12:00',
-            price: double.tryParse(controllers[dayType]!['Morning']!.text) ?? 1000,
+            price:
+                double.tryParse(controllers[dayType]!['Morning']!.text) ?? 1000,
           ),
           afternoon: TimeSlotPricing(
             label: 'Afternoon',
             startTime: '12:00',
             endTime: '18:00',
-            price: double.tryParse(controllers[dayType]!['Afternoon']!.text) ?? 1000,
+            price: double.tryParse(controllers[dayType]!['Afternoon']!.text) ??
+                1000,
           ),
           evening: TimeSlotPricing(
             label: 'Evening',
             startTime: '18:00',
             endTime: '00:00',
-            price: double.tryParse(controllers[dayType]!['Evening']!.text) ?? 1200,
+            price:
+                double.tryParse(controllers[dayType]!['Evening']!.text) ?? 1200,
           ),
           night: TimeSlotPricing(
             label: 'Night',
             startTime: '00:00',
             endTime: '06:00',
-            price: double.tryParse(controllers[dayType]!['Night']!.text) ?? 1100,
+            price:
+                double.tryParse(controllers[dayType]!['Night']!.text) ?? 1100,
           ),
         );
       }
-      
+
       netPricingList.add(NetPricing(
         netNumber: i + 1,
         netName: 'Net ${i + 1}',
@@ -376,7 +400,7 @@ class _AddTurfScreenState extends State<AddTurfScreen> with RouteAware {
         holiday: buildDayTypePricing('holiday'),
       ));
     }
-    
+
     return PricingRules(netPricing: netPricingList);
   }
 
@@ -388,8 +412,10 @@ class _AddTurfScreenState extends State<AddTurfScreen> with RouteAware {
       final turfProvider = Provider.of<TurfProvider>(context, listen: false);
       final storageService = StorageService();
 
-      final openTimeStr = '${_openTime.hour.toString().padLeft(2, '0')}:${_openTime.minute.toString().padLeft(2, '0')}';
-      final closeTimeStr = '${_closeTime.hour.toString().padLeft(2, '0')}:${_closeTime.minute.toString().padLeft(2, '0')}';
+      final openTimeStr =
+          '${_openTime.hour.toString().padLeft(2, '0')}:${_openTime.minute.toString().padLeft(2, '0')}';
+      final closeTimeStr =
+          '${_closeTime.hour.toString().padLeft(2, '0')}:${_closeTime.minute.toString().padLeft(2, '0')}';
 
       final pricingRules = _buildPricingRules();
 
@@ -399,7 +425,7 @@ class _AddTurfScreenState extends State<AddTurfScreen> with RouteAware {
       List<TurfImage> turfImages = [];
       bool imageUploadFailed = false;
       String imageUploadMessage = '';
-      
+
       if (_selectedImages.isNotEmpty) {
         try {
           // Convert XFile to bytes for web compatibility
@@ -408,32 +434,39 @@ class _AddTurfScreenState extends State<AddTurfScreen> with RouteAware {
             final bytes = await xFile.readAsBytes();
             imageBytesList.add(bytes);
           }
-          
+
           // Use the new method with status for better feedback
-          final uploadResult = await storageService.uploadMultipleTurfImageBytesWithStatus(
+          final uploadResult =
+              await storageService.uploadMultipleTurfImageBytesWithStatus(
             imageBytesList: imageBytesList,
             turfId: turfId,
           );
-          
+
           // Check results
           if (uploadResult.allFailed) {
             imageUploadFailed = true;
-            imageUploadMessage = kIsWeb 
+            imageUploadMessage = kIsWeb
                 ? 'Image upload failed (network/CORS issue on web). Images not saved.'
                 : 'All images failed to upload';
             debugPrint('All image uploads failed');
           } else if (uploadResult.failedCount > 0) {
             imageUploadFailed = true;
-            imageUploadMessage = '${uploadResult.successCount}/${uploadResult.totalAttempted} images uploaded';
-            debugPrint('Some images failed: ${uploadResult.successCount}/${uploadResult.totalAttempted}');
+            imageUploadMessage =
+                '${uploadResult.successCount}/${uploadResult.totalAttempted} images uploaded';
+            debugPrint(
+                'Some images failed: ${uploadResult.successCount}/${uploadResult.totalAttempted}');
           }
-          
-          turfImages = uploadResult.urls.asMap().entries.map((entry) => TurfImage(
-            url: entry.value,
-            type: TurfImageType.ground,
-            // New images are only primary if there are no existing images
-            isPrimary: _existingImages.isEmpty && entry.key == 0,
-          )).toList();
+
+          turfImages = uploadResult.urls
+              .asMap()
+              .entries
+              .map((entry) => TurfImage(
+                    url: entry.value,
+                    type: TurfImageType.ground,
+                    // New images are only primary if there are no existing images
+                    isPrimary: _existingImages.isEmpty && entry.key == 0,
+                  ))
+              .toList();
         } catch (e) {
           // Image upload failed, but continue with turf creation
           imageUploadFailed = true;
@@ -449,7 +482,7 @@ class _AddTurfScreenState extends State<AddTurfScreen> with RouteAware {
           ..._existingImages.where((img) => img.isValid),
           ...turfImages.where((img) => img.isValid),
         ];
-        
+
         // Ensure at least one image is marked as primary (if any images exist)
         final List<Map<String, dynamic>> allImages;
         if (combinedImages.isNotEmpty) {
@@ -470,18 +503,18 @@ class _AddTurfScreenState extends State<AddTurfScreen> with RouteAware {
         } else {
           allImages = [];
         }
-        
+
         // Check if basic info changed - requires re-approval
         final basicInfoChanged = _hasBasicInfoChanged();
-        
+
         // Build update data
         final updateData = {
           'turf_name': _turfNameController.text.trim(),
           'city': _cityController.text.trim(),
           'address': _addressController.text.trim(),
           'turf_type': _selectedTurfType.value,
-          'description': _descriptionController.text.trim().isEmpty 
-              ? null 
+          'description': _descriptionController.text.trim().isEmpty
+              ? null
               : _descriptionController.text.trim(),
           'number_of_nets': _numberOfNets,
           'open_time': openTimeStr,
@@ -491,32 +524,33 @@ class _AddTurfScreenState extends State<AddTurfScreen> with RouteAware {
           'pricing_rules': pricingRules.toMap(),
           'images': allImages,
         };
-        
+
         // If basic info changed, set status back to pending approval
         if (basicInfoChanged) {
           updateData['verification_status'] = 'PENDING';
           updateData['is_approved'] = false;
         }
-        
+
         // Update existing turf
         final success = await turfProvider.updateTurf(turfId, updateData);
 
         if (!mounted) return;
-        
+
         setState(() => _isLoading = false);
 
         if (success) {
           // Force refresh turfs from database to ensure UI is updated
           await turfProvider.refreshTurfs(authProvider.currentUserId!);
-          
+
           if (!mounted) return;
-          
+
           if (basicInfoChanged) {
             // If basic info changed, navigate to verification pending screen
-            _showSuccess('Turf updated. Changes to basic info require re-approval.');
+            _showSuccess(
+                'Turf updated. Changes to basic info require re-approval.');
             // Navigate to verification pending and clear navigation stack
             Navigator.pushNamedAndRemoveUntil(
-              context, 
+              context,
               AppRoutes.verificationPending,
               (route) => route.isFirst,
             );
@@ -526,7 +560,7 @@ class _AddTurfScreenState extends State<AddTurfScreen> with RouteAware {
           } else {
             _showSuccess('Turf updated successfully');
           }
-          
+
           // Use Navigator.of with proper error handling
           if (Navigator.canPop(context)) {
             Navigator.pop(context, true);
@@ -539,7 +573,7 @@ class _AddTurfScreenState extends State<AddTurfScreen> with RouteAware {
       } else {
         // Create new turf - filter invalid images
         final validNewImages = turfImages.where((img) => img.isValid).toList();
-        
+
         final resultId = await turfProvider.addTurf(
           turfId: turfId,
           ownerId: authProvider.currentUserId!,
@@ -547,8 +581,8 @@ class _AddTurfScreenState extends State<AddTurfScreen> with RouteAware {
           city: _cityController.text.trim(),
           address: _addressController.text.trim(),
           turfType: _selectedTurfType,
-          description: _descriptionController.text.trim().isEmpty 
-              ? null 
+          description: _descriptionController.text.trim().isEmpty
+              ? null
               : _descriptionController.text.trim(),
           numberOfNets: _numberOfNets,
           openTime: openTimeStr,
@@ -560,7 +594,7 @@ class _AddTurfScreenState extends State<AddTurfScreen> with RouteAware {
         );
 
         if (!mounted) return;
-        
+
         setState(() => _isLoading = false);
 
         if (resultId != null) {
@@ -569,7 +603,8 @@ class _AddTurfScreenState extends State<AddTurfScreen> with RouteAware {
           } else {
             _showSuccess(AppStrings.turfAddedSuccess);
           }
-          Navigator.pushReplacementNamed(context, AppRoutes.verificationPending);
+          Navigator.pushReplacementNamed(
+              context, AppRoutes.verificationPending);
         } else {
           _showError(turfProvider.errorMessage ?? 'Failed to add turf');
         }
@@ -652,7 +687,7 @@ class _AddTurfScreenState extends State<AddTurfScreen> with RouteAware {
   Widget _buildStepIndicator() {
     final c = AppColors.of(context);
     final steps = ['Basic Info', 'Schedule', 'Pricing', 'Images'];
-    
+
     return Container(
       padding: const EdgeInsets.symmetric(vertical: 20, horizontal: 16),
       decoration: BoxDecoration(
@@ -663,7 +698,7 @@ class _AddTurfScreenState extends State<AddTurfScreen> with RouteAware {
         children: List.generate(steps.length, (index) {
           final isActive = index <= _currentStep;
           final isCompleted = index < _currentStep;
-          
+
           return Expanded(
             child: Row(
               children: [
@@ -682,7 +717,8 @@ class _AddTurfScreenState extends State<AddTurfScreen> with RouteAware {
                             : Text(
                                 '${index + 1}',
                                 style: TextStyle(
-                                  color: isActive ? c.onPrimary : c.textSecondary,
+                                  color:
+                                      isActive ? c.onPrimary : c.textSecondary,
                                   fontWeight: FontWeight.w600,
                                 ),
                               ),
@@ -694,7 +730,8 @@ class _AddTurfScreenState extends State<AddTurfScreen> with RouteAware {
                       style: TextStyle(
                         fontSize: 10,
                         color: isActive ? c.primary : c.textSecondary,
-                        fontWeight: isActive ? FontWeight.w600 : FontWeight.normal,
+                        fontWeight:
+                            isActive ? FontWeight.w600 : FontWeight.normal,
                       ),
                     ),
                   ],
@@ -737,7 +774,7 @@ class _AddTurfScreenState extends State<AddTurfScreen> with RouteAware {
               'Enter the basic details of your turf',
               style: TextStyle(color: c.textSecondary),
             ),
-            
+
             // Warning for edit mode
             if (isEditing) ...[
               const SizedBox(height: 12),
@@ -765,9 +802,9 @@ class _AddTurfScreenState extends State<AddTurfScreen> with RouteAware {
                 ),
               ),
             ],
-            
+
             const SizedBox(height: 24),
-            
+
             _buildTextField(
               controller: _turfNameController,
               label: 'Turf Name',
@@ -776,16 +813,10 @@ class _AddTurfScreenState extends State<AddTurfScreen> with RouteAware {
               validator: (v) => v?.isEmpty == true ? 'Required' : null,
             ),
             const SizedBox(height: 16),
-            
-            _buildTextField(
-              controller: _cityController,
-              label: 'City',
-              hint: 'Mumbai',
-              prefixIcon: Icons.location_city,
-              validator: (v) => v?.isEmpty == true ? 'Required' : null,
-            ),
+
+            _buildCityDropdown(),
             const SizedBox(height: 16),
-            
+
             _buildTextField(
               controller: _addressController,
               label: 'Full Address',
@@ -795,15 +826,15 @@ class _AddTurfScreenState extends State<AddTurfScreen> with RouteAware {
               validator: (v) => v?.isEmpty == true ? 'Required' : null,
             ),
             const SizedBox(height: 16),
-            
+
             // Turf Type Dropdown
             _buildDropdown(),
             const SizedBox(height: 16),
-            
+
             // Number of Nets
             _buildNetsSelector(),
             const SizedBox(height: 16),
-            
+
             _buildTextField(
               controller: _descriptionController,
               label: 'Description (Optional)',
@@ -884,7 +915,8 @@ class _AddTurfScreenState extends State<AddTurfScreen> with RouteAware {
             decoration: InputDecoration(
               prefixIcon: Icon(Icons.sports_cricket, color: c.primary),
               border: InputBorder.none,
-              contentPadding: EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+              contentPadding:
+                  EdgeInsets.symmetric(horizontal: 16, vertical: 12),
             ),
             items: TurfType.values.map((type) {
               return DropdownMenuItem(
@@ -898,6 +930,65 @@ class _AddTurfScreenState extends State<AddTurfScreen> with RouteAware {
               }
             },
           ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildCityDropdown() {
+    final c = AppColors.of(context);
+    final selectedCity = _cityOptions.contains(_cityController.text)
+        ? _cityController.text
+        : null;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'City',
+          style: TextStyle(
+            fontSize: 14,
+            fontWeight: FontWeight.w500,
+            color: c.textPrimary,
+          ),
+        ),
+        const SizedBox(height: 8),
+        DropdownButtonFormField<String>(
+          value: selectedCity,
+          validator: (value) =>
+              value == null || value.isEmpty ? 'Required' : null,
+          decoration: InputDecoration(
+            hintText: 'Select city',
+            prefixIcon: Icon(Icons.location_city, color: c.primary),
+            filled: true,
+            fillColor: c.glassFill,
+            border: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(12),
+              borderSide: BorderSide(color: c.glassBorder),
+            ),
+            enabledBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(12),
+              borderSide: BorderSide(color: c.glassBorder),
+            ),
+            focusedBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(12),
+              borderSide: BorderSide(color: c.primary, width: 2),
+            ),
+          ),
+          items: _cityOptions
+              .map(
+                (city) => DropdownMenuItem<String>(
+                  value: city,
+                  child: Text(city),
+                ),
+              )
+              .toList(),
+          onChanged: (value) {
+            if (value == null) return;
+            setState(() {
+              _cityController.text = value;
+            });
+          },
         ),
       ],
     );
@@ -926,7 +1017,6 @@ class _AddTurfScreenState extends State<AddTurfScreen> with RouteAware {
               style: TextStyle(color: c.textSecondary),
             ),
             const SizedBox(height: 24),
-            
             Row(
               children: [
                 Expanded(
@@ -947,7 +1037,6 @@ class _AddTurfScreenState extends State<AddTurfScreen> with RouteAware {
               ],
             ),
             const SizedBox(height: 24),
-            
             Text(
               'Slot Duration',
               style: TextStyle(
@@ -975,7 +1064,6 @@ class _AddTurfScreenState extends State<AddTurfScreen> with RouteAware {
               }).toList(),
             ),
             const SizedBox(height: 24),
-            
             Text(
               'Days Open',
               style: TextStyle(
@@ -988,9 +1076,8 @@ class _AddTurfScreenState extends State<AddTurfScreen> with RouteAware {
             Wrap(
               spacing: 8,
               runSpacing: 8,
-              children: [
-                'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT', 'SUN'
-              ].map((day) {
+              children:
+                  ['MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT', 'SUN'].map((day) {
                 final isSelected = _selectedDays.contains(day);
                 return FilterChip(
                   label: Text(day),
@@ -1053,7 +1140,8 @@ class _AddTurfScreenState extends State<AddTurfScreen> with RouteAware {
                 labelColor: c.primary,
                 unselectedLabelColor: c.textSecondary,
                 indicatorColor: c.primary,
-                tabs: List.generate(_numberOfNets, (i) => Tab(text: 'Net ${i + 1}')),
+                tabs: List.generate(
+                    _numberOfNets, (i) => Tab(text: 'Net ${i + 1}')),
               ),
             ),
           Expanded(
@@ -1074,20 +1162,24 @@ class _AddTurfScreenState extends State<AddTurfScreen> with RouteAware {
       padding: const EdgeInsets.all(20),
       child: Column(
         children: [
-          _buildDayTypePricing(netIndex, 'weekday', 'Weekdays (Mon-Fri)', c.primary),
+          _buildDayTypePricing(
+              netIndex, 'weekday', 'Weekdays (Mon-Fri)', c.primary),
           const SizedBox(height: 20),
-          _buildDayTypePricing(netIndex, 'weekend', 'Weekends (Sat-Sun)', c.secondary),
+          _buildDayTypePricing(
+              netIndex, 'weekend', 'Weekends (Sat-Sun)', c.secondary),
           const SizedBox(height: 20),
-          _buildDayTypePricing(netIndex, 'holiday', 'Public Holidays', c.warning),
+          _buildDayTypePricing(
+              netIndex, 'holiday', 'Public Holidays', c.warning),
         ],
       ),
     );
   }
 
-  Widget _buildDayTypePricing(int netIndex, String dayType, String title, Color color) {
+  Widget _buildDayTypePricing(
+      int netIndex, String dayType, String title, Color color) {
     final c = AppColors.of(context);
     final controllers = _netPricingControllers[netIndex][dayType]!;
-    
+
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
@@ -1159,7 +1251,8 @@ class _AddTurfScreenState extends State<AddTurfScreen> with RouteAware {
                         border: OutlineInputBorder(
                           borderRadius: BorderRadius.circular(8),
                         ),
-                        contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                        contentPadding: const EdgeInsets.symmetric(
+                            horizontal: 12, vertical: 8),
                       ),
                     ),
                   ),
@@ -1177,7 +1270,7 @@ class _AddTurfScreenState extends State<AddTurfScreen> with RouteAware {
     final int totalImages = _existingImages.length + _selectedImages.length;
     final bool hasExistingImages = _existingImages.isNotEmpty;
     final bool hasNewImages = _selectedImages.isNotEmpty;
-    
+
     return SingleChildScrollView(
       padding: const EdgeInsets.all(20),
       child: Column(
@@ -1197,7 +1290,7 @@ class _AddTurfScreenState extends State<AddTurfScreen> with RouteAware {
             style: TextStyle(color: c.textSecondary),
           ),
           const SizedBox(height: 24),
-          
+
           InkWell(
             onTap: _pickImages,
             borderRadius: BorderRadius.circular(16),
@@ -1233,7 +1326,7 @@ class _AddTurfScreenState extends State<AddTurfScreen> with RouteAware {
             ),
           ),
           const SizedBox(height: 16),
-          
+
           // Show existing images from server (edit mode)
           if (hasExistingImages) ...[
             Text(
@@ -1275,7 +1368,8 @@ class _AddTurfScreenState extends State<AddTurfScreen> with RouteAware {
                             return Center(
                               child: CircularProgressIndicator(
                                 strokeWidth: 2,
-                                value: loadingProgress.expectedTotalBytes != null
+                                value: loadingProgress.expectedTotalBytes !=
+                                        null
                                     ? loadingProgress.cumulativeBytesLoaded /
                                         loadingProgress.expectedTotalBytes!
                                     : null,
@@ -1317,12 +1411,15 @@ class _AddTurfScreenState extends State<AddTurfScreen> with RouteAware {
                         ),
                       ),
                     ),
-                    if (image.isPrimary || (index == 0 && !_existingImages.any((i) => i.isPrimary)))
+                    if (image.isPrimary ||
+                        (index == 0 &&
+                            !_existingImages.any((i) => i.isPrimary)))
                       Positioned(
                         bottom: 4,
                         left: 4,
                         child: Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 6, vertical: 2),
                           decoration: BoxDecoration(
                             color: c.primary,
                             borderRadius: BorderRadius.circular(4),
@@ -1343,7 +1440,7 @@ class _AddTurfScreenState extends State<AddTurfScreen> with RouteAware {
             ),
             const SizedBox(height: 16),
           ],
-          
+
           // Show newly selected images
           if (hasNewImages) ...[
             Text(
@@ -1419,7 +1516,8 @@ class _AddTurfScreenState extends State<AddTurfScreen> with RouteAware {
                         bottom: 4,
                         left: 4,
                         child: Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 6, vertical: 2),
                           decoration: BoxDecoration(
                             color: c.primary,
                             borderRadius: BorderRadius.circular(4),
@@ -1439,9 +1537,9 @@ class _AddTurfScreenState extends State<AddTurfScreen> with RouteAware {
               },
             ),
           ],
-          
+
           const SizedBox(height: 24),
-          
+
           Container(
             padding: const EdgeInsets.all(16),
             decoration: BoxDecoration(

@@ -337,8 +337,9 @@ class _OwnerDashboardScreenState extends State<OwnerDashboardScreen>
                           if (value == 'settings') {
                             Navigator.pushNamed(context, AppRoutes.settings);
                           } else if (value == 'logout') {
-                            await authProvider.signOut();
-                            if (mounted) {
+                            final didLogout =
+                                await _confirmAndSignOut(authProvider);
+                            if (mounted && didLogout) {
                               Navigator.pushReplacementNamed(context, AppRoutes.loginSelection);
                             }
                           }
@@ -384,6 +385,59 @@ class _OwnerDashboardScreenState extends State<OwnerDashboardScreen>
   }
 
   bool _bookingsInitialized = false;
+
+  Future<bool> _confirmAndSignOut(AuthProvider authProvider) async {
+    final c = AppColors.of(context);
+    return await showDialog<bool>(
+          context: context,
+          barrierDismissible: false,
+          builder: (ctx) {
+            bool isLoading = false;
+
+            return StatefulBuilder(
+              builder: (dialogContext, setDialogState) {
+                return PopScope(
+                  canPop: false,
+                  child: AlertDialog(
+                    title: const Text('Logout'),
+                    content: const Text('Are you sure you want to logout?'),
+                    actions: [
+                      TextButton(
+                        onPressed: isLoading
+                            ? null
+                            : () => Navigator.pop(dialogContext, false),
+                        child: const Text('Cancel'),
+                      ),
+                      TextButton(
+                        onPressed: isLoading
+                            ? null
+                            : () async {
+                                setDialogState(() => isLoading = true);
+                                await authProvider.signOut();
+                                if (!mounted) return;
+
+                                if (authProvider.errorMessage != null) {
+                                  setDialogState(() => isLoading = false);
+                                  return;
+                                }
+
+                                if (Navigator.canPop(dialogContext)) {
+                                  Navigator.pop(dialogContext, true);
+                                }
+                              },
+                        child: isLoading
+                            ? const _BouncingBallLoader()
+                            : Text('Logout', style: TextStyle(color: c.error)),
+                      ),
+                    ],
+                  ),
+                );
+              },
+            );
+          },
+        ) ??
+        false;
+  }
 
   Widget _buildQuickStats() {
     return Consumer2<TurfProvider, BookingProvider>(
@@ -1080,4 +1134,57 @@ class _CarouselCardData {
     required this.bgColor,
     required this.subtitle,
   });
+}
+
+class _BouncingBallLoader extends StatefulWidget {
+  const _BouncingBallLoader();
+
+  @override
+  State<_BouncingBallLoader> createState() => _BouncingBallLoaderState();
+}
+
+class _BouncingBallLoaderState extends State<_BouncingBallLoader>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _controller;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 550),
+    )..repeat(reverse: true);
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: 40,
+      height: 20,
+      child: AnimatedBuilder(
+        animation: _controller,
+        builder: (context, child) {
+          final bounce = Curves.easeInOut.transform(_controller.value);
+          return Align(
+            alignment: Alignment(0.0, 1.0 - (bounce * 2.0)),
+            child: child,
+          );
+        },
+        child: Container(
+          width: 10,
+          height: 10,
+          decoration: const BoxDecoration(
+            color: Colors.red,
+            shape: BoxShape.circle,
+          ),
+        ),
+      ),
+    );
+  }
 }

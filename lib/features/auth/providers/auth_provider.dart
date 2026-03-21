@@ -59,7 +59,8 @@ class AuthProvider extends ChangeNotifier {
 
   /// Initialize auth state listener
   void _init() {
-    _authSubscription = _authService.authStateChanges.listen((AuthState state) async {
+    _authSubscription =
+        _authService.authStateChanges.listen((AuthState state) async {
       final user = state.session?.user;
       if (user != null) {
         await _loadUserProfile(user.id);
@@ -280,7 +281,7 @@ class AuthProvider extends ChangeNotifier {
       }
 
       await _authService.sendPhoneOtp(phone: phone);
-      
+
       _isLoading = false;
       notifyListeners();
       return true;
@@ -392,10 +393,42 @@ class AuthProvider extends ChangeNotifier {
       notifyListeners();
 
       await _authService.updateEmail(newEmail);
-      
-      // Update local profile
+
+      _isLoading = false;
+      notifyListeners();
+      return true;
+    } catch (e) {
+      _isLoading = false;
+      _errorMessage = e.toString();
+      notifyListeners();
+      return false;
+    }
+  }
+
+  /// Finalize email change only after verification completes.
+  Future<bool> confirmEmailUpdate(String expectedEmail) async {
+    try {
+      _isLoading = true;
+      _errorMessage = null;
+      notifyListeners();
+
+      final normalizedEmail = expectedEmail.trim().toLowerCase();
+
+      await _authService.refreshSession();
+      final currentAuthEmail =
+          _authService.currentUserEmail?.trim().toLowerCase();
+      if (currentAuthEmail != normalizedEmail) {
+        _isLoading = false;
+        _errorMessage =
+            'Verification pending. Please verify your new email and try again.';
+        notifyListeners();
+        return false;
+      }
+
       if (_currentOwner != null) {
-        await _dbService.updateOwner(_currentOwner!.uid, {'email': newEmail.trim().toLowerCase()});
+        await _dbService.updateOwner(_currentOwner!.uid, {
+          'email': normalizedEmail,
+        });
         await _loadUserProfile(_currentOwner!.uid);
       }
 
@@ -432,7 +465,7 @@ class AuthProvider extends ChangeNotifier {
 
   /// Get current email
   String? get currentEmail => _authService.currentUserEmail;
-  
+
   /// Get current phone
   String? get currentPhone => _authService.currentUserPhone;
 

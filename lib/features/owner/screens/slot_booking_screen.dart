@@ -3606,33 +3606,6 @@ class _BookingSuccessPopupState extends State<_BookingSuccessPopup>
           ],
         ),
 
-        // Mark Payment Button (for full advance)
-        if (_isFullPayment) ...[
-          const SizedBox(height: 16),
-          SizedBox(
-            width: double.infinity,
-            child: OutlinedButton.icon(
-              onPressed: _isMarkingPayment ? null : _markPaymentConfirmed,
-              icon: _isMarkingPayment
-                  ? const SizedBox(
-                      width: 16,
-                      height: 16,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    )
-                  : const Icon(Icons.verified, size: 18),
-              label: Text(_isMarkingPayment
-                  ? 'Confirming...'
-                  : 'Mark Payment Confirmed'),
-              style: OutlinedButton.styleFrom(
-                foregroundColor: c.success,
-                side: BorderSide(color: c.success),
-                padding: const EdgeInsets.symmetric(vertical: 12),
-                shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(12)),
-              ),
-            ),
-          ),
-        ],
       ],
     );
   }
