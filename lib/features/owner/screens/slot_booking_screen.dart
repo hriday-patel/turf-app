@@ -43,6 +43,7 @@ class _SlotBookingScreenState extends State<SlotBookingScreen>
   TurfModel? _selectedTurf;
   int _selectedNetNumber = 1;
   DateTime _selectedDate = DateTime.now();
+  DateTime _focusedDate = DateTime.now();
   bool _isSidebarVisible = false;
   int _loadSlotsGeneration = 0;
 
@@ -83,9 +84,38 @@ class _SlotBookingScreenState extends State<SlotBookingScreen>
   bool get _isEveningOpen => _eveningOpenStates[_currentStateKey] ?? true;
   bool get _isNightOpen => _nightOpenStates[_currentStateKey] ?? true;
 
+  DateTime _dateOnly(DateTime value) {
+    return DateTime(value.year, value.month, value.day);
+  }
+
+  DateTime get _minSelectableDate {
+    return _dateOnly(DateTime.now());
+  }
+
+  DateTime get _maxSelectableDate {
+    final min = _minSelectableDate;
+    return DateTime(min.year + 1, min.month, min.day)
+        .subtract(const Duration(days: 1));
+  }
+
+  bool _isDateWithinBookingRange(DateTime value) {
+    final day = _dateOnly(value);
+    return !day.isBefore(_minSelectableDate) && !day.isAfter(_maxSelectableDate);
+  }
+
+  DateTime _clampDateToBookingRange(DateTime value) {
+    final day = _dateOnly(value);
+    if (day.isBefore(_minSelectableDate)) return _minSelectableDate;
+    if (day.isAfter(_maxSelectableDate)) return _maxSelectableDate;
+    return day;
+  }
+
   @override
   void initState() {
     super.initState();
+    final today = _minSelectableDate;
+    _selectedDate = today;
+    _focusedDate = today;
     // Section entrance staggered animation (7 sections: venue, calendar, control, night, morning, afternoon, evening)
     _sectionAnimController = AnimationController(
       vsync: this,
@@ -363,8 +393,10 @@ class _SlotBookingScreenState extends State<SlotBookingScreen>
   }
 
   void _onDateSelected(DateTime date) {
+    final clampedDate = _clampDateToBookingRange(date);
     setState(() {
-      _selectedDate = date;
+      _selectedDate = clampedDate;
+      _focusedDate = clampedDate;
       // Note: We don't reset toggles - each date has its own state per turf+net
     });
     _loadSlots();
@@ -980,6 +1012,228 @@ class _SlotBookingScreenState extends State<SlotBookingScreen>
 
   Widget _buildDatePicker() {
     final c = AppColors.of(context);
+    const monthNames = [
+      'January',
+      'February',
+      'March',
+      'April',
+      'May',
+      'June',
+      'July',
+      'August',
+      'September',
+      'October',
+      'November',
+      'December',
+    ];
+
+    bool canNavigateMonth(int direction) {
+      final targetMonth = DateTime(_focusedDate.year, _focusedDate.month + direction, 1);
+      final minMonth = DateTime(_minSelectableDate.year, _minSelectableDate.month, 1);
+      final maxMonth = DateTime(_maxSelectableDate.year, _maxSelectableDate.month, 1);
+      return !targetMonth.isBefore(minMonth) && !targetMonth.isAfter(maxMonth);
+    }
+
+    DateTime buildMonthDay(DateTime monthBase, int preferredDay) {
+      final lastDayOfMonth = DateTime(monthBase.year, monthBase.month + 1, 0).day;
+      final safeDay = preferredDay > lastDayOfMonth ? lastDayOfMonth : preferredDay;
+      return _clampDateToBookingRange(
+          DateTime(monthBase.year, monthBase.month, safeDay));
+    }
+
+    Future<void> openMonthYearPicker() async {
+      final pickedDate = await showDialog<DateTime>(
+        context: context,
+        barrierDismissible: true,
+        builder: (dialogContext) {
+          DateTime tempSelectedDate = _selectedDate;
+          DateTime tempDisplayedMonth = DateTime(_focusedDate.year, _focusedDate.month, 1);
+
+          List<int> availableMonthsForYear(int year) {
+            final startMonth =
+                year == _minSelectableDate.year ? _minSelectableDate.month : 1;
+            final endMonth =
+                year == _maxSelectableDate.year ? _maxSelectableDate.month : 12;
+            return List<int>.generate(endMonth - startMonth + 1,
+                (index) => startMonth + index);
+          }
+
+          return StatefulBuilder(
+            builder: (context, setDialogState) {
+              final years = List<int>.generate(
+                _maxSelectableDate.year - _minSelectableDate.year + 1,
+                (index) => _minSelectableDate.year + index,
+              );
+              final allowedMonths = availableMonthsForYear(tempDisplayedMonth.year);
+              if (!allowedMonths.contains(tempDisplayedMonth.month)) {
+                tempDisplayedMonth = DateTime(
+                  tempDisplayedMonth.year,
+                  allowedMonths.first,
+                  1,
+                );
+                tempSelectedDate = _clampDateToBookingRange(DateTime(
+                  tempDisplayedMonth.year,
+                  tempDisplayedMonth.month,
+                  tempSelectedDate.day,
+                ));
+              }
+
+              return Dialog(
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(20)),
+                child: Container(
+                  padding: const EdgeInsets.all(18),
+                  decoration: BoxDecoration(
+                    color: c.surface,
+                    borderRadius: BorderRadius.circular(20),
+                  ),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Select Date',
+                        style: TextStyle(
+                          color: c.textPrimary,
+                          fontSize: 28,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                      const SizedBox(height: 14),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: DropdownButtonFormField<int>(
+                              value: tempDisplayedMonth.month,
+                              decoration: InputDecoration(
+                                filled: true,
+                                fillColor: c.glassFill,
+                                contentPadding: const EdgeInsets.symmetric(
+                                    horizontal: 12, vertical: 10),
+                                border: OutlineInputBorder(
+                                  borderRadius: BorderRadius.circular(10),
+                                  borderSide: BorderSide.none,
+                                ),
+                              ),
+                              items: allowedMonths
+                                  .map(
+                                    (month) => DropdownMenuItem<int>(
+                                      value: month,
+                                      child: Text(monthNames[month - 1]),
+                                    ),
+                                  )
+                                  .toList(),
+                              onChanged: (month) {
+                                if (month == null) return;
+                                setDialogState(() {
+                                  tempDisplayedMonth =
+                                      DateTime(tempDisplayedMonth.year, month, 1);
+                                  tempSelectedDate = _clampDateToBookingRange(
+                                    DateTime(
+                                      tempDisplayedMonth.year,
+                                      tempDisplayedMonth.month,
+                                      tempSelectedDate.day,
+                                    ),
+                                  );
+                                });
+                              },
+                            ),
+                          ),
+                          const SizedBox(width: 10),
+                          SizedBox(
+                            width: 110,
+                            child: DropdownButtonFormField<int>(
+                              value: tempDisplayedMonth.year,
+                              decoration: InputDecoration(
+                                filled: true,
+                                fillColor: c.glassFill,
+                                contentPadding: const EdgeInsets.symmetric(
+                                    horizontal: 12, vertical: 10),
+                                border: OutlineInputBorder(
+                                  borderRadius: BorderRadius.circular(10),
+                                  borderSide: BorderSide.none,
+                                ),
+                              ),
+                              items: years
+                                  .map(
+                                    (year) => DropdownMenuItem<int>(
+                                      value: year,
+                                      child: Text('$year'),
+                                    ),
+                                  )
+                                  .toList(),
+                              onChanged: (year) {
+                                if (year == null) return;
+                                setDialogState(() {
+                                  final months = availableMonthsForYear(year);
+                                  final month = months.contains(tempDisplayedMonth.month)
+                                      ? tempDisplayedMonth.month
+                                      : months.first;
+                                  tempDisplayedMonth = DateTime(year, month, 1);
+                                  tempSelectedDate = _clampDateToBookingRange(
+                                    DateTime(
+                                      tempDisplayedMonth.year,
+                                      tempDisplayedMonth.month,
+                                      tempSelectedDate.day,
+                                    ),
+                                  );
+                                });
+                              },
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 12),
+                      CalendarDatePicker(
+                        key: ValueKey(
+                            '${tempDisplayedMonth.year}-${tempDisplayedMonth.month}'),
+                        initialDate: tempSelectedDate,
+                        firstDate: _minSelectableDate,
+                        lastDate: _maxSelectableDate,
+                        currentDate: _dateOnly(DateTime.now()),
+                        onDateChanged: (date) {
+                          setDialogState(() {
+                            tempSelectedDate = _dateOnly(date);
+                            tempDisplayedMonth = DateTime(date.year, date.month, 1);
+                          });
+                        },
+                      ),
+                      const SizedBox(height: 8),
+                      SizedBox(
+                        width: double.infinity,
+                        child: ElevatedButton(
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: c.primary,
+                            foregroundColor: c.onPrimary,
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                            padding: const EdgeInsets.symmetric(vertical: 14),
+                          ),
+                          onPressed: () => Navigator.pop(dialogContext, tempSelectedDate),
+                          child: const Text(
+                            'Confirm',
+                            style: TextStyle(
+                              fontWeight: FontWeight.w700,
+                              fontSize: 16,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              );
+            },
+          );
+        },
+      );
+
+      if (pickedDate != null && mounted) {
+        _onDateSelected(pickedDate);
+      }
+    }
+
     return Container(
       margin: const EdgeInsets.fromLTRB(16, 8, 16, 14),
       padding: const EdgeInsets.all(14),
@@ -995,13 +1249,83 @@ class _SlotBookingScreenState extends State<SlotBookingScreen>
           ),
         ],
       ),
-      child: TableCalendar(
-        firstDay: DateTime.now().subtract(const Duration(days: 1)),
-        lastDay: DateTime.now().add(const Duration(days: 60)),
-        focusedDay: _selectedDate,
+      child: Column(
+        children: [
+          Row(
+            children: [
+              IconButton(
+                onPressed: canNavigateMonth(-1)
+                    ? () {
+                        final targetMonth =
+                            DateTime(_focusedDate.year, _focusedDate.month - 1, 1);
+                        final targetDate =
+                            buildMonthDay(targetMonth, _selectedDate.day);
+                        _onDateSelected(targetDate);
+                      }
+                    : null,
+                icon: const Icon(Icons.chevron_left),
+                color: c.textSecondary,
+              ),
+              Expanded(
+                child: InkWell(
+                  onTap: openMonthYearPicker,
+                  borderRadius: BorderRadius.circular(8),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 8),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          '${monthNames[_focusedDate.month - 1]} ${_focusedDate.year}',
+                          style: TextStyle(
+                            color: c.textSecondary,
+                            fontWeight: FontWeight.w600,
+                            fontSize: 17,
+                          ),
+                        ),
+                        const SizedBox(width: 6),
+                        Icon(
+                          Icons.keyboard_arrow_down_rounded,
+                          color: c.textSecondary,
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+              IconButton(
+                onPressed: canNavigateMonth(1)
+                    ? () {
+                        final targetMonth =
+                            DateTime(_focusedDate.year, _focusedDate.month + 1, 1);
+                        final targetDate =
+                            buildMonthDay(targetMonth, _selectedDate.day);
+                        _onDateSelected(targetDate);
+                      }
+                    : null,
+                icon: const Icon(Icons.chevron_right),
+                color: c.textSecondary,
+              ),
+            ],
+          ),
+          TableCalendar(
+        firstDay: _minSelectableDate,
+        lastDay: _maxSelectableDate,
+        focusedDay: _focusedDate,
         calendarFormat: CalendarFormat.week,
         selectedDayPredicate: (day) => isSameDay(day, _selectedDate),
-        onDaySelected: (selected, focused) => _onDateSelected(selected),
+        enabledDayPredicate: _isDateWithinBookingRange,
+        onPageChanged: (focusedDay) {
+          setState(() {
+            _focusedDate = _dateOnly(focusedDay);
+          });
+        },
+        onDaySelected: (selected, focused) {
+          if (!_isDateWithinBookingRange(selected)) return;
+          _onDateSelected(selected);
+        },
+        headerVisible: false,
         headerStyle: const HeaderStyle(
           formatButtonVisible: false,
           titleCentered: true,
@@ -1113,6 +1437,7 @@ class _SlotBookingScreenState extends State<SlotBookingScreen>
             );
           },
           defaultBuilder: (context, day, focusedDay) {
+            final isEnabled = _isDateWithinBookingRange(day);
             final dayLabel = const [
               'Mon',
               'Tue',
@@ -1131,7 +1456,9 @@ class _SlotBookingScreenState extends State<SlotBookingScreen>
                     Text(
                       dayLabel,
                       style: TextStyle(
-                        color: c.textHint,
+                        color: isEnabled
+                            ? c.textHint
+                            : c.textHint.withValues(alpha: 0.35),
                         fontSize: 11,
                         fontWeight: FontWeight.w500,
                       ),
@@ -1140,7 +1467,9 @@ class _SlotBookingScreenState extends State<SlotBookingScreen>
                     Text(
                       '${day.day}',
                       style: TextStyle(
-                        color: c.textSecondary,
+                        color: isEnabled
+                            ? c.textSecondary
+                            : c.textSecondary.withValues(alpha: 0.35),
                         fontSize: 15,
                       ),
                     ),
@@ -1150,6 +1479,8 @@ class _SlotBookingScreenState extends State<SlotBookingScreen>
             );
           },
         ),
+      ),
+        ],
       ),
     );
   }

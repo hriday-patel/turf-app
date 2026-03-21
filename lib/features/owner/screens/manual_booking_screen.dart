@@ -37,9 +37,31 @@ class _ManualBookingScreenState extends State<ManualBookingScreen> with RouteAwa
   BookingSource _bookingSource = BookingSource.phone;
   bool _isLoading = false;
 
+  DateTime _dateOnly(DateTime value) {
+    return DateTime(value.year, value.month, value.day);
+  }
+
+  DateTime get _minSelectableDate {
+    return _dateOnly(DateTime.now());
+  }
+
+  DateTime get _maxSelectableDate {
+    final min = _minSelectableDate;
+    return DateTime(min.year + 1, min.month, min.day)
+        .subtract(const Duration(days: 1));
+  }
+
+  DateTime _clampDateToBookingRange(DateTime value) {
+    final day = _dateOnly(value);
+    if (day.isBefore(_minSelectableDate)) return _minSelectableDate;
+    if (day.isAfter(_maxSelectableDate)) return _maxSelectableDate;
+    return day;
+  }
+
   @override
   void initState() {
     super.initState();
+    _selectedDate = _minSelectableDate;
     _loadSlots();
   }
   
@@ -241,14 +263,14 @@ class _ManualBookingScreenState extends State<ManualBookingScreen> with RouteAwa
     return Container(
       decoration: BoxDecoration(color: c.glassFill, borderRadius: BorderRadius.circular(12)),
       child: TableCalendar(
-        firstDay: DateTime.now(),
-        lastDay: DateTime.now().add(const Duration(days: 60)),
+        firstDay: _minSelectableDate,
+        lastDay: _maxSelectableDate,
         focusedDay: _selectedDate,
         calendarFormat: CalendarFormat.week,
         selectedDayPredicate: (day) => isSameDay(day, _selectedDate),
         onDaySelected: (selected, focused) {
           setState(() {
-            _selectedDate = selected;
+            _selectedDate = _clampDateToBookingRange(selected);
             _selectedSlotId = null;
           });
           _loadSlots();

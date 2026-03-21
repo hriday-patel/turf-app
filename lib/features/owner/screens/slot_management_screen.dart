@@ -26,6 +26,27 @@ class _SlotManagementScreenState extends State<SlotManagementScreen> with RouteA
   DateTime _selectedDate = DateTime.now();
   CalendarFormat _calendarFormat = CalendarFormat.week;
   int _selectedNetNumber = 1;
+
+  DateTime _dateOnly(DateTime value) {
+    return DateTime(value.year, value.month, value.day);
+  }
+
+  DateTime get _minSelectableDate {
+    return _dateOnly(DateTime.now());
+  }
+
+  DateTime get _maxSelectableDate {
+    final min = _minSelectableDate;
+    return DateTime(min.year + 1, min.month, min.day)
+        .subtract(const Duration(days: 1));
+  }
+
+  DateTime _clampDateToBookingRange(DateTime value) {
+    final day = _dateOnly(value);
+    if (day.isBefore(_minSelectableDate)) return _minSelectableDate;
+    if (day.isAfter(_maxSelectableDate)) return _maxSelectableDate;
+    return day;
+  }
   
   // Day closure toggles
   bool _isDayOpen = true;
@@ -37,6 +58,7 @@ class _SlotManagementScreenState extends State<SlotManagementScreen> with RouteA
   @override
   void initState() {
     super.initState();
+    _selectedDate = _minSelectableDate;
     // Always refresh turf data first, then load slots
     _refreshAndLoadSlots();
   }
@@ -204,7 +226,7 @@ class _SlotManagementScreenState extends State<SlotManagementScreen> with RouteA
 
   void _onDaySelected(DateTime selectedDay, DateTime focusedDay) {
     setState(() {
-      _selectedDate = selectedDay;
+      _selectedDate = _clampDateToBookingRange(selectedDay);
       // Reset toggles when changing date
       _isDayOpen = true;
       _isMorningOpen = true;
@@ -275,8 +297,8 @@ class _SlotManagementScreenState extends State<SlotManagementScreen> with RouteA
     return Container(
       color: c.glassFill,
       child: TableCalendar(
-        firstDay: DateTime.now().subtract(const Duration(days: 7)),
-        lastDay: DateTime.now().add(const Duration(days: 60)),
+        firstDay: _minSelectableDate,
+        lastDay: _maxSelectableDate,
         focusedDay: _selectedDate,
         calendarFormat: _calendarFormat,
         selectedDayPredicate: (day) => isSameDay(day, _selectedDate),
