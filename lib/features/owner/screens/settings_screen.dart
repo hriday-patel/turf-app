@@ -39,7 +39,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       if (!mounted) {
         return;
       }
-      authProvider.ensureOwnerReadyForDashboard(allowDeferredSignup: true);
+      authProvider.ensureOwnerReadyForDashboard();
       if (_emailController.text.trim().isEmpty) {
         _emailController.text = authProvider.ownerDisplayEmail;
       }

@@ -179,24 +179,16 @@ class _OwnerAuthScreenState extends State<OwnerAuthScreen>
   }
 
   Future<void> _handleGoogleLogin() async {
-    final authProvider = Provider.of<AuthProvider>(context, listen: false);
-    final success = await authProvider.signInOwnerWithGoogle(
-      allowCreate: false,
-    );
-
-    if (success && mounted) {
-      await _continueToOwnerDashboardOrPhoneGate(authProvider);
-    } else if (mounted && authProvider.errorMessage != null) {
-      _showError(authProvider.errorMessage!);
-    }
+    await _handleGoogleContinue();
   }
 
   Future<void> _handleGoogleSignup() async {
-    final authProvider = Provider.of<AuthProvider>(context, listen: false);
+    await _handleGoogleContinue();
+  }
 
-    final success = await authProvider.signInOwnerWithGoogle(
-      allowCreate: true,
-    );
+  Future<void> _handleGoogleContinue() async {
+    final authProvider = Provider.of<AuthProvider>(context, listen: false);
+    final success = await authProvider.signInOwnerWithGoogle();
 
     if (success && mounted) {
       await _continueToOwnerDashboardOrPhoneGate(authProvider);
@@ -298,9 +290,7 @@ class _OwnerAuthScreenState extends State<OwnerAuthScreen>
 
   Future<void> _continueToOwnerDashboardOrPhoneGate(
       AuthProvider authProvider) async {
-    final ready = await authProvider.ensureOwnerReadyForDashboard(
-      allowDeferredSignup: true,
-    );
+    final ready = await authProvider.ensureOwnerReadyForDashboard();
     if (!mounted) return;
 
     if (!ready) {

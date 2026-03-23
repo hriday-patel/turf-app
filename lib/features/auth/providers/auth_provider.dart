@@ -15,6 +15,50 @@ enum AuthStatus {
   error,
 }
 
+enum _OtpFlow {
+  none,
+  ownerLogin,
+  ownerPhoneVerification,
+  deferredOwnerSignup,
+  forgotPassword,
+}
+
+class _DeferredOwnerSignupData {
+  final String uid;
+  final String name;
+  final String email;
+  final String phone;
+  final String method;
+  final bool hasPassword;
+
+  const _DeferredOwnerSignupData({
+    required this.uid,
+    required this.name,
+    required this.email,
+    required this.phone,
+    required this.method,
+    required this.hasPassword,
+  });
+
+  _DeferredOwnerSignupData copyWith({
+    String? uid,
+    String? name,
+    String? email,
+    String? phone,
+    String? method,
+    bool? hasPassword,
+  }) {
+    return _DeferredOwnerSignupData(
+      uid: uid ?? this.uid,
+      name: name ?? this.name,
+      email: email ?? this.email,
+      phone: phone ?? this.phone,
+      method: method ?? this.method,
+      hasPassword: hasPassword ?? this.hasPassword,
+    );
+  }
+}
+
 /// Authentication Provider
 /// Manages user authentication state and operations
 class AuthProvider extends ChangeNotifier {
@@ -27,16 +71,10 @@ class AuthProvider extends ChangeNotifier {
   String? _errorMessage;
   bool _isLoading = false;
   String? _phoneNumber;
-  bool _isOwnerPhoneVerificationFlow = false;
+  _OtpFlow _otpFlow = _OtpFlow.none;
 
-  // Temporary signup state (deferred account creation until OTP verified)
-  String? _tempSignupName;
-  String? _tempSignupEmail;
-  String? _tempSignupPhone;
-  String? _tempSignupUid;
-  String _tempSignupMethod = 'email';
-  bool _tempSignupHasPassword = true;
-  bool _isInDeferredSignupFlow = false;
+  // Deferred owner signup data (account creation is completed only after OTP verify)
+  _DeferredOwnerSignupData? _deferredOwnerSignup;
 
   // Getters
   AuthStatus get authState => _authState;
@@ -47,9 +85,9 @@ class AuthProvider extends ChangeNotifier {
   bool get isAuthenticated => _authState == AuthStatus.authenticated;
   bool get isLoading => _authState == AuthStatus.loading || _isLoading;
   String? get currentUserId => _authService.currentUserId;
-  bool get isInDeferredSignupFlow => _isInDeferredSignupFlow;
-  String get deferredSignupPhone => _tempSignupPhone ?? '';
-  String get deferredSignupMethod => _tempSignupMethod;
+  bool get isInDeferredSignupFlow => _deferredOwnerSignup != null;
+  String get deferredSignupPhone => _deferredOwnerSignup?.phone ?? '';
+  String get deferredSignupMethod => _deferredOwnerSignup?.method ?? 'email';
   bool get isOwnerPhoneVerified {
     final owner = _currentOwner;
     if (owner == null) return false;
@@ -118,7 +156,7 @@ class AuthProvider extends ChangeNotifier {
       }
 
       // During deferred signup, keep session authenticated even before profile exists.
-      if (_isInDeferredSignupFlow && _tempSignupUid == uid) {
+      if (_deferredOwnerSignup != null && _deferredOwnerSignup!.uid == uid) {
         _authState = AuthStatus.authenticated;
         _currentOwner = null;
         _currentPlayer = null;
@@ -309,13 +347,14 @@ class AuthProvider extends ChangeNotifier {
 
       // For Owners: Defer database profile creation until OTP verified
       if (role == UserRole.owner) {
-        _tempSignupName = name;
-        _tempSignupEmail = email;
-        _tempSignupPhone = phone;
-        _tempSignupUid = uid;
-        _tempSignupMethod = 'email';
-        _tempSignupHasPassword = true;
-        _isInDeferredSignupFlow = true;
+        _deferredOwnerSignup = _DeferredOwnerSignupData(
+          uid: uid,
+          name: name,
+          email: email,
+          phone: phone,
+          method: 'email',
+          hasPassword: true,
+        );
 
         _authState = AuthStatus.authenticated;
         notifyListeners();
@@ -400,6 +439,34 @@ class AuthProvider extends ChangeNotifier {
     await _loadUserProfile(owner.uid);
   }
 
+  void _setOtpContext({
+    required String phone,
+    required _OtpFlow flow,
+  }) {
+    _phoneNumber = phone;
+    _otpFlow = flow;
+  }
+
+  void _clearOtpContext() {
+    _phoneNumber = null;
+    _otpFlow = _OtpFlow.none;
+  }
+
+  Future<void> _sendOtpForFlow(_OtpFlow flow, String phone) async {
+    switch (flow) {
+      case _OtpFlow.ownerPhoneVerification:
+      case _OtpFlow.deferredOwnerSignup:
+        await _authService.sendPhoneChangeOtp(phone: phone);
+        return;
+      case _OtpFlow.ownerLogin:
+      case _OtpFlow.forgotPassword:
+        await _authService.sendPhoneOtp(phone: phone);
+        return;
+      case _OtpFlow.none:
+        throw 'OTP flow is not initialized.';
+    }
+  }
+
   String _normalizedEmail(String? value) {
     return (value ?? '').trim().toLowerCase();
   }
@@ -410,7 +477,7 @@ class AuthProvider extends ChangeNotifier {
       return fromOwner;
     }
 
-    final fromTemp = _tempSignupName?.trim();
+    final fromTemp = _deferredOwnerSignup?.name.trim();
     if (fromTemp != null && fromTemp.isNotEmpty) {
       return fromTemp;
     }
@@ -423,7 +490,9 @@ class AuthProvider extends ChangeNotifier {
     }
 
     final normalizedEmail = _normalizedEmail(
-      emailFallback ?? _tempSignupEmail ?? _authService.currentUserEmail,
+      emailFallback ??
+          _deferredOwnerSignup?.email ??
+          _authService.currentUserEmail,
     );
     if (normalizedEmail.contains('@')) {
       final prefix = normalizedEmail.split('@').first.trim();
@@ -438,7 +507,6 @@ class AuthProvider extends ChangeNotifier {
   Future<bool> _recoverMissingOwnerProfile({
     required String uid,
     String? preferredPhone,
-    bool allowCreate = true,
   }) async {
     try {
       await _loadUserProfile(uid);
@@ -452,8 +520,8 @@ class AuthProvider extends ChangeNotifier {
         return false;
       }
 
-      final email =
-          _normalizedEmail(_tempSignupEmail ?? _authService.currentUserEmail);
+      final email = _normalizedEmail(
+          _deferredOwnerSignup?.email ?? _authService.currentUserEmail);
       if (email.isEmpty) {
         _errorMessage = 'Owner email not found. Please complete sign in again.';
         notifyListeners();
@@ -478,7 +546,7 @@ class AuthProvider extends ChangeNotifier {
       }
 
       final resolvedPhone = (preferredPhone ??
-              _tempSignupPhone ??
+              _deferredOwnerSignup?.phone ??
               _phoneNumber ??
               _authService.currentUserPhone ??
               '')
@@ -497,12 +565,6 @@ class AuthProvider extends ChangeNotifier {
         }
       }
 
-      if (!allowCreate) {
-        _errorMessage = 'Owner profile not found.';
-        notifyListeners();
-        return false;
-      }
-
       final ownerName = _resolveOwnerName(emailFallback: email);
       final phoneForCreate = resolvedPhone.isEmpty
           ? 'pending_${uid.substring(0, 8)}'
@@ -513,11 +575,12 @@ class AuthProvider extends ChangeNotifier {
         name: ownerName,
         email: email,
         phone: phoneForCreate,
-        hasPassword: _tempSignupHasPassword,
+        hasPassword: _deferredOwnerSignup?.hasPassword ?? true,
       );
 
       final methods = <String>{
-        if (_tempSignupMethod.trim().isNotEmpty) _tempSignupMethod.trim(),
+        if ((_deferredOwnerSignup?.method ?? '').trim().isNotEmpty)
+          _deferredOwnerSignup!.method.trim(),
         if (resolvedPhone.isNotEmpty) 'otp',
       };
       if (methods.isNotEmpty) {
@@ -546,9 +609,7 @@ class AuthProvider extends ChangeNotifier {
     }
   }
 
-  Future<bool> ensureOwnerReadyForDashboard({
-    bool allowDeferredSignup = true,
-  }) async {
+  Future<bool> ensureOwnerReadyForDashboard() async {
     final uid = _authService.currentUserId;
     if (uid == null || uid.isEmpty) {
       _errorMessage = 'Session expired. Please login again.';
@@ -556,14 +617,13 @@ class AuthProvider extends ChangeNotifier {
       return false;
     }
 
-    if (_isInDeferredSignupFlow) {
-      return allowDeferredSignup;
+    if (isInDeferredSignupFlow) {
+      return true;
     }
 
     final recovered = await _recoverMissingOwnerProfile(
       uid: uid,
       preferredPhone: _phoneNumber,
-      allowCreate: true,
     );
     if (!recovered || _currentOwner == null) {
       return false;
@@ -575,9 +635,7 @@ class AuthProvider extends ChangeNotifier {
   /// Owner-only Google OAuth login/signup.
   ///
   /// Missing owner profile auto-enters deferred signup flow.
-  Future<bool> signInOwnerWithGoogle({
-    required bool allowCreate,
-  }) async {
+  Future<bool> signInOwnerWithGoogle() async {
     try {
       _isLoading = true;
       _errorMessage = null;
@@ -647,23 +705,20 @@ class AuthProvider extends ChangeNotifier {
         throw 'Account already exists with email login. Please log in with email once, then try Google again.';
       }
 
-      if (!allowCreate && kDebugMode) {
-        debugPrint('Google login: owner not found, entering deferred signup.');
-      }
-
       // Defer owner profile creation until phone OTP verification succeeds.
       final resolvedName =
           _authService.currentUser?.userMetadata?['full_name'] as String? ??
               _authService.currentUser?.userMetadata?['name'] as String? ??
               email.split('@').first;
 
-      _tempSignupName = resolvedName.trim();
-      _tempSignupEmail = email;
-      _tempSignupPhone = '';
-      _tempSignupUid = uid;
-      _tempSignupMethod = 'google';
-      _tempSignupHasPassword = false;
-      _isInDeferredSignupFlow = true;
+      _deferredOwnerSignup = _DeferredOwnerSignupData(
+        uid: uid,
+        name: resolvedName.trim(),
+        email: email,
+        phone: '',
+        method: 'google',
+        hasPassword: false,
+      );
 
       _authState = AuthStatus.authenticated;
       _isLoading = false;
@@ -741,13 +796,12 @@ class AuthProvider extends ChangeNotifier {
     try {
       _isLoading = true;
       _errorMessage = null;
-      _phoneNumber = phone;
       notifyListeners();
 
       // Deferred signup also needs OTP while user is authenticated.
-      if (_isInDeferredSignupFlow && _authService.currentUserId != null) {
-        await _authService.sendPhoneChangeOtp(phone: phone);
-        _isOwnerPhoneVerificationFlow = true;
+      if (isInDeferredSignupFlow && _authService.currentUserId != null) {
+        _setOtpContext(phone: phone, flow: _OtpFlow.deferredOwnerSignup);
+        await _sendOtpForFlow(_otpFlow, phone);
         _isLoading = false;
         notifyListeners();
         return true;
@@ -755,8 +809,8 @@ class AuthProvider extends ChangeNotifier {
 
       // Authenticated owners must verify phone to unlock app access.
       if (_currentOwner != null && _authService.currentUserId != null) {
-        await _authService.sendPhoneChangeOtp(phone: phone);
-        _isOwnerPhoneVerificationFlow = true;
+        _setOtpContext(phone: phone, flow: _OtpFlow.ownerPhoneVerification);
+        await _sendOtpForFlow(_otpFlow, phone);
         _isLoading = false;
         notifyListeners();
         return true;
@@ -779,12 +833,13 @@ class AuthProvider extends ChangeNotifier {
       if (!ownerExistsByPhone) {
         _isLoading = false;
         _errorMessage = 'Phone number not registered. Please sign up.';
+        _clearOtpContext();
         notifyListeners();
         return false;
       }
 
-      await _authService.sendPhoneOtp(phone: phone);
-      _isOwnerPhoneVerificationFlow = false;
+      _setOtpContext(phone: phone, flow: _OtpFlow.ownerLogin);
+      await _sendOtpForFlow(_otpFlow, phone);
 
       _isLoading = false;
       notifyListeners();
@@ -811,17 +866,20 @@ class AuthProvider extends ChangeNotifier {
         throw 'Phone number is missing';
       }
 
-      // Verification flow for logged-in Owner (phone-link gate).
-      if (_isOwnerPhoneVerificationFlow) {
+      if (_otpFlow == _OtpFlow.ownerPhoneVerification ||
+          _otpFlow == _OtpFlow.deferredOwnerSignup) {
         await _authService.verifyPhoneChangeOtp(
           phone: _phoneNumber!,
           token: smsCode,
         );
 
-        if (_isInDeferredSignupFlow) {
+        if (_otpFlow == _OtpFlow.deferredOwnerSignup) {
           // Store verified phone and complete DB profile creation in dashboard step.
-          _tempSignupPhone = _phoneNumber!;
-          _isOwnerPhoneVerificationFlow = false;
+          final deferred = _deferredOwnerSignup;
+          if (deferred != null) {
+            _deferredOwnerSignup = deferred.copyWith(phone: _phoneNumber!);
+          }
+          _otpFlow = _OtpFlow.none;
           _isLoading = false;
           notifyListeners();
           return true;
@@ -832,34 +890,32 @@ class AuthProvider extends ChangeNotifier {
           throw 'Could not verify owner account.';
         }
 
-        final mergedMethods = _mergeAuthMethods(
-          existing: _currentOwner?.authMethods ?? const ['email'],
-          add: 'otp',
+        await _syncOwnerAfterOtp(
+          ownerId: ownerId,
+          verifiedPhone: _phoneNumber,
         );
 
-        await _dbService.updateOwner(ownerId, {
-          'phone': _phoneNumber!,
-          'auth_methods': mergedMethods,
-        });
-
-        await _loadUserProfile(ownerId);
-
-        if (_currentOwner == null) {
-          final recovered = await _recoverMissingOwnerProfile(
-            uid: ownerId,
-            preferredPhone: _phoneNumber,
-            allowCreate: true,
-          );
-          if (!recovered || _currentOwner == null) {
-            throw _errorMessage ??
-                'Owner profile could not be synced after verification.';
-          }
-        }
-
-        _isOwnerPhoneVerificationFlow = false;
+        _otpFlow = _OtpFlow.none;
         _isLoading = false;
         notifyListeners();
         return true;
+      }
+
+      if (_otpFlow == _OtpFlow.forgotPassword) {
+        await _authService.verifyPhoneOtp(
+          phone: _phoneNumber!,
+          token: smsCode,
+        );
+
+        _isForgotPasswordOtpVerified = true;
+        _otpFlow = _OtpFlow.none;
+        _isLoading = false;
+        notifyListeners();
+        return true;
+      }
+
+      if (_otpFlow != _OtpFlow.ownerLogin) {
+        throw 'OTP flow is invalid. Please request OTP again.';
       }
 
       final response = await _authService.verifyPhoneOtp(
@@ -878,7 +934,6 @@ class AuthProvider extends ChangeNotifier {
         final recovered = await _recoverMissingOwnerProfile(
           uid: uid,
           preferredPhone: _phoneNumber,
-          allowCreate: true,
         );
         if (!recovered || _currentOwner == null) {
           await signOut();
@@ -886,17 +941,9 @@ class AuthProvider extends ChangeNotifier {
         }
       }
 
-      // Update auth methods
-      final mergedMethods = _mergeAuthMethods(
-        existing: _currentOwner?.authMethods ?? const ['email'],
-        add: 'otp',
-      );
-      await _dbService.updateOwner(uid, {
-        'auth_methods': mergedMethods,
-      });
+      await _syncOwnerAfterOtp(ownerId: uid);
 
-      await _loadUserProfile(uid);
-
+      _otpFlow = _OtpFlow.none;
       _isLoading = false;
       notifyListeners();
       return true;
@@ -915,14 +962,15 @@ class AuthProvider extends ChangeNotifier {
   /// This creates the database profile that was deferred until OTP was verified
   Future<bool> completeDeferredOwnerSignup() async {
     try {
-      if (!_isInDeferredSignupFlow) {
+      final deferred = _deferredOwnerSignup;
+      if (deferred == null) {
         throw 'Not in deferred signup flow.';
       }
 
-      if (_tempSignupUid == null ||
-          _tempSignupName == null ||
-          _tempSignupEmail == null ||
-          _tempSignupPhone == null) {
+      if (deferred.uid.trim().isEmpty ||
+          deferred.name.trim().isEmpty ||
+          deferred.email.trim().isEmpty ||
+          deferred.phone.trim().isEmpty) {
         throw 'Signup information missing.';
       }
 
@@ -931,36 +979,30 @@ class AuthProvider extends ChangeNotifier {
 
       // Create owner profile in database
       await _dbService.createOwnerProfile(
-        id: _tempSignupUid!,
-        name: _tempSignupName!,
-        email: _tempSignupEmail!,
-        phone: _tempSignupPhone!,
-        hasPassword: _tempSignupHasPassword,
+        id: deferred.uid,
+        name: deferred.name,
+        email: deferred.email,
+        phone: deferred.phone,
+        hasPassword: deferred.hasPassword,
       );
 
       final mergedMethods = _mergeAuthMethods(
-        existing: [_tempSignupMethod],
+        existing: [deferred.method],
         add: 'otp',
       );
-      await _dbService.updateOwner(_tempSignupUid!, {
+      await _dbService.updateOwner(deferred.uid, {
         'auth_methods': mergedMethods,
       });
 
       // Load the created profile
-      await _loadUserProfile(_tempSignupUid!);
+      await _loadUserProfile(deferred.uid);
 
       if (_currentOwner == null) {
         throw 'Could not load owner profile after signup completion.';
       }
 
       // Clear temporary state
-      _tempSignupName = null;
-      _tempSignupEmail = null;
-      _tempSignupPhone = null;
-      _tempSignupUid = null;
-      _tempSignupMethod = 'email';
-      _tempSignupHasPassword = true;
-      _isInDeferredSignupFlow = false;
+      _clearDeferredOwnerSignup();
 
       _isLoading = false;
       notifyListeners();
@@ -982,16 +1024,8 @@ class AuthProvider extends ChangeNotifier {
       await _authService.signOut();
       _currentOwner = null;
       _currentPlayer = null;
-      _phoneNumber = null;
-      _isOwnerPhoneVerificationFlow = false;
-      // Clear deferred signup state
-      _tempSignupName = null;
-      _tempSignupEmail = null;
-      _tempSignupPhone = null;
-      _tempSignupUid = null;
-      _tempSignupMethod = 'email';
-      _tempSignupHasPassword = true;
-      _isInDeferredSignupFlow = false;
+      _clearOtpContext();
+      _clearDeferredOwnerSignup();
       _authState = AuthStatus.unauthenticated;
       notifyListeners();
     } catch (e) {
@@ -1006,15 +1040,8 @@ class AuthProvider extends ChangeNotifier {
   Future<void> cancelDeferredSignup() async {
     try {
       // Clear deferred signup state first
-      _tempSignupName = null;
-      _tempSignupEmail = null;
-      _tempSignupPhone = null;
-      _tempSignupUid = null;
-      _tempSignupMethod = 'email';
-      _tempSignupHasPassword = true;
-      _isInDeferredSignupFlow = false;
-      _isOwnerPhoneVerificationFlow = false;
-      _phoneNumber = null;
+      _clearDeferredOwnerSignup();
+      _clearOtpContext();
 
       // Sign out the Supabase auth user
       await _authService.signOut();
@@ -1116,11 +1143,11 @@ class AuthProvider extends ChangeNotifier {
       _errorMessage = null;
       notifyListeners();
 
-      // Use signInWithOtp for existing users
-      await _authService.sendPhoneOtp(phone: _forgotPasswordPhone!);
+      _setOtpContext(
+          phone: _forgotPasswordPhone!, flow: _OtpFlow.forgotPassword);
+      await _sendOtpForFlow(_otpFlow, _forgotPasswordPhone!);
 
       _isForgotPasswordOtpSent = true;
-      _phoneNumber = _forgotPasswordPhone;
       _isLoading = false;
       notifyListeners();
       return true;
@@ -1137,35 +1164,18 @@ class AuthProvider extends ChangeNotifier {
 
   /// Verify OTP for password reset flow
   Future<bool> verifyForgotPasswordOtp(String otp) async {
-    try {
-      if (_forgotPasswordPhone == null || _forgotPasswordPhone!.isEmpty) {
-        _errorMessage = 'Phone number not found. Please start over.';
-        notifyListeners();
-        return false;
-      }
-
-      _isLoading = true;
-      _errorMessage = null;
-      notifyListeners();
-
-      await _authService.verifyPhoneOtp(
-        phone: _forgotPasswordPhone!,
-        token: otp,
-      );
-
-      _isForgotPasswordOtpVerified = true;
-      _isLoading = false;
-      notifyListeners();
-      return true;
-    } catch (e) {
-      _isLoading = false;
-      _errorMessage = _friendlyAuthError(
-        e,
-        fallback: 'Invalid OTP. Please try again.',
-      );
+    if (_forgotPasswordPhone == null || _forgotPasswordPhone!.isEmpty) {
+      _errorMessage = 'Phone number not found. Please start over.';
       notifyListeners();
       return false;
     }
+
+    if (_otpFlow == _OtpFlow.none) {
+      _setOtpContext(
+          phone: _forgotPasswordPhone!, flow: _OtpFlow.forgotPassword);
+    }
+
+    return verifyOTP(otp);
   }
 
   /// Set new password after OTP verification (for forgot password flow)
@@ -1249,7 +1259,8 @@ class AuthProvider extends ChangeNotifier {
       final existingEmail = await _dbService.checkPhoneAlreadyRegistered(phone);
       if (existingEmail != null) {
         // Check if it's the current user's phone (for re-verification scenarios)
-        final currentEmail = _tempSignupEmail ?? _currentOwner?.email;
+        final currentEmail =
+            _deferredOwnerSignup?.email ?? _currentOwner?.email;
         if (currentEmail != null &&
             existingEmail.toLowerCase() == currentEmail.toLowerCase()) {
           return null; // Same user, phone is available for them
@@ -1451,7 +1462,8 @@ class AuthProvider extends ChangeNotifier {
     if (ownerEmail.isNotEmpty) {
       return ownerEmail;
     }
-    return _normalizedEmail(_tempSignupEmail ?? _authService.currentUserEmail);
+    return _normalizedEmail(
+        _deferredOwnerSignup?.email ?? _authService.currentUserEmail);
   }
 
   String get ownerDisplayPhone {
@@ -1459,11 +1471,46 @@ class AuthProvider extends ChangeNotifier {
     if (ownerPhone.isNotEmpty) {
       return ownerPhone;
     }
-    return (_tempSignupPhone ??
+    return (_deferredOwnerSignup?.phone ??
             _phoneNumber ??
             _authService.currentUserPhone ??
             '')
         .trim();
+  }
+
+  void _clearDeferredOwnerSignup() {
+    _deferredOwnerSignup = null;
+  }
+
+  Future<void> _syncOwnerAfterOtp({
+    required String ownerId,
+    String? verifiedPhone,
+  }) async {
+    final mergedMethods = _mergeAuthMethods(
+      existing: _currentOwner?.authMethods ?? const ['email'],
+      add: 'otp',
+    );
+
+    final payload = <String, dynamic>{
+      'auth_methods': mergedMethods,
+    };
+    if (verifiedPhone != null && verifiedPhone.trim().isNotEmpty) {
+      payload['phone'] = verifiedPhone.trim();
+    }
+
+    await _dbService.updateOwner(ownerId, payload);
+    await _loadUserProfile(ownerId);
+
+    if (_currentOwner == null) {
+      final recovered = await _recoverMissingOwnerProfile(
+        uid: ownerId,
+        preferredPhone: verifiedPhone ?? _phoneNumber,
+      );
+      if (!recovered || _currentOwner == null) {
+        throw _errorMessage ??
+            'Owner profile could not be synced after verification.';
+      }
+    }
   }
 
   /// Complete profile for player after phone OTP verification

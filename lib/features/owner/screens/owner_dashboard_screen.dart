@@ -91,7 +91,7 @@ class _OwnerDashboardScreenState extends State<OwnerDashboardScreen>
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       final authProvider = Provider.of<AuthProvider>(context, listen: false);
-      authProvider.ensureOwnerReadyForDashboard(allowDeferredSignup: true);
+      authProvider.ensureOwnerReadyForDashboard();
     });
 
     _loadData();
