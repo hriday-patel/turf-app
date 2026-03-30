@@ -20,6 +20,11 @@ class _OwnerAuthScreenState extends State<OwnerAuthScreen>
   late TabController _tabController;
   bool _isLoginWithEmail = true; // Toggle for Login Tab
   bool _otpSent = false;
+  bool _obscureLoginPassword = true;
+  bool _obscureSignupPassword = true;
+  bool _obscureSignupConfirmPassword = true;
+  bool _obscureForgotNewPassword = true;
+  bool _obscureForgotConfirmPassword = true;
 
   // Forgot password flow state
   bool _showForgotPassword = false;
@@ -205,6 +210,8 @@ class _OwnerAuthScreenState extends State<OwnerAuthScreen>
     setState(() {
       _showForgotPassword = true;
       _forgotPasswordStep = 0;
+      _obscureForgotNewPassword = true;
+      _obscureForgotConfirmPassword = true;
       _forgotEmailController.clear();
       _forgotOtpController.clear();
       _forgotNewPasswordController.clear();
@@ -513,9 +520,18 @@ class _OwnerAuthScreenState extends State<OwnerAuthScreen>
           const SizedBox(height: 16),
           TextFormField(
             controller: _loginPasswordController,
-            decoration:
-                _inputDecoration(context, 'Password', Icons.lock_outline),
-            obscureText: true,
+            decoration: _inputDecoration(
+              context,
+              'Password',
+              Icons.lock_outline,
+              suffixIcon: _passwordVisibilitySuffix(
+                isObscured: _obscureLoginPassword,
+                onPressed: () => setState(
+                  () => _obscureLoginPassword = !_obscureLoginPassword,
+                ),
+              ),
+            ),
+            obscureText: _obscureLoginPassword,
             validator: (val) {
               if (val == null || val.isEmpty) {
                 return 'Password is required';
@@ -671,9 +687,18 @@ class _OwnerAuthScreenState extends State<OwnerAuthScreen>
                 const SizedBox(height: 16),
                 TextFormField(
                   controller: _signupPasswordController,
-                  decoration:
-                      _inputDecoration(context, 'Password', Icons.lock_outline),
-                  obscureText: true,
+                  decoration: _inputDecoration(
+                    context,
+                    'Password',
+                    Icons.lock_outline,
+                    suffixIcon: _passwordVisibilitySuffix(
+                      isObscured: _obscureSignupPassword,
+                      onPressed: () => setState(
+                        () => _obscureSignupPassword = !_obscureSignupPassword,
+                      ),
+                    ),
+                  ),
+                  obscureText: _obscureSignupPassword,
                   validator: (val) {
                     if (val == null || val.isEmpty)
                       return 'Password is required';
@@ -687,8 +712,18 @@ class _OwnerAuthScreenState extends State<OwnerAuthScreen>
                 TextFormField(
                   controller: _signupConfirmPasswordController,
                   decoration: _inputDecoration(
-                      context, 'Confirm Password', Icons.lock_outline),
-                  obscureText: true,
+                    context,
+                    'Confirm Password',
+                    Icons.lock_outline,
+                    suffixIcon: _passwordVisibilitySuffix(
+                      isObscured: _obscureSignupConfirmPassword,
+                      onPressed: () => setState(
+                        () => _obscureSignupConfirmPassword =
+                            !_obscureSignupConfirmPassword,
+                      ),
+                    ),
+                  ),
+                  obscureText: _obscureSignupConfirmPassword,
                   validator: (val) {
                     if (val == null || val.isEmpty)
                       return 'Confirm password is required';
@@ -753,11 +788,16 @@ class _OwnerAuthScreenState extends State<OwnerAuthScreen>
   }
 
   InputDecoration _inputDecoration(
-      BuildContext context, String label, IconData icon) {
+    BuildContext context,
+    String label,
+    IconData icon, {
+    Widget? suffixIcon,
+  }) {
     final c = AppColors.of(context);
     return InputDecoration(
       labelText: label,
       prefixIcon: Icon(icon, color: c.textSecondary, size: 20),
+      suffixIcon: suffixIcon,
       filled: true,
       fillColor: c.glassFill,
       border: OutlineInputBorder(
@@ -774,6 +814,20 @@ class _OwnerAuthScreenState extends State<OwnerAuthScreen>
       ),
       contentPadding: const EdgeInsets.all(16),
       labelStyle: TextStyle(color: c.textSecondary),
+    );
+  }
+
+  Widget _passwordVisibilitySuffix({
+    required bool isObscured,
+    required VoidCallback onPressed,
+  }) {
+    final c = AppColors.of(context);
+    return IconButton(
+      icon: Icon(
+        isObscured ? Icons.visibility_off : Icons.visibility,
+        color: c.textSecondary,
+      ),
+      onPressed: onPressed,
     );
   }
 
@@ -1094,9 +1148,18 @@ class _OwnerAuthScreenState extends State<OwnerAuthScreen>
           const SizedBox(height: 24),
           TextFormField(
             controller: _forgotNewPasswordController,
-            decoration:
-                _inputDecoration(context, 'New Password', Icons.lock_outline),
-            obscureText: true,
+            decoration: _inputDecoration(
+              context,
+              'New Password',
+              Icons.lock_outline,
+              suffixIcon: _passwordVisibilitySuffix(
+                isObscured: _obscureForgotNewPassword,
+                onPressed: () => setState(
+                  () => _obscureForgotNewPassword = !_obscureForgotNewPassword,
+                ),
+              ),
+            ),
+            obscureText: _obscureForgotNewPassword,
             validator: (val) {
               if (val == null || val.isEmpty) return 'Password is required';
               if (!_isStrongPassword(val)) {
@@ -1109,8 +1172,18 @@ class _OwnerAuthScreenState extends State<OwnerAuthScreen>
           TextFormField(
             controller: _forgotConfirmPasswordController,
             decoration: _inputDecoration(
-                context, 'Confirm Password', Icons.lock_outline),
-            obscureText: true,
+              context,
+              'Confirm Password',
+              Icons.lock_outline,
+              suffixIcon: _passwordVisibilitySuffix(
+                isObscured: _obscureForgotConfirmPassword,
+                onPressed: () => setState(
+                  () => _obscureForgotConfirmPassword =
+                      !_obscureForgotConfirmPassword,
+                ),
+              ),
+            ),
+            obscureText: _obscureForgotConfirmPassword,
             validator: (val) {
               if (val == null || val.isEmpty)
                 return 'Confirm password is required';

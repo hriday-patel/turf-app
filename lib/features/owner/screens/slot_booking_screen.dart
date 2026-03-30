@@ -100,7 +100,8 @@ class _SlotBookingScreenState extends State<SlotBookingScreen>
 
   bool _isDateWithinBookingRange(DateTime value) {
     final day = _dateOnly(value);
-    return !day.isBefore(_minSelectableDate) && !day.isAfter(_maxSelectableDate);
+    return !day.isBefore(_minSelectableDate) &&
+        !day.isAfter(_maxSelectableDate);
   }
 
   DateTime _clampDateToBookingRange(DateTime value) {
@@ -284,9 +285,8 @@ class _SlotBookingScreenState extends State<SlotBookingScreen>
     final overridePrefix = '${_selectedTurf!.turfId}_${_selectedNetNumber}_';
     _manuallyOpenedSlots.removeWhere((key) => key.startsWith(overridePrefix));
     for (final slot in netSlots) {
-      if (slot.status == SlotStatus.available &&
-          (slot.blockReason == 'Day opened by owner' ||
-              slot.blockReason == 'Opened by owner')) {
+      if (slot.blockReason == 'Day opened by owner' ||
+          slot.blockReason == 'Opened by owner') {
         _manuallyOpenedSlots.add(_getSlotOverrideKey(slot.slotId));
       }
     }
@@ -1028,15 +1028,20 @@ class _SlotBookingScreenState extends State<SlotBookingScreen>
     ];
 
     bool canNavigateMonth(int direction) {
-      final targetMonth = DateTime(_focusedDate.year, _focusedDate.month + direction, 1);
-      final minMonth = DateTime(_minSelectableDate.year, _minSelectableDate.month, 1);
-      final maxMonth = DateTime(_maxSelectableDate.year, _maxSelectableDate.month, 1);
+      final targetMonth =
+          DateTime(_focusedDate.year, _focusedDate.month + direction, 1);
+      final minMonth =
+          DateTime(_minSelectableDate.year, _minSelectableDate.month, 1);
+      final maxMonth =
+          DateTime(_maxSelectableDate.year, _maxSelectableDate.month, 1);
       return !targetMonth.isBefore(minMonth) && !targetMonth.isAfter(maxMonth);
     }
 
     DateTime buildMonthDay(DateTime monthBase, int preferredDay) {
-      final lastDayOfMonth = DateTime(monthBase.year, monthBase.month + 1, 0).day;
-      final safeDay = preferredDay > lastDayOfMonth ? lastDayOfMonth : preferredDay;
+      final lastDayOfMonth =
+          DateTime(monthBase.year, monthBase.month + 1, 0).day;
+      final safeDay =
+          preferredDay > lastDayOfMonth ? lastDayOfMonth : preferredDay;
       return _clampDateToBookingRange(
           DateTime(monthBase.year, monthBase.month, safeDay));
     }
@@ -1047,15 +1052,16 @@ class _SlotBookingScreenState extends State<SlotBookingScreen>
         barrierDismissible: true,
         builder: (dialogContext) {
           DateTime tempSelectedDate = _selectedDate;
-          DateTime tempDisplayedMonth = DateTime(_focusedDate.year, _focusedDate.month, 1);
+          DateTime tempDisplayedMonth =
+              DateTime(_focusedDate.year, _focusedDate.month, 1);
 
           List<int> availableMonthsForYear(int year) {
             final startMonth =
                 year == _minSelectableDate.year ? _minSelectableDate.month : 1;
             final endMonth =
                 year == _maxSelectableDate.year ? _maxSelectableDate.month : 12;
-            return List<int>.generate(endMonth - startMonth + 1,
-                (index) => startMonth + index);
+            return List<int>.generate(
+                endMonth - startMonth + 1, (index) => startMonth + index);
           }
 
           return StatefulBuilder(
@@ -1064,7 +1070,8 @@ class _SlotBookingScreenState extends State<SlotBookingScreen>
                 _maxSelectableDate.year - _minSelectableDate.year + 1,
                 (index) => _minSelectableDate.year + index,
               );
-              final allowedMonths = availableMonthsForYear(tempDisplayedMonth.year);
+              final allowedMonths =
+                  availableMonthsForYear(tempDisplayedMonth.year);
               if (!allowedMonths.contains(tempDisplayedMonth.month)) {
                 tempDisplayedMonth = DateTime(
                   tempDisplayedMonth.year,
@@ -1126,8 +1133,8 @@ class _SlotBookingScreenState extends State<SlotBookingScreen>
                               onChanged: (month) {
                                 if (month == null) return;
                                 setDialogState(() {
-                                  tempDisplayedMonth =
-                                      DateTime(tempDisplayedMonth.year, month, 1);
+                                  tempDisplayedMonth = DateTime(
+                                      tempDisplayedMonth.year, month, 1);
                                   tempSelectedDate = _clampDateToBookingRange(
                                     DateTime(
                                       tempDisplayedMonth.year,
@@ -1166,9 +1173,10 @@ class _SlotBookingScreenState extends State<SlotBookingScreen>
                                 if (year == null) return;
                                 setDialogState(() {
                                   final months = availableMonthsForYear(year);
-                                  final month = months.contains(tempDisplayedMonth.month)
-                                      ? tempDisplayedMonth.month
-                                      : months.first;
+                                  final month =
+                                      months.contains(tempDisplayedMonth.month)
+                                          ? tempDisplayedMonth.month
+                                          : months.first;
                                   tempDisplayedMonth = DateTime(year, month, 1);
                                   tempSelectedDate = _clampDateToBookingRange(
                                     DateTime(
@@ -1194,7 +1202,8 @@ class _SlotBookingScreenState extends State<SlotBookingScreen>
                         onDateChanged: (date) {
                           setDialogState(() {
                             tempSelectedDate = _dateOnly(date);
-                            tempDisplayedMonth = DateTime(date.year, date.month, 1);
+                            tempDisplayedMonth =
+                                DateTime(date.year, date.month, 1);
                           });
                         },
                       ),
@@ -1210,7 +1219,8 @@ class _SlotBookingScreenState extends State<SlotBookingScreen>
                             ),
                             padding: const EdgeInsets.symmetric(vertical: 14),
                           ),
-                          onPressed: () => Navigator.pop(dialogContext, tempSelectedDate),
+                          onPressed: () =>
+                              Navigator.pop(dialogContext, tempSelectedDate),
                           child: const Text(
                             'Confirm',
                             style: TextStyle(
@@ -1256,8 +1266,8 @@ class _SlotBookingScreenState extends State<SlotBookingScreen>
               IconButton(
                 onPressed: canNavigateMonth(-1)
                     ? () {
-                        final targetMonth =
-                            DateTime(_focusedDate.year, _focusedDate.month - 1, 1);
+                        final targetMonth = DateTime(
+                            _focusedDate.year, _focusedDate.month - 1, 1);
                         final targetDate =
                             buildMonthDay(targetMonth, _selectedDate.day);
                         _onDateSelected(targetDate);
@@ -1297,8 +1307,8 @@ class _SlotBookingScreenState extends State<SlotBookingScreen>
               IconButton(
                 onPressed: canNavigateMonth(1)
                     ? () {
-                        final targetMonth =
-                            DateTime(_focusedDate.year, _focusedDate.month + 1, 1);
+                        final targetMonth = DateTime(
+                            _focusedDate.year, _focusedDate.month + 1, 1);
                         final targetDate =
                             buildMonthDay(targetMonth, _selectedDate.day);
                         _onDateSelected(targetDate);
@@ -1310,176 +1320,179 @@ class _SlotBookingScreenState extends State<SlotBookingScreen>
             ],
           ),
           TableCalendar(
-        firstDay: _minSelectableDate,
-        lastDay: _maxSelectableDate,
-        focusedDay: _focusedDate,
-        calendarFormat: CalendarFormat.week,
-        selectedDayPredicate: (day) => isSameDay(day, _selectedDate),
-        enabledDayPredicate: _isDateWithinBookingRange,
-        onPageChanged: (focusedDay) {
-          setState(() {
-            _focusedDate = _dateOnly(focusedDay);
-          });
-        },
-        onDaySelected: (selected, focused) {
-          if (!_isDateWithinBookingRange(selected)) return;
-          _onDateSelected(selected);
-        },
-        headerVisible: false,
-        headerStyle: const HeaderStyle(
-          formatButtonVisible: false,
-          titleCentered: true,
-          headerPadding: EdgeInsets.symmetric(vertical: 8),
-        ),
-        calendarStyle: CalendarStyle(
-          // Hide default decorations — custom builders handle selected/today
-          selectedDecoration: const BoxDecoration(color: Colors.transparent),
-          selectedTextStyle: const TextStyle(color: Colors.transparent),
-          todayDecoration: const BoxDecoration(color: Colors.transparent),
-          todayTextStyle: const TextStyle(color: Colors.transparent),
-          defaultTextStyle: TextStyle(color: c.textSecondary),
-          weekendTextStyle: TextStyle(color: c.textSecondary),
-          cellPadding: const EdgeInsets.symmetric(horizontal: 2, vertical: 2),
-        ),
-        daysOfWeekVisible: false,
-        calendarBuilders: CalendarBuilders(
-          selectedBuilder: (context, day, focusedDay) {
-            final dayLabel = const [
-              'Mon',
-              'Tue',
-              'Wed',
-              'Thu',
-              'Fri',
-              'Sat',
-              'Sun'
-            ][day.weekday - 1];
-            return Center(
-              child: AnimatedContainer(
-                duration: const Duration(milliseconds: 200),
-                curve: Curves.easeInOut,
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                decoration: BoxDecoration(
-                  color: c.primary,
-                  borderRadius: BorderRadius.circular(22),
-                ),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text(
-                      dayLabel,
-                      style: TextStyle(
-                        color: c.onPrimary,
-                        fontSize: 11,
-                        fontWeight: FontWeight.w500,
-                      ),
+            firstDay: _minSelectableDate,
+            lastDay: _maxSelectableDate,
+            focusedDay: _focusedDate,
+            calendarFormat: CalendarFormat.week,
+            selectedDayPredicate: (day) => isSameDay(day, _selectedDate),
+            enabledDayPredicate: _isDateWithinBookingRange,
+            onPageChanged: (focusedDay) {
+              setState(() {
+                _focusedDate = _dateOnly(focusedDay);
+              });
+            },
+            onDaySelected: (selected, focused) {
+              if (!_isDateWithinBookingRange(selected)) return;
+              _onDateSelected(selected);
+            },
+            headerVisible: false,
+            headerStyle: const HeaderStyle(
+              formatButtonVisible: false,
+              titleCentered: true,
+              headerPadding: EdgeInsets.symmetric(vertical: 8),
+            ),
+            calendarStyle: CalendarStyle(
+              // Hide default decorations — custom builders handle selected/today
+              selectedDecoration:
+                  const BoxDecoration(color: Colors.transparent),
+              selectedTextStyle: const TextStyle(color: Colors.transparent),
+              todayDecoration: const BoxDecoration(color: Colors.transparent),
+              todayTextStyle: const TextStyle(color: Colors.transparent),
+              defaultTextStyle: TextStyle(color: c.textSecondary),
+              weekendTextStyle: TextStyle(color: c.textSecondary),
+              cellPadding:
+                  const EdgeInsets.symmetric(horizontal: 2, vertical: 2),
+            ),
+            daysOfWeekVisible: false,
+            calendarBuilders: CalendarBuilders(
+              selectedBuilder: (context, day, focusedDay) {
+                final dayLabel = const [
+                  'Mon',
+                  'Tue',
+                  'Wed',
+                  'Thu',
+                  'Fri',
+                  'Sat',
+                  'Sun'
+                ][day.weekday - 1];
+                return Center(
+                  child: AnimatedContainer(
+                    duration: const Duration(milliseconds: 200),
+                    curve: Curves.easeInOut,
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                    decoration: BoxDecoration(
+                      color: c.primary,
+                      borderRadius: BorderRadius.circular(22),
                     ),
-                    const SizedBox(height: 2),
-                    Text(
-                      '${day.day}',
-                      style: TextStyle(
-                        color: c.onPrimary,
-                        fontWeight: FontWeight.bold,
-                        fontSize: 15,
-                      ),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          dayLabel,
+                          style: TextStyle(
+                            color: c.onPrimary,
+                            fontSize: 11,
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          '${day.day}',
+                          style: TextStyle(
+                            color: c.onPrimary,
+                            fontWeight: FontWeight.bold,
+                            fontSize: 15,
+                          ),
+                        ),
+                      ],
                     ),
-                  ],
-                ),
-              ),
-            );
-          },
-          todayBuilder: (context, day, focusedDay) {
-            final isSelected = isSameDay(day, _selectedDate);
-            final dayLabel = const [
-              'Mon',
-              'Tue',
-              'Wed',
-              'Thu',
-              'Fri',
-              'Sat',
-              'Sun'
-            ][day.weekday - 1];
-            return Center(
-              child: AnimatedContainer(
-                duration: const Duration(milliseconds: 200),
-                curve: Curves.easeInOut,
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                decoration: BoxDecoration(
-                  color: isSelected
-                      ? c.primary
-                      : c.primary.withValues(alpha: 0.12),
-                  borderRadius: BorderRadius.circular(22),
-                ),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text(
-                      dayLabel,
-                      style: TextStyle(
-                        color: isSelected ? c.onPrimary : c.primary,
-                        fontSize: 11,
-                        fontWeight: FontWeight.w500,
-                      ),
+                  ),
+                );
+              },
+              todayBuilder: (context, day, focusedDay) {
+                final isSelected = isSameDay(day, _selectedDate);
+                final dayLabel = const [
+                  'Mon',
+                  'Tue',
+                  'Wed',
+                  'Thu',
+                  'Fri',
+                  'Sat',
+                  'Sun'
+                ][day.weekday - 1];
+                return Center(
+                  child: AnimatedContainer(
+                    duration: const Duration(milliseconds: 200),
+                    curve: Curves.easeInOut,
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                    decoration: BoxDecoration(
+                      color: isSelected
+                          ? c.primary
+                          : c.primary.withValues(alpha: 0.12),
+                      borderRadius: BorderRadius.circular(22),
                     ),
-                    const SizedBox(height: 2),
-                    Text(
-                      '${day.day}',
-                      style: TextStyle(
-                        color: isSelected ? c.onPrimary : c.primary,
-                        fontWeight: FontWeight.w600,
-                        fontSize: 15,
-                      ),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          dayLabel,
+                          style: TextStyle(
+                            color: isSelected ? c.onPrimary : c.primary,
+                            fontSize: 11,
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          '${day.day}',
+                          style: TextStyle(
+                            color: isSelected ? c.onPrimary : c.primary,
+                            fontWeight: FontWeight.w600,
+                            fontSize: 15,
+                          ),
+                        ),
+                      ],
                     ),
-                  ],
-                ),
-              ),
-            );
-          },
-          defaultBuilder: (context, day, focusedDay) {
-            final isEnabled = _isDateWithinBookingRange(day);
-            final dayLabel = const [
-              'Mon',
-              'Tue',
-              'Wed',
-              'Thu',
-              'Fri',
-              'Sat',
-              'Sun'
-            ][day.weekday - 1];
-            return Center(
-              child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 6),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text(
-                      dayLabel,
-                      style: TextStyle(
-                        color: isEnabled
-                            ? c.textHint
-                            : c.textHint.withValues(alpha: 0.35),
-                        fontSize: 11,
-                        fontWeight: FontWeight.w500,
-                      ),
+                  ),
+                );
+              },
+              defaultBuilder: (context, day, focusedDay) {
+                final isEnabled = _isDateWithinBookingRange(day);
+                final dayLabel = const [
+                  'Mon',
+                  'Tue',
+                  'Wed',
+                  'Thu',
+                  'Fri',
+                  'Sat',
+                  'Sun'
+                ][day.weekday - 1];
+                return Center(
+                  child: Padding(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 4, vertical: 6),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          dayLabel,
+                          style: TextStyle(
+                            color: isEnabled
+                                ? c.textHint
+                                : c.textHint.withValues(alpha: 0.35),
+                            fontSize: 11,
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          '${day.day}',
+                          style: TextStyle(
+                            color: isEnabled
+                                ? c.textSecondary
+                                : c.textSecondary.withValues(alpha: 0.35),
+                            fontSize: 15,
+                          ),
+                        ),
+                      ],
                     ),
-                    const SizedBox(height: 2),
-                    Text(
-                      '${day.day}',
-                      style: TextStyle(
-                        color: isEnabled
-                            ? c.textSecondary
-                            : c.textSecondary.withValues(alpha: 0.35),
-                        fontSize: 15,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            );
-          },
-        ),
-      ),
+                  ),
+                );
+              },
+            ),
+          ),
         ],
       ),
     );
@@ -1980,12 +1993,6 @@ class _SlotBookingScreenState extends State<SlotBookingScreen>
       borderColor = c.border;
       textColor = c.textSecondary;
       statusLabel = 'Closed';
-    } else if (isManuallyOpened && (isBlocked || isPeriodClosed)) {
-      // Slot was closed but manually opened by owner
-      bgColor = c.successLight;
-      borderColor = c.success;
-      textColor = c.success;
-      statusLabel = 'Open';
     } else {
       bgColor = c.successLight;
       borderColor = c.success;
@@ -2009,8 +2016,8 @@ class _SlotBookingScreenState extends State<SlotBookingScreen>
           color: bgColor,
           borderRadius: BorderRadius.circular(16),
           border: Border.all(
-            color: isManuallyOpened && isPeriodClosed ? c.success : borderColor,
-            width: isManuallyOpened && isPeriodClosed ? 2 : 1,
+            color: borderColor,
+            width: 1,
           ),
           boxShadow: [
             BoxShadow(
@@ -2034,8 +2041,6 @@ class _SlotBookingScreenState extends State<SlotBookingScreen>
             const SizedBox(height: 4),
             if (effectivelyClosed)
               Icon(Icons.lock, size: 14, color: textColor)
-            else if (isManuallyOpened && (isBlocked || isPeriodClosed))
-              Icon(Icons.lock_open, size: 14, color: c.success)
             else
               Text(
                 '₹${slot.price.toInt()}',
@@ -2098,12 +2103,13 @@ class _SlotBookingScreenState extends State<SlotBookingScreen>
     final effectivelyClosed =
         (isBlocked || isPeriodClosed) && !isManuallyOpened;
 
-    // Slot is effectively available if it's available or manually opened
+    // Slot is effectively available only when status is AVAILABLE.
+    // Manual override can open a period/day-closed slot, but booking state wins.
     final effectivelyAvailable =
-        (isAvailable && !isPeriodClosed) || isManuallyOpened;
+        isAvailable && (!isPeriodClosed || isManuallyOpened);
 
-    // Show open option for closed slots that haven't been manually opened
-    final showManualOpenOption = effectivelyClosed;
+    // Show open option only for truly unbooked closed slots.
+    final showManualOpenOption = effectivelyClosed && !isBooked && !isReserved;
 
     showModalBottomSheet(
       context: context,
@@ -2154,31 +2160,6 @@ class _SlotBookingScreenState extends State<SlotBookingScreen>
                           fontSize: 12,
                           color: Colors.orange,
                           fontWeight: FontWeight.w600),
-                    ),
-                  ),
-                ],
-                if (isManuallyOpened) ...[
-                  const SizedBox(width: 12),
-                  Container(
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                    decoration: BoxDecoration(
-                      color: c.success.withValues(alpha: 0.1),
-                      borderRadius: BorderRadius.circular(6),
-                    ),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Icon(Icons.lock_open, size: 12, color: c.success),
-                        const SizedBox(width: 4),
-                        Text(
-                          'Manually Opened',
-                          style: TextStyle(
-                              fontSize: 12,
-                              color: c.success,
-                              fontWeight: FontWeight.w600),
-                        ),
-                      ],
                     ),
                   ),
                 ],
@@ -3936,7 +3917,6 @@ class _BookingSuccessPopupState extends State<_BookingSuccessPopup>
             ),
           ],
         ),
-
       ],
     );
   }

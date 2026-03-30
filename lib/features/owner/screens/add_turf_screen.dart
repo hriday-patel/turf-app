@@ -476,6 +476,35 @@ class _AddTurfScreenState extends State<AddTurfScreen> with RouteAware {
       }
 
       if (isEditing) {
+        final currentTurf = widget.editTurf!;
+        final hasNetsUnderRenovation =
+            currentTurf.renovationNetNumbers.isNotEmpty;
+        final isTurfTypeChanged = _selectedTurfType != currentTurf.turfType;
+        final isNetCountChanged = _numberOfNets != currentTurf.numberOfNets;
+
+        // Prevent structural changes while any net is under renovation.
+        if (hasNetsUnderRenovation &&
+            (isTurfTypeChanged || isNetCountChanged)) {
+          if (!mounted) return;
+          setState(() => _isLoading = false);
+          await showDialog<void>(
+            context: context,
+            builder: (dialogContext) => AlertDialog(
+              title: const Text('Update Not Allowed'),
+              content: const Text(
+                'Some nets under this turf are under renovation. You can\'t change turf type or number of nets right now.',
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(dialogContext),
+                  child: const Text('OK'),
+                ),
+              ],
+            ),
+          );
+          return;
+        }
+
         // Combine existing images with newly uploaded images
         // Filter out any invalid images and ensure proper primary flag
         final List<TurfImage> combinedImages = [
@@ -522,6 +551,8 @@ class _AddTurfScreenState extends State<AddTurfScreen> with RouteAware {
           'slot_duration_minutes': _slotDuration,
           'days_open': _selectedDays,
           'pricing_rules': pricingRules.toMap(),
+          // Preserve renovation state across normal turf detail updates.
+          'renovation_net_numbers': currentTurf.renovationNetNumbers,
           'images': allImages,
         };
 

@@ -430,24 +430,32 @@ class _OwnerDashboardScreenState extends State<OwnerDashboardScreen>
                                   final confirmed = await showDialog<bool>(
                                     context: context,
                                     builder: (ctx) => AlertDialog(
-                                      title: const Text('Go Back?'),
+                                      title: Text(
+                                        authProvider.isInDeferredSignupFlow
+                                            ? 'Cancel Signup?'
+                                            : 'Go Back?',
+                                      ),
                                       content: Text(
                                         authProvider.isInDeferredSignupFlow
-                                            ? 'Your signup will be cancelled. You\'ll need to sign up again to create an account.'
+                                            ? 'Confirm if you want to cancel now? Your current signup progress will be lost. You can sign up again anytime.'
                                             : 'You\'ll need to complete phone verification to access the dashboard.',
                                       ),
                                       actions: [
                                         TextButton(
                                           onPressed: () =>
                                               Navigator.pop(ctx, false),
-                                          child: const Text('Cancel'),
+                                          child: Text(
+                                            authProvider.isInDeferredSignupFlow
+                                                ? 'No'
+                                                : 'Cancel',
+                                          ),
                                         ),
                                         TextButton(
                                           onPressed: () =>
                                               Navigator.pop(ctx, true),
                                           child: Text(
                                             authProvider.isInDeferredSignupFlow
-                                                ? 'Cancel Signup'
+                                                ? 'Yes'
                                                 : 'Go Back to Login',
                                           ),
                                         ),
