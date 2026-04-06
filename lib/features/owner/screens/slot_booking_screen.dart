@@ -2,10 +2,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'package:table_calendar/table_calendar.dart';
-import 'package:url_launcher/url_launcher.dart';
 import '../../../config/colors.dart';
 import '../../../config/glass_widgets.dart';
 import '../../../core/constants/enums.dart';
+import '../../../core/services/whatsapp_service.dart';
 import '../../../data/models/turf_model.dart';
 import '../../../data/models/slot_model.dart';
 import '../../../app/routes.dart';
@@ -3342,7 +3342,7 @@ class _BookingDialogState extends State<_BookingDialog> {
 }
 
 /// Booking Success Popup - Complete Redesign
-/// Features: Auto-send messages via Admin WhatsApp, Receipt generation, Share options
+/// Features: Auto-send messages via WhatsApp Cloud API, Receipt generation, Share options
 class _BookingSuccessPopup extends StatefulWidget {
   final String bookingId;
   final TurfModel turf;
@@ -3374,9 +3374,6 @@ class _BookingSuccessPopup extends StatefulWidget {
 
 class _BookingSuccessPopupState extends State<_BookingSuccessPopup>
     with TickerProviderStateMixin {
-  // Admin WhatsApp number for all messages
-  static const String _adminWhatsAppNumber = '919929615076';
-
   late AnimationController _bounceController;
   late AnimationController _slideController;
   late Animation<double> _bounceAnimation;
@@ -4090,19 +4087,30 @@ See you at the turf! 🏏
 — *TurfBook*''';
   }
 
-  /// Send booking confirmation via Admin WhatsApp
+  /// Send booking confirmation via WhatsApp Cloud API
   Future<void> _sendBookingConfirmation() async {
     setState(() => _isSendingConfirmation = true);
 
     try {
       final message = _buildConfirmationMessage();
-      await _sendViaAdminWhatsApp(widget.customerPhone, message);
+      final sent = await WhatsAppService.sendTextMessage(
+        toPhone: widget.customerPhone,
+        message: message,
+      );
 
       if (mounted) {
         setState(() {
           _isSendingConfirmation = false;
-          _confirmationSent = true;
+          _confirmationSent = sent;
         });
+
+        if (!sent) {
+          _showPremiumToast(
+            context,
+            'Unable to send WhatsApp message. Verify Cloud API configuration.',
+            type: _ToastType.error,
+          );
+        }
       }
     } catch (e) {
       if (mounted) {
@@ -4112,46 +4120,27 @@ See you at the turf! 🏏
     }
   }
 
-  /// Send payment receipt via Admin WhatsApp
+  /// Send payment receipt via WhatsApp Cloud API
   Future<void> _sendPaymentReceipt() async {
     final message = _buildReceiptMessage();
-    await _sendViaAdminWhatsApp(widget.customerPhone, message);
-  }
+    final sent = await WhatsAppService.sendTextMessage(
+      toPhone: widget.customerPhone,
+      message: message,
+    );
 
-  /// Send message via Admin WhatsApp (opens WhatsApp with admin number)
-  /// All messages are sent from admin phone: +91 9929615076
-  Future<void> _sendViaAdminWhatsApp(
-      String customerPhone, String message) async {
-    // Clean customer phone number
-    String cleanCustomerPhone = customerPhone.replaceAll(RegExp(r'[^0-9]'), '');
-    if (!cleanCustomerPhone.startsWith('91') &&
-        cleanCustomerPhone.length == 10) {
-      cleanCustomerPhone = '91$cleanCustomerPhone';
-    }
+    if (!mounted) return;
 
-    // Append customer number to message so admin knows where to forward
-    final messageWithRecipient =
-        '$message\n\n📱 *Send to:* +$cleanCustomerPhone';
-
-    final encodedMessage = Uri.encodeComponent(messageWithRecipient);
-    // Open WhatsApp with admin number - message will be sent FROM admin's phone
-    final whatsappUrl =
-        'https://wa.me/$_adminWhatsAppNumber?text=$encodedMessage';
-
-    try {
-      final uri = Uri.parse(whatsappUrl);
-      if (await canLaunchUrl(uri)) {
-        await launchUrl(uri, mode: LaunchMode.externalApplication);
-      } else {
-        if (mounted) {
-          _showPremiumToast(context, 'Could not open WhatsApp',
-              type: _ToastType.error);
-        }
-      }
-    } catch (e) {
-      if (mounted) {
-        _showPremiumToast(context, 'Error: $e', type: _ToastType.error);
-      }
+    _showPremiumToast(
+      context,
+      sent
+          ? 'Receipt sent on WhatsApp'
+          : 'Unable to send receipt. Verify Cloud API configuration.',
+      type: sent ? _ToastType.success : _ToastType.error,
+    );
+    if (sent) {
+      setState(() {
+        _confirmationSent = true;
+      });
     }
   }
 

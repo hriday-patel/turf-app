@@ -11,14 +11,22 @@ import 'config/theme_provider.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  
+
   try {
+    final config = await SupabaseConfig.resolve();
+
+    if (!config.isConfigured) {
+      throw Exception(
+        '${SupabaseConfig.validationError(config)}. Start app with ${SupabaseConfig.runCommandHint}.',
+      );
+    }
+
     // Initialize Supabase
     await Supabase.initialize(
-      url: SupabaseConfig.url,
-      anonKey: SupabaseConfig.anonKey,
+      url: config.url,
+      anonKey: config.anonKey,
     );
-    
+
     runApp(
       MultiProvider(
         providers: [
@@ -55,7 +63,7 @@ void main() async {
                   ),
                   const SizedBox(height: 24),
                   const Text(
-                    'Please ensure SupabaseConfig has valid configuration.',
+                    'Please provide SUPABASE_URL and SUPABASE_ANON_KEY via --dart-define.\n\nPreferred:\n${SupabaseConfig.runFromFileHint}\n\nDirect:\n${SupabaseConfig.runCommandHint}\n\n${SupabaseConfig.restartHint}',
                     textAlign: TextAlign.center,
                   ),
                 ],

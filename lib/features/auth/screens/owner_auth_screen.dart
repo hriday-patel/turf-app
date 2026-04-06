@@ -119,7 +119,7 @@ class _OwnerAuthScreenState extends State<OwnerAuthScreen>
     if (success && mounted) {
       await _continueToOwnerDashboardOrPhoneGate(authProvider);
     } else if (mounted && authProvider.errorMessage != null) {
-      _showError(authProvider.errorMessage!);
+      await _showProviderError(authProvider);
     }
   }
 
@@ -140,7 +140,7 @@ class _OwnerAuthScreenState extends State<OwnerAuthScreen>
             : 'OTP sent to $phone',
       );
     } else if (mounted && authProvider.errorMessage != null) {
-      _showError(authProvider.errorMessage!);
+      await _showProviderError(authProvider);
     }
   }
 
@@ -157,7 +157,7 @@ class _OwnerAuthScreenState extends State<OwnerAuthScreen>
     if (success && mounted) {
       await _continueToOwnerDashboardOrPhoneGate(authProvider);
     } else if (mounted && authProvider.errorMessage != null) {
-      _showError(authProvider.errorMessage!);
+      await _showProviderError(authProvider);
     }
   }
 
@@ -179,7 +179,7 @@ class _OwnerAuthScreenState extends State<OwnerAuthScreen>
     if (success && mounted) {
       await _continueToOwnerDashboardOrPhoneGate(authProvider);
     } else if (mounted && authProvider.errorMessage != null) {
-      _showError(authProvider.errorMessage!);
+      await _showProviderError(authProvider);
     }
   }
 
@@ -198,7 +198,7 @@ class _OwnerAuthScreenState extends State<OwnerAuthScreen>
     if (success && mounted) {
       await _continueToOwnerDashboardOrPhoneGate(authProvider);
     } else if (mounted && authProvider.errorMessage != null) {
-      _showError(authProvider.errorMessage!);
+      await _showProviderError(authProvider);
     }
   }
 
@@ -297,6 +297,10 @@ class _OwnerAuthScreenState extends State<OwnerAuthScreen>
 
   Future<void> _continueToOwnerDashboardOrPhoneGate(
       AuthProvider authProvider) async {
+    final pendingCompleted =
+        await _completePendingOwnerSignupIfNeeded(authProvider);
+    if (!mounted || !pendingCompleted) return;
+
     final ready = await authProvider.ensureOwnerReadyForDashboard();
     if (!mounted) return;
 
@@ -309,6 +313,204 @@ class _OwnerAuthScreenState extends State<OwnerAuthScreen>
     }
 
     Navigator.pushReplacementNamed(context, AppRoutes.ownerDashboard);
+  }
+
+  Future<bool> _completePendingOwnerSignupIfNeeded(
+      AuthProvider authProvider) async {
+    if (!authProvider.isInDeferredSignupFlow ||
+        authProvider.pendingSignupRole != UserRole.owner) {
+      return true;
+    }
+
+    final phoneController = TextEditingController(
+      text: authProvider.deferredSignupPhone.replaceAll('+91', ''),
+    );
+    final otpController = TextEditingController();
+    bool otpSent = false;
+    bool busy = false;
+    String? dialogError;
+
+    final result = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) {
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            Future<void> sendOtp() async {
+              final phone = phoneController.text.trim();
+              if (!RegExp(r'^\d{10}$').hasMatch(phone)) {
+                setDialogState(() {
+                  dialogError = 'Enter a valid 10-digit phone number.';
+                });
+                return;
+              }
+
+              final normalizedPhone = '+91$phone';
+              setDialogState(() {
+                busy = true;
+                dialogError = null;
+              });
+
+              final phoneError =
+                  await authProvider.checkPhoneAvailability(normalizedPhone);
+              if (phoneError != null) {
+                setDialogState(() {
+                  busy = false;
+                  dialogError = phoneError;
+                });
+                return;
+              }
+
+              final sent = await authProvider.verifyPhone(normalizedPhone);
+              setDialogState(() {
+                busy = false;
+                otpSent = sent;
+                dialogError = sent
+                    ? null
+                    : (authProvider.errorMessage ??
+                        'Could not send OTP. Please try again.');
+              });
+            }
+
+            Future<void> verifyOtpAndFinalize() async {
+              final otp = otpController.text.trim();
+              if (!RegExp(r'^\d{6}$').hasMatch(otp)) {
+                setDialogState(() {
+                  dialogError = 'Enter a valid 6-digit OTP.';
+                });
+                return;
+              }
+
+              setDialogState(() {
+                busy = true;
+                dialogError = null;
+              });
+
+              final verified = await authProvider.verifyOTP(otp);
+              if (!verified) {
+                setDialogState(() {
+                  busy = false;
+                  dialogError = authProvider.errorMessage ??
+                      'OTP verification failed. Please try again.';
+                });
+                return;
+              }
+
+              if (authProvider.isInDeferredSignupFlow) {
+                final completed =
+                    await authProvider.completeDeferredOwnerSignup();
+                if (!completed) {
+                  setDialogState(() {
+                    busy = false;
+                    dialogError = authProvider.errorMessage ??
+                        'Could not complete signup. Please try again.';
+                  });
+                  return;
+                }
+              }
+
+              if (!dialogContext.mounted) return;
+              Navigator.of(dialogContext).pop(true);
+            }
+
+            return AlertDialog(
+              title: const Text('Complete Phone Verification'),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  TextField(
+                    controller: phoneController,
+                    keyboardType: TextInputType.phone,
+                    enabled: !otpSent && !busy,
+                    maxLength: 10,
+                    decoration: const InputDecoration(
+                      labelText: 'Phone Number',
+                      prefixText: '+91 ',
+                    ),
+                  ),
+                  if (otpSent)
+                    TextField(
+                      controller: otpController,
+                      keyboardType: TextInputType.number,
+                      enabled: !busy,
+                      maxLength: 6,
+                      decoration: const InputDecoration(
+                        labelText: 'Enter OTP',
+                      ),
+                    ),
+                  if (dialogError != null)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 8),
+                      child: Text(
+                        dialogError!,
+                        style: const TextStyle(color: Colors.red),
+                      ),
+                    ),
+                ],
+              ),
+              actions: [
+                TextButton(
+                  onPressed: busy
+                      ? null
+                      : () async {
+                          await authProvider.cancelDeferredSignup();
+                          if (!dialogContext.mounted) return;
+                          Navigator.of(dialogContext).pop(false);
+                        },
+                  child: const Text('Cancel'),
+                ),
+                ElevatedButton(
+                  onPressed: busy
+                      ? null
+                      : () async {
+                          if (!otpSent) {
+                            await sendOtp();
+                          } else {
+                            await verifyOtpAndFinalize();
+                          }
+                        },
+                  child: Text(busy
+                      ? 'Please wait...'
+                      : (otpSent ? 'Verify OTP' : 'Send OTP')),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+
+    phoneController.dispose();
+    otpController.dispose();
+    return result == true;
+  }
+
+  Future<void> _showProviderError(AuthProvider authProvider) async {
+    final blocking = authProvider.consumeBlockingDialogMessage();
+    if (blocking != null && blocking.trim().isNotEmpty) {
+      await _showBlockingDialog(blocking);
+      return;
+    }
+    final message = authProvider.errorMessage;
+    if (message != null && message.trim().isNotEmpty) {
+      _showError(message);
+    }
+  }
+
+  Future<void> _showBlockingDialog(String message) async {
+    await showDialog<void>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Action Required'),
+        content: Text(message),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('OK'),
+          ),
+        ],
+      ),
+    );
   }
 
   void _showError(String message) {
@@ -700,8 +902,9 @@ class _OwnerAuthScreenState extends State<OwnerAuthScreen>
                   ),
                   obscureText: _obscureSignupPassword,
                   validator: (val) {
-                    if (val == null || val.isEmpty)
+                    if (val == null || val.isEmpty) {
                       return 'Password is required';
+                    }
                     if (!_isStrongPassword(val)) {
                       return 'Min 8 chars, upper, lower, number, special';
                     }
@@ -725,10 +928,12 @@ class _OwnerAuthScreenState extends State<OwnerAuthScreen>
                   ),
                   obscureText: _obscureSignupConfirmPassword,
                   validator: (val) {
-                    if (val == null || val.isEmpty)
+                    if (val == null || val.isEmpty) {
                       return 'Confirm password is required';
-                    if (val != _signupPasswordController.text)
+                    }
+                    if (val != _signupPasswordController.text) {
                       return 'Passwords do not match';
+                    }
                     return null;
                   },
                 ),
@@ -1185,8 +1390,9 @@ class _OwnerAuthScreenState extends State<OwnerAuthScreen>
             ),
             obscureText: _obscureForgotConfirmPassword,
             validator: (val) {
-              if (val == null || val.isEmpty)
+              if (val == null || val.isEmpty) {
                 return 'Confirm password is required';
+              }
               if (val != _forgotNewPasswordController.text) {
                 return 'Passwords do not match';
               }

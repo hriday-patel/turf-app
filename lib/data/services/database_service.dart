@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import '../../core/constants/enums.dart';
 
 /// Database Service
 /// Handles all Supabase database operations using RPC functions
@@ -34,6 +35,7 @@ class DatabaseService {
     required String email,
     required String phone,
     bool hasPassword = false,
+    List<String> authMethods = const ['email'],
   }) async {
     try {
       await _client.rpc('create_owner_profile', params: {
@@ -42,6 +44,7 @@ class DatabaseService {
         'user_email': email.trim().toLowerCase(),
         'user_phone': phone.trim(),
         'user_has_password': hasPassword,
+        'user_auth_methods': authMethods,
       });
     } on PostgrestException catch (e) {
       if (e.message.contains('unique') || e.message.contains('duplicate')) {
@@ -64,6 +67,19 @@ class DatabaseService {
   Future<void> updateOwner(String ownerId, Map<String, dynamic> data) async {
     data['updated_at'] = DateTime.now().toIso8601String();
     await _client.from('owners').update(data).eq('id', ownerId);
+  }
+
+  /// Atomically sync verified phone and auth method after OTP verification.
+  Future<void> syncOwnerAfterOtp({
+    required String ownerId,
+    required String verifiedPhone,
+    String addMethod = 'otp',
+  }) async {
+    await _client.rpc('sync_owner_after_otp', params: {
+      'p_owner_id': ownerId,
+      'p_verified_phone': verifiedPhone.trim(),
+      'p_add_method': addMethod,
+    });
   }
 
   /// Get owner by phone
@@ -105,6 +121,8 @@ class DatabaseService {
     required String name,
     required String email,
     required String phone,
+    bool hasPassword = false,
+    List<String> authMethods = const ['email'],
   }) async {
     try {
       await _client.rpc('create_player_profile', params: {
@@ -112,6 +130,8 @@ class DatabaseService {
         'user_name': name.trim(),
         'user_email': email.trim().toLowerCase(),
         'user_phone': phone.trim(),
+        'user_has_password': hasPassword,
+        'user_auth_methods': authMethods,
       });
     } on PostgrestException catch (e) {
       if (e.message.contains('unique') || e.message.contains('duplicate')) {
@@ -121,6 +141,12 @@ class DatabaseService {
     }
   }
 
+  /// Update player profile metadata.
+  Future<void> updatePlayer(String playerId, Map<String, dynamic> data) async {
+    data['updated_at'] = DateTime.now().toIso8601String();
+    await _client.from('players').update(data).eq('id', playerId);
+  }
+
   /// Get player by ID
   Future<Map<String, dynamic>?> getPlayer(String playerId) async {
     return await _client
@@ -128,6 +154,94 @@ class DatabaseService {
         .select('*')
         .eq('id', playerId)
         .maybeSingle();
+  }
+
+  /// Get player by email.
+  Future<Map<String, dynamic>?> getPlayerByEmail(String email) async {
+    return await _client
+        .from('players')
+        .select('*')
+        .eq('email', email.trim().toLowerCase())
+        .maybeSingle();
+  }
+
+  /// Global phone availability check across owners, players and pending signups.
+  Future<Map<String, dynamic>> checkPhoneAvailabilityGlobal({
+    required String phone,
+    String? excludeUserId,
+  }) async {
+    final result = await _client.rpc('check_phone_availability', params: {
+      'p_phone': phone.trim(),
+      'p_exclude_user_id': excludeUserId,
+    });
+
+    final rows = (result is List) ? result : <dynamic>[];
+    if (rows.isEmpty) {
+      return {
+        'is_available': true,
+        'conflict_source': null,
+        'conflict_user_id': null,
+      };
+    }
+
+    final row = Map<String, dynamic>.from(rows.first as Map);
+    return {
+      'is_available': row['is_available'] == true,
+      'conflict_source': row['conflict_source']?.toString(),
+      'conflict_user_id': row['conflict_user_id']?.toString(),
+    };
+  }
+
+  /// Save or update pending signup state.
+  Future<void> upsertPendingSignup({
+    required String userId,
+    required UserRole role,
+    required String name,
+    required String email,
+    required String phone,
+    required String authMethod,
+    required bool hasPassword,
+  }) async {
+    await _client.rpc('upsert_pending_signup', params: {
+      'p_user_id': userId,
+      'p_role': role == UserRole.owner ? 'OWNER' : 'PLAYER',
+      'p_name': name.trim(),
+      'p_email': email.trim().toLowerCase(),
+      'p_phone': phone.trim(),
+      'p_auth_method': authMethod.trim().toLowerCase(),
+      'p_has_password': hasPassword,
+    });
+  }
+
+  /// Get pending signup for a user if any.
+  Future<Map<String, dynamic>?> getPendingSignup(String userId) async {
+    final result = await _client.rpc('get_pending_signup', params: {
+      'p_user_id': userId,
+    });
+
+    final rows = (result is List) ? result : <dynamic>[];
+    if (rows.isEmpty) return null;
+    return Map<String, dynamic>.from(rows.first as Map);
+  }
+
+  /// Finalize pending signup atomically after OTP verification.
+  Future<Map<String, dynamic>> finalizePendingSignup({
+    required String userId,
+    required String verifiedPhone,
+  }) async {
+    final result = await _client.rpc('finalize_pending_signup', params: {
+      'p_user_id': userId,
+      'p_verified_phone': verifiedPhone.trim(),
+    });
+
+    if (result is Map) {
+      return Map<String, dynamic>.from(result);
+    }
+
+    return {
+      'role': null,
+      'phone': verifiedPhone.trim(),
+    };
   }
 
   // =====================================================
@@ -729,6 +843,16 @@ class DatabaseService {
         .select('*')
         .eq('owner_id', ownerId)
         .eq('booking_date', date)
+        .order('start_time', ascending: true);
+  }
+
+  /// Get bookings created by a player account.
+  Future<List<Map<String, dynamic>>> getPlayerBookings(String userId) async {
+    return await _client
+        .from('bookings')
+        .select('*')
+        .eq('user_id', userId)
+        .order('booking_date', ascending: false)
         .order('start_time', ascending: true);
   }
 

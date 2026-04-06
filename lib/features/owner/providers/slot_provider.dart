@@ -5,6 +5,7 @@ import '../../../data/models/turf_model.dart';
 import '../../../data/services/database_service.dart';
 import '../../../core/constants/enums.dart';
 import '../../../core/utils/price_calculator.dart';
+import '../../../core/utils/slot_business_rules.dart';
 
 /// Slot Provider
 /// Manages slot generation, availability, and state
@@ -16,6 +17,7 @@ class SlotProvider extends ChangeNotifier {
   bool _isLoading = false;
   String? _errorMessage;
   StreamSubscription? _slotsSubscription;
+  int _loadRequestToken = 0;
 
   // Guards concurrent block/unblock to prevent optimistic-update race conditions
   final Set<String> _pendingSlotOps = {};
@@ -44,6 +46,7 @@ class SlotProvider extends ChangeNotifier {
   /// Load slots for a turf on a specific date
   /// Uses a direct query to fetch all slots reliably (no stream row-limit truncation).
   Future<void> loadSlots(String turfId, String date) async {
+    final requestToken = ++_loadRequestToken;
     _selectedDate = date;
     _isLoading = true;
     notifyListeners();
@@ -53,10 +56,12 @@ class SlotProvider extends ChangeNotifier {
 
     try {
       final rows = await _dbService.fetchTurfSlotsForDate(turfId, date);
+      if (requestToken != _loadRequestToken) return;
       _slots = rows.map((row) => SlotModel.fromMap(row)).toList();
       _isLoading = false;
       notifyListeners();
     } catch (error) {
+      if (requestToken != _loadRequestToken) return;
       _errorMessage = 'Failed to load slots: $error';
       _isLoading = false;
       notifyListeners();
@@ -108,17 +113,10 @@ class SlotProvider extends ChangeNotifier {
 
       final openMinutes = openHour * 60 + openMinute;
       final closeMinutesRaw = closeHour * 60 + closeMinute;
-      int closeMinutes;
-      if (closeMinutesRaw == 0) {
-        closeMinutes = 1440; // Midnight = end of day
-      } else if (closeMinutesRaw == openMinutes) {
-        // openTime == closeTime is invalid — treat as fully closed
-        closeMinutes = openMinutes;
-      } else if (closeMinutesRaw < openMinutes) {
-        closeMinutes = closeMinutesRaw + 1440; // Overnight wrap
-      } else {
-        closeMinutes = closeMinutesRaw;
-      }
+      final closeMinutes = SlotBusinessRules.normalizeCloseMinutes(
+        openMinutes: openMinutes,
+        closeMinutesRaw: closeMinutesRaw,
+      );
       final slotDuration = turf.slotDurationMinutes;
 
       final List<Map<String, dynamic>> slotsData = [];
@@ -186,18 +184,13 @@ class SlotProvider extends ChangeNotifier {
             isWithinOperatingHours = false;
           } else if (!isDayOpen || closeMinutes == openMinutes) {
             isWithinOperatingHours = false;
-          } else if (closeMinutes <= 1440) {
-            // Normal hours (e.g., 06:00-23:00)
-            isWithinOperatingHours =
-                slotStart >= openMinutes && slotEnd <= closeMinutes;
           } else {
-            // Overnight hours (e.g., 18:00-02:00 = open 1080, close 2520)
-            // Day portion: slot starts at or after open AND ends by midnight
-            final inDayPortion = slotStart >= openMinutes && slotEnd <= 1440;
-            // Night portion: slot is entirely before the close time (after midnight)
-            final inNightPortion = slotStart < (closeMinutes - 1440) &&
-                slotEnd <= (closeMinutes - 1440);
-            isWithinOperatingHours = inDayPortion || inNightPortion;
+            isWithinOperatingHours = SlotBusinessRules.isWithinOperatingHours(
+              openMinutes: openMinutes,
+              closeMinutes: closeMinutes,
+              slotStartMin: slotStart,
+              slotEndMin: slotEnd,
+            );
           }
 
           // Calculate price for this slot
@@ -303,16 +296,10 @@ class SlotProvider extends ChangeNotifier {
 
       final openMinutes = openHour * 60 + openMinute;
       final closeMinutesRaw = closeHour * 60 + closeMinute;
-      int closeMinutes;
-      if (closeMinutesRaw == 0) {
-        closeMinutes = 1440;
-      } else if (closeMinutesRaw == openMinutes) {
-        closeMinutes = openMinutes; // Invalid config — treat as fully closed
-      } else if (closeMinutesRaw < openMinutes) {
-        closeMinutes = closeMinutesRaw + 1440;
-      } else {
-        closeMinutes = closeMinutesRaw;
-      }
+      final closeMinutes = SlotBusinessRules.normalizeCloseMinutes(
+        openMinutes: openMinutes,
+        closeMinutesRaw: closeMinutesRaw,
+      );
 
       for (final slot in slots) {
         final status = (slot['status'] as String?) ?? 'AVAILABLE';
@@ -335,23 +322,18 @@ class SlotProvider extends ChangeNotifier {
         bool isWithinOperatingHours;
         if (closeMinutes == openMinutes) {
           isWithinOperatingHours = false;
-        } else if (closeMinutes <= 1440) {
-          isWithinOperatingHours =
-              slotStartMin >= openMinutes && slotEndAdj <= closeMinutes;
         } else {
-          final inDayPortion =
-              slotStartMin >= openMinutes && slotEndAdj <= 1440;
-          final inNightPortion = slotStartMin < (closeMinutes - 1440) &&
-              slotEndAdj <= (closeMinutes - 1440);
-          isWithinOperatingHours = inDayPortion || inNightPortion;
+          isWithinOperatingHours = SlotBusinessRules.isWithinOperatingHours(
+            openMinutes: openMinutes,
+            closeMinutes: closeMinutes,
+            slotStartMin: slotStartMin,
+            slotEndMin: slotEndAdj,
+          );
         }
 
-        final isManualOverride = blockReason == 'Day opened by owner' ||
-            blockReason == 'Opened by owner';
-        final isAutoClosed = blockReason == 'Closed' ||
-            blockReason == 'Outside operating hours' ||
-            blockReason == 'Turf closed' ||
-            blockReason == 'Under renovation';
+        final isManualOverride =
+            SlotBusinessRules.isManualOverrideReason(blockReason);
+        final isAutoClosed = SlotBusinessRules.isAutoClosedReason(blockReason);
 
         if (isNetForceClosed) {
           if (status == 'AVAILABLE' && !isManualOverride) {

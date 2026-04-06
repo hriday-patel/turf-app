@@ -1,5 +1,4 @@
 import 'dart:convert';
-import 'dart:typed_data';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:supabase_flutter/supabase_flutter.dart';
@@ -11,12 +10,33 @@ class StorageService {
   SupabaseClient get _client => Supabase.instance.client;
   final Uuid _uuid = const Uuid();
 
-  static const String _turfBucket = 'turf-images';
   static const String _profileBucket = 'profile-images';
-  
+  static const String _storageBucketValue = String.fromEnvironment(
+    'STORAGE_BUCKET',
+    defaultValue: 'turf-images',
+  );
+
   // API base URL for server-side uploads (bypasses CORS)
-  static const String _apiBaseUrl = 'https://turf-app-lyart.vercel.app/api';
-  
+  static const String _apiBaseUrl = String.fromEnvironment(
+    'API_BASE_URL',
+    defaultValue: 'https://turf-app-lyart.vercel.app/api',
+  );
+
+  static String get _turfBucket {
+    final raw = _storageBucketValue.trim();
+    if (raw.isEmpty || raw == 'STORAGE_BUCKET') {
+      return 'turf-images';
+    }
+
+    // Some deployments pass a full storage URL in STORAGE_BUCKET.
+    // Fall back to the expected bucket name in that case.
+    if (raw.contains('://') || raw.contains('/')) {
+      return 'turf-images';
+    }
+
+    return raw;
+  }
+
   /// Check if user is authenticated
   bool get isAuthenticated => _client.auth.currentSession != null;
 
@@ -34,9 +54,9 @@ class StorageService {
       debugPrint('Storage upload failed: User not authenticated');
       return null;
     }
-    
+
     final String name = fileName ?? '${_uuid.v4()}.jpg';
-    
+
     // Use API proxy on web, direct upload on mobile
     if (kIsWeb) {
       return await _uploadViaApi(
@@ -54,7 +74,7 @@ class StorageService {
       );
     }
   }
-  
+
   /// Upload via API proxy (for web - avoids CORS)
   Future<String?> _uploadViaApi({
     required Uint8List imageBytes,
@@ -63,29 +83,31 @@ class StorageService {
     int retryCount = 5,
   }) async {
     Exception? lastError;
-    
+
     // Sanitize turfId and fileName to prevent URI errors
     final sanitizedTurfId = _sanitizeForUri(turfId);
     final sanitizedFileName = _sanitizeFileName(fileName);
-    
+
     for (int attempt = 1; attempt <= retryCount; attempt++) {
       try {
         // Convert bytes to base64
         final String base64Image = base64Encode(imageBytes);
-        
-        final response = await http.post(
-          Uri.parse('$_apiBaseUrl/storage/upload-image'),
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: jsonEncode({
-            'imageData': base64Image,
-            'turfId': sanitizedTurfId,
-            'fileName': sanitizedFileName,
-            'contentType': 'image/jpeg',
-          }),
-        ).timeout(const Duration(seconds: 90));
-        
+
+        final response = await http
+            .post(
+              Uri.parse('$_apiBaseUrl/storage/upload-image'),
+              headers: {
+                'Content-Type': 'application/json',
+              },
+              body: jsonEncode({
+                'imageData': base64Image,
+                'turfId': sanitizedTurfId,
+                'fileName': sanitizedFileName,
+                'contentType': 'image/jpeg',
+              }),
+            )
+            .timeout(const Duration(seconds: 90));
+
         if (response.statusCode == 200) {
           final data = jsonDecode(response.body);
           if (data['success'] == true && data['url'] != null) {
@@ -112,7 +134,7 @@ class StorageService {
         lastError = e is Exception ? e : Exception(e.toString());
         final errorStr = e.toString().toLowerCase();
         debugPrint('API upload attempt $attempt failed: $e');
-        
+
         // Check for retryable errors
         final isRetryableError = errorStr.contains('failed to fetch') ||
             errorStr.contains('network') ||
@@ -121,10 +143,11 @@ class StorageService {
             errorStr.contains('socket') ||
             errorStr.contains('clientexception') ||
             errorStr.contains('uri');
-        
+
         if (attempt < retryCount && isRetryableError) {
           // Exponential backoff with jitter
-          final delay = Duration(milliseconds: (1000 * attempt) + (attempt * 200));
+          final delay =
+              Duration(milliseconds: (1000 * attempt) + (attempt * 200));
           await Future.delayed(delay);
           continue;
         } else if (!isRetryableError) {
@@ -133,9 +156,10 @@ class StorageService {
         }
       }
     }
-    
-    debugPrint('Failed to upload image via API after $retryCount attempts: $lastError');
-    
+
+    debugPrint(
+        'Failed to upload image via API after $retryCount attempts: $lastError');
+
     // Fallback to direct upload if API fails
     debugPrint('Attempting fallback to direct Supabase upload...');
     return await _uploadDirect(
@@ -145,24 +169,24 @@ class StorageService {
       retryCount: 3,
     );
   }
-  
+
   /// Sanitize string for use in URI paths
   String _sanitizeForUri(String input) {
     return input.replaceAll(RegExp(r'[^a-zA-Z0-9\-_]'), '_');
   }
-  
+
   /// Sanitize file name
   String _sanitizeFileName(String fileName) {
     // Remove invalid characters and ensure extension
     String sanitized = fileName.replaceAll(RegExp(r'[^a-zA-Z0-9\-_.\s]'), '_');
-    if (!sanitized.toLowerCase().endsWith('.jpg') && 
-        !sanitized.toLowerCase().endsWith('.jpeg') && 
+    if (!sanitized.toLowerCase().endsWith('.jpg') &&
+        !sanitized.toLowerCase().endsWith('.jpeg') &&
         !sanitized.toLowerCase().endsWith('.png')) {
       sanitized = '$sanitized.jpg';
     }
     return sanitized;
   }
-  
+
   /// Validate URL format
   static bool _isValidUrl(String url) {
     if (url.isEmpty) return false;
@@ -173,7 +197,7 @@ class StorageService {
       return false;
     }
   }
-  
+
   /// Upload directly to Supabase Storage (for mobile or as fallback)
   Future<String?> _uploadDirect({
     required Uint8List imageBytes,
@@ -182,26 +206,26 @@ class StorageService {
     int retryCount = 5,
   }) async {
     Exception? lastError;
-    
+
     // Ensure sanitized values
     final sanitizedTurfId = _sanitizeForUri(turfId);
     final sanitizedFileName = _sanitizeFileName(fileName);
-    
+
     for (int attempt = 1; attempt <= retryCount; attempt++) {
       try {
         final String path = 'turfs/$sanitizedTurfId/images/$sanitizedFileName';
-        
+
         await _client.storage.from(_turfBucket).uploadBinary(
-          path,
-          imageBytes,
-          fileOptions: const FileOptions(
-            contentType: 'image/jpeg',
-            upsert: true,
-          ),
-        );
+              path,
+              imageBytes,
+              fileOptions: const FileOptions(
+                contentType: 'image/jpeg',
+                upsert: true,
+              ),
+            );
 
         final url = _client.storage.from(_turfBucket).getPublicUrl(path);
-        
+
         // Validate the URL before returning
         if (_isValidUrl(url)) {
           debugPrint('Image uploaded successfully via direct: $url');
@@ -213,7 +237,7 @@ class StorageService {
         lastError = e is Exception ? e : Exception(e.toString());
         final errorStr = e.toString().toLowerCase();
         debugPrint('Direct upload attempt $attempt failed: $e');
-        
+
         // Check for retryable errors
         final isRetryableError = errorStr.contains('failed to fetch') ||
             errorStr.contains('network') ||
@@ -222,10 +246,11 @@ class StorageService {
             errorStr.contains('socket') ||
             errorStr.contains('postgres') ||
             errorStr.contains('uri');
-        
+
         if (attempt < retryCount && isRetryableError) {
           // Exponential backoff with jitter
-          final delay = Duration(milliseconds: (500 * attempt) + (attempt * 100));
+          final delay =
+              Duration(milliseconds: (500 * attempt) + (attempt * 100));
           await Future.delayed(delay);
           continue;
         } else if (!isRetryableError) {
@@ -233,8 +258,9 @@ class StorageService {
         }
       }
     }
-    
-    debugPrint('Failed to upload image directly after $retryCount attempts: $lastError');
+
+    debugPrint(
+        'Failed to upload image directly after $retryCount attempts: $lastError');
     return null;
   }
 
@@ -247,18 +273,18 @@ class StorageService {
   }) async {
     final List<String> urls = [];
     int failedCount = 0;
-    
+
     // Upload images sequentially to avoid overwhelming the server
     for (int i = 0; i < imageBytesList.length; i++) {
       try {
         debugPrint('Uploading image ${i + 1}/${imageBytesList.length}...');
-        
+
         final url = await uploadTurfImageBytes(
           imageBytes: imageBytesList[i],
           turfId: turfId,
           imageType: i == 0 ? 'primary' : 'secondary_$i',
         );
-        
+
         if (url != null) {
           urls.add(url);
           debugPrint('Image ${i + 1} uploaded successfully');
@@ -266,7 +292,7 @@ class StorageService {
           failedCount++;
           debugPrint('Image ${i + 1} failed to upload');
         }
-        
+
         // Small delay between uploads to prevent rate limiting
         if (i < imageBytesList.length - 1) {
           await Future.delayed(const Duration(milliseconds: 300));
@@ -276,9 +302,10 @@ class StorageService {
         failedCount++;
       }
     }
-    
-    debugPrint('Upload complete: ${urls.length}/${imageBytesList.length} succeeded');
-    
+
+    debugPrint(
+        'Upload complete: ${urls.length}/${imageBytesList.length} succeeded');
+
     return ImageUploadResult(
       urls: urls,
       successCount: urls.length,
@@ -308,7 +335,7 @@ class StorageService {
     try {
       final String fileName = 'profile_${_uuid.v4()}.jpg';
       final String path = 'users/$userId/$fileName';
-      
+
       await _client.storage.from(_profileBucket).uploadBinary(
             path,
             imageBytes,
@@ -355,14 +382,14 @@ class ImageUploadResult {
   final int successCount;
   final int failedCount;
   final int totalAttempted;
-  
+
   ImageUploadResult({
     required this.urls,
     required this.successCount,
     required this.failedCount,
     required this.totalAttempted,
   });
-  
+
   bool get allSucceeded => failedCount == 0;
   bool get allFailed => successCount == 0 && totalAttempted > 0;
   bool get someSucceeded => successCount > 0;

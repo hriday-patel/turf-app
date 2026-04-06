@@ -54,10 +54,13 @@ class AuthService {
   }
 
   /// Send OTP to phone number for login
-  Future<void> sendPhoneOtp({required String phone}) async {
+  Future<void> sendPhoneOtp({
+    required String phone,
+    bool shouldCreateUser = false,
+  }) async {
     await _client.auth.signInWithOtp(
       phone: phone,
-      shouldCreateUser: false,
+      shouldCreateUser: shouldCreateUser,
     );
   }
 

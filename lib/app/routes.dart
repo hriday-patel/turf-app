@@ -3,6 +3,7 @@ import '../features/auth/screens/splash_screen.dart';
 import '../features/auth/screens/login_selection_screen.dart';
 import '../features/auth/screens/owner_auth_screen.dart';
 import '../features/auth/screens/player_auth_screen.dart';
+import '../features/player/screens/player_home_screen.dart';
 import '../features/owner/screens/owner_dashboard_screen.dart';
 import '../features/owner/screens/add_turf_screen.dart';
 import '../features/owner/screens/my_turfs_screen.dart';
@@ -18,13 +19,15 @@ import '../features/owner/screens/analytics_screen.dart';
 
 class AppRoutes {
   // Route observer for tracking navigation
-  static final RouteObserver<PageRoute> routeObserver = RouteObserver<PageRoute>();
-  
+  static final RouteObserver<PageRoute> routeObserver =
+      RouteObserver<PageRoute>();
+
   // Route names
   static const String splash = '/';
   static const String loginSelection = '/login-selection';
   static const String ownerAuth = '/owner-auth';
   static const String ownerDashboard = '/owner-dashboard';
+  static const String playerHome = '/player-home';
   static const String addTurf = '/add-turf';
   static const String myTurfs = '/my-turfs';
   static const String turfDetail = '/turf-detail';
@@ -37,13 +40,14 @@ class AppRoutes {
   static const String playerAuth = '/player-auth';
   static const String settings = '/settings';
   static const String analytics = '/analytics';
-  
+
   // Routes map
   static Map<String, WidgetBuilder> routes = {
     splash: (context) => const SplashScreen(),
     loginSelection: (context) => const LoginSelectionScreen(),
     ownerAuth: (context) => const OwnerAuthScreen(),
     playerAuth: (context) => const PlayerAuthScreen(),
+    playerHome: (context) => const PlayerHomeScreen(),
     ownerDashboard: (context) => const OwnerDashboardScreen(),
     addTurf: (context) => const AddTurfScreen(),
     myTurfs: (context) => const MyTurfsScreen(),
@@ -53,7 +57,7 @@ class AppRoutes {
     settings: (context) => const SettingsScreen(),
     analytics: (context) => const AnalyticsScreen(),
   };
-  
+
   // For screens requiring arguments
   static Route<dynamic> onGenerateRoute(RouteSettings settings) {
     switch (settings.name) {
@@ -75,7 +79,8 @@ class AppRoutes {
       case bookingDetail:
         final args = settings.arguments as Map<String, dynamic>;
         return MaterialPageRoute(
-          builder: (context) => BookingDetailScreen(bookingId: args['bookingId']),
+          builder: (context) =>
+              BookingDetailScreen(bookingId: args['bookingId']),
         );
       default:
         return MaterialPageRoute(
@@ -84,4 +89,3 @@ class AppRoutes {
     }
   }
 }
-

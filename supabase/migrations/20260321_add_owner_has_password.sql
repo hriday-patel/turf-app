@@ -1,17 +1,19 @@
 -- Add has_password column to owners table
 -- This tracks whether a Google-only user has set a password, unlocking manual login option
 
-ALTER TABLE owners ADD COLUMN has_password BOOLEAN DEFAULT false;
+ALTER TABLE owners
+ADD COLUMN IF NOT EXISTS has_password BOOLEAN NOT NULL DEFAULT false;
 
 -- Create index for efficient queries on has_password
-CREATE INDEX idx_owners_has_password ON owners(has_password);
+CREATE INDEX IF NOT EXISTS idx_owners_has_password ON owners(has_password);
 
 -- Update existing records with manually-created accounts to have has_password=true
 -- (Owners created via manual signup always have password)
-UPDATE owners 
-SET has_password = true 
-WHERE auth_methods @> '["email"]'::jsonb 
-AND NOT auth_methods @> '["google"]'::jsonb;
+UPDATE owners
+SET has_password = true
+WHERE has_password = false
+	AND 'email' = ANY(auth_methods)
+	AND NOT ('google' = ANY(auth_methods));
 
 -- Update backend RPC to handle has_password parameter
 -- The create_owner_profile RPC should accept user_has_password parameter:

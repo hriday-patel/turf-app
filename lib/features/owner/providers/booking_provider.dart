@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../../../data/models/booking_model.dart';
 import '../../../data/services/database_service.dart';
 import '../../../core/constants/enums.dart';
+import '../../../core/utils/booking_flow_rules.dart';
 
 /// Booking Provider
 /// Manages booking state and operations
@@ -31,7 +32,15 @@ class BookingProvider extends ChangeNotifier {
 
   /// Load all bookings for owner's turfs
   void loadOwnerBookings(String ownerId, List<String> turfIds) {
-    if (turfIds.isEmpty) return;
+    if (turfIds.isEmpty) {
+      _bookingsSubscription?.cancel();
+      _bookings = [];
+      _todaysBookings = [];
+      _pendingPayments = [];
+      _recentBookings = [];
+      notifyListeners();
+      return;
+    }
 
     // Cancel previous subscription to prevent memory leaks
     _bookingsSubscription?.cancel();
@@ -67,8 +76,8 @@ class BookingProvider extends ChangeNotifier {
   /// Load pending payments
   Future<void> loadPendingPayments(List<String> turfIds) async {
     try {
-        final snapshot = await _dbService.getPendingPayments(turfIds);
-        _pendingPayments =
+      final snapshot = await _dbService.getPendingPayments(turfIds);
+      _pendingPayments =
           snapshot.map((row) => BookingModel.fromMap(row)).toList();
       notifyListeners();
     } catch (e) {
@@ -105,19 +114,21 @@ class BookingProvider extends ChangeNotifier {
     double advanceAmount = 0,
     int netNumber = 1,
   }) async {
+    _errorMessage = null;
     try {
       _isLoading = true;
       notifyListeners();
 
       // Determine payment status based on advance vs total
       // Clamp advance to not exceed total amount
-      final clampedAdvance = advanceAmount > amount ? amount : advanceAmount;
-      String paymentStatus;
-      if (amount > 0 && clampedAdvance >= amount) {
-        paymentStatus = 'PAID';
-      } else {
-        paymentStatus = 'PENDING';
-      }
+      final clampedAdvance = BookingFlowRules.clampAdvanceAmount(
+        totalAmount: amount,
+        advanceAmount: advanceAmount,
+      );
+      final paymentStatus = BookingFlowRules.paymentStatusForManualBooking(
+        totalAmount: amount,
+        advanceAmount: clampedAdvance,
+      );
 
       // Create booking data
       final data = {
@@ -145,15 +156,14 @@ class BookingProvider extends ChangeNotifier {
         slotId: slotId,
         bookingData: data,
       );
-      
-      _isLoading = false;
-      notifyListeners();
+
       return bookingId;
     } catch (e) {
-      _isLoading = false;
       _errorMessage = 'Failed to create booking: $e';
-      notifyListeners();
       return null;
+    } finally {
+      _isLoading = false;
+      notifyListeners();
     }
   }
 
@@ -172,6 +182,7 @@ class BookingProvider extends ChangeNotifier {
     required double amount,
     String? transactionId,
   }) async {
+    _errorMessage = null;
     try {
       _isLoading = true;
       notifyListeners();
@@ -189,9 +200,8 @@ class BookingProvider extends ChangeNotifier {
         'customer_phone': customerPhone,
         'booking_source': 'APP',
         'payment_mode': paymentMode.value,
-        'payment_status': paymentMode == PaymentMode.online 
-            ? 'PAID' 
-            : 'PAY_AT_TURF',
+        'payment_status':
+            paymentMode == PaymentMode.online ? 'PAID' : 'PAY_AT_TURF',
         'amount': amount,
         'transaction_id': transactionId,
         'booking_status': 'CONFIRMED',
@@ -202,22 +212,21 @@ class BookingProvider extends ChangeNotifier {
         slotId: slotId,
         bookingData: data,
       );
-      
-      _isLoading = false;
-      notifyListeners();
+
       return bookingId;
     } catch (e) {
-      _isLoading = false;
       _errorMessage = 'Failed to create booking: $e';
-      notifyListeners();
       return null;
+    } finally {
+      _isLoading = false;
+      notifyListeners();
     }
   }
 
   /// Cancel a booking (atomic operation with slot release)
   Future<bool> cancelBooking(
-    String bookingId, 
-    String slotId, 
+    String bookingId,
+    String slotId,
     String cancelledBy,
     String? reason,
   ) async {
@@ -229,7 +238,7 @@ class BookingProvider extends ChangeNotifier {
         cancelledBy: cancelledBy,
         reason: reason,
       );
-      
+
       if (success) {
         // Update local lists to reflect the cancellation immediately
         _bookings.removeWhere((b) => b.bookingId == bookingId);
@@ -240,7 +249,7 @@ class BookingProvider extends ChangeNotifier {
         _errorMessage = 'Failed to cancel booking';
         notifyListeners();
       }
-      
+
       return success;
     } catch (e) {
       _errorMessage = 'Failed to cancel booking: $e';
@@ -255,6 +264,17 @@ class BookingProvider extends ChangeNotifier {
       await _dbService.updateBooking(bookingId, {
         'payment_status': 'PAID',
       });
+
+      _bookings = _bookings
+          .map((booking) => booking.bookingId == bookingId
+              ? booking.copyWith(paymentStatus: PaymentStatus.paid)
+              : booking)
+          .toList(growable: false);
+      _pendingPayments = _pendingPayments
+          .where((booking) => booking.bookingId != bookingId)
+          .toList(growable: false);
+      notifyListeners();
+
       return true;
     } catch (e) {
       _errorMessage = 'Failed to update payment status: $e';

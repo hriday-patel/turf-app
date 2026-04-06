@@ -6,6 +6,7 @@ import '../../../data/services/database_service.dart';
 import '../../../data/models/owner_model.dart';
 import '../../../data/models/player_model.dart';
 import '../../../core/constants/enums.dart';
+import '../../../core/utils/auth_flow_rules.dart';
 
 enum AuthStatus {
   initial,
@@ -18,43 +19,56 @@ enum AuthStatus {
 enum _OtpFlow {
   none,
   ownerLogin,
+  playerLogin,
   ownerPhoneVerification,
-  deferredOwnerSignup,
+  deferredSignup,
   forgotPassword,
 }
 
 class _DeferredOwnerSignupData {
   final String uid;
+  final UserRole role;
   final String name;
   final String email;
   final String phone;
   final String method;
   final bool hasPassword;
+  final DateTime createdAt;
+  final bool resumed;
 
   const _DeferredOwnerSignupData({
     required this.uid,
+    required this.role,
     required this.name,
     required this.email,
     required this.phone,
     required this.method,
     required this.hasPassword,
+    required this.createdAt,
+    this.resumed = false,
   });
 
   _DeferredOwnerSignupData copyWith({
     String? uid,
+    UserRole? role,
     String? name,
     String? email,
     String? phone,
     String? method,
     bool? hasPassword,
+    DateTime? createdAt,
+    bool? resumed,
   }) {
     return _DeferredOwnerSignupData(
       uid: uid ?? this.uid,
+      role: role ?? this.role,
       name: name ?? this.name,
       email: email ?? this.email,
       phone: phone ?? this.phone,
       method: method ?? this.method,
       hasPassword: hasPassword ?? this.hasPassword,
+      createdAt: createdAt ?? this.createdAt,
+      resumed: resumed ?? this.resumed,
     );
   }
 }
@@ -69,11 +83,13 @@ class AuthProvider extends ChangeNotifier {
   OwnerModel? _currentOwner;
   PlayerModel? _currentPlayer;
   String? _errorMessage;
+  String? _blockingDialogMessage;
   bool _isLoading = false;
   String? _phoneNumber;
   _OtpFlow _otpFlow = _OtpFlow.none;
+  bool _isResumingPendingSignup = false;
 
-  // Deferred owner signup data (account creation is completed only after OTP verify)
+  // Pending signup data (account creation is completed only after OTP verify)
   _DeferredOwnerSignupData? _deferredOwnerSignup;
 
   // Getters
@@ -81,24 +97,37 @@ class AuthProvider extends ChangeNotifier {
   OwnerModel? get currentOwner => _currentOwner;
   PlayerModel? get currentPlayer => _currentPlayer;
   String? get errorMessage => _errorMessage;
+  String? get blockingDialogMessage => _blockingDialogMessage;
   String? get phoneNumber => _phoneNumber;
   bool get isAuthenticated => _authState == AuthStatus.authenticated;
   bool get isLoading => _authState == AuthStatus.loading || _isLoading;
   String? get currentUserId => _authService.currentUserId;
   bool get isInDeferredSignupFlow => _deferredOwnerSignup != null;
+  bool get hasPendingSignup => _deferredOwnerSignup != null;
+  bool get isResumingPendingSignup => _isResumingPendingSignup;
+  UserRole? get pendingSignupRole => _deferredOwnerSignup?.role;
   String get deferredSignupPhone => _deferredOwnerSignup?.phone ?? '';
   String get deferredSignupMethod => _deferredOwnerSignup?.method ?? 'email';
   bool get isOwnerPhoneVerified {
     final owner = _currentOwner;
     if (owner == null) return false;
-    final phone = owner.phone.trim();
-    return phone.isNotEmpty && !phone.startsWith('pending_');
+    return AuthFlowRules.isVerifiedPhone(owner.phone);
   }
 
   UserRole? get currentUserRole {
     if (_currentOwner != null) return UserRole.owner;
     if (_currentPlayer != null) return UserRole.player;
     return null;
+  }
+
+  String? consumeBlockingDialogMessage() {
+    final value = _blockingDialogMessage;
+    _blockingDialogMessage = null;
+    return value;
+  }
+
+  void _setBlockingDialogMessage(String message) {
+    _blockingDialogMessage = message;
   }
 
   StreamSubscription<AuthState>? _authSubscription;
@@ -124,6 +153,8 @@ class AuthProvider extends ChangeNotifier {
         _authState = AuthStatus.unauthenticated;
         _currentOwner = null;
         _currentPlayer = null;
+        _clearDeferredOwnerSignup();
+        _isResumingPendingSignup = false;
         notifyListeners();
       }
     });
@@ -140,6 +171,8 @@ class AuthProvider extends ChangeNotifier {
       if (ownerData != null) {
         _currentOwner = OwnerModel.fromMap(ownerData);
         _currentPlayer = null;
+        _clearDeferredOwnerSignup();
+        _isResumingPendingSignup = false;
         _authState = AuthStatus.authenticated;
         notifyListeners();
         return;
@@ -150,6 +183,8 @@ class AuthProvider extends ChangeNotifier {
       if (playerData != null) {
         _currentPlayer = PlayerModel.fromMap(playerData);
         _currentOwner = null;
+        _clearDeferredOwnerSignup();
+        _isResumingPendingSignup = false;
         _authState = AuthStatus.authenticated;
         notifyListeners();
         return;
@@ -164,10 +199,37 @@ class AuthProvider extends ChangeNotifier {
         return;
       }
 
+      final pending = await _dbService.getPendingSignup(uid);
+      if (pending != null) {
+        final roleRaw = (pending['role'] ?? '').toString().toUpperCase();
+        final role = roleRaw == 'OWNER' ? UserRole.owner : UserRole.player;
+        _deferredOwnerSignup = _DeferredOwnerSignupData(
+          uid: uid,
+          role: role,
+          name: (pending['name'] ?? '').toString(),
+          email: (pending['email'] ?? '').toString(),
+          phone: (pending['phone'] ?? '').toString(),
+          method: (pending['auth_method'] ?? 'email').toString(),
+          hasPassword: pending['has_password'] == true,
+          createdAt: pending['created_at'] is String
+              ? DateTime.parse(pending['created_at'] as String)
+              : DateTime.now(),
+          resumed: true,
+        );
+        _isResumingPendingSignup = true;
+        _authState = AuthStatus.authenticated;
+        _currentOwner = null;
+        _currentPlayer = null;
+        notifyListeners();
+        return;
+      }
+
       // No profile found - user is authenticated but not registered
       _authState = AuthStatus.unauthenticated;
       _currentOwner = null;
       _currentPlayer = null;
+      _clearDeferredOwnerSignup();
+      _isResumingPendingSignup = false;
       notifyListeners();
     } catch (e) {
       _authState = AuthStatus.error;
@@ -320,8 +382,8 @@ class AuthProvider extends ChangeNotifier {
     return fallback;
   }
 
-  /// Sign up new user (Owner or Player)
-  /// For Owners: Creates auth account but defers DB profile creation until OTP verified
+  /// Sign up new user (Owner or Player) into pending state.
+  /// Profile is finalized only after mandatory phone OTP verification.
   Future<bool> signUp({
     required String name,
     required String email,
@@ -332,11 +394,26 @@ class AuthProvider extends ChangeNotifier {
     try {
       _authState = AuthStatus.loading;
       _errorMessage = null;
+      _blockingDialogMessage = null;
       notifyListeners();
 
       // Validate password
       if (!_isStrongPassword(password)) {
         throw 'Password must be at least 8 characters with uppercase, lowercase, number, and special character.';
+      }
+
+      final normalizedPhone = phone.trim();
+      final availability = await _dbService.checkPhoneAvailabilityGlobal(
+        phone: normalizedPhone,
+      );
+      if (availability['is_available'] != true) {
+        _setBlockingDialogMessage(
+          'This phone number is already linked to another account. Please use a different number or log in with that account.',
+        );
+        _authState = AuthStatus.error;
+        _errorMessage = 'Phone number already linked to another account.';
+        notifyListeners();
+        return false;
       }
 
       // Create auth user first
@@ -345,43 +422,33 @@ class AuthProvider extends ChangeNotifier {
         password: password,
       );
 
-      // For Owners: Defer database profile creation until OTP verified
-      if (role == UserRole.owner) {
-        _deferredOwnerSignup = _DeferredOwnerSignupData(
-          uid: uid,
+      try {
+        await _dbService.upsertPendingSignup(
+          userId: uid,
+          role: role,
           name: name,
           email: email,
-          phone: phone,
-          method: 'email',
+          phone: normalizedPhone,
+          authMethod: 'email',
           hasPassword: true,
         );
 
-        _authState = AuthStatus.authenticated;
-        notifyListeners();
-        return true;
-      }
-
-      // For Players: Create profile immediately
-      try {
-        await _dbService.createPlayerProfile(
-          id: uid,
-          name: name,
-          email: email,
-          phone: phone,
-        );
-
-        _currentPlayer = PlayerModel(
+        _deferredOwnerSignup = _DeferredOwnerSignupData(
           uid: uid,
-          name: name,
-          email: email,
-          phone: phone,
-          role: UserRole.player,
+          role: role,
+          name: name.trim(),
+          email: _normalizedEmail(email),
+          phone: normalizedPhone,
+          method: 'email',
+          hasPassword: true,
           createdAt: DateTime.now(),
-          favoriteTurfs: [],
+          resumed: false,
         );
+        _isResumingPendingSignup = false;
         _currentOwner = null;
+        _currentPlayer = null;
       } catch (profileError) {
-        // Profile creation failed — sign out the orphaned auth user
+        // Pending state save failed — sign out the orphaned auth user
         try {
           await _authService.signOut();
         } catch (_) {}
@@ -406,11 +473,7 @@ class AuthProvider extends ChangeNotifier {
     required List<String> existing,
     required String add,
   }) {
-    final merged = <String>{
-      ...existing.where((m) => m.trim().isNotEmpty),
-      add,
-    };
-    return merged.toList()..sort();
+    return AuthFlowRules.mergeAuthMethods(existing: existing, add: add);
   }
 
   Future<String?> _waitForCurrentUserId({
@@ -452,15 +515,37 @@ class AuthProvider extends ChangeNotifier {
     _otpFlow = _OtpFlow.none;
   }
 
+  bool _isDeferredSignupExpired() {
+    final deferred = _deferredOwnerSignup;
+    if (deferred == null) return false;
+    return AuthFlowRules.isDeferredSignupExpired(deferred.createdAt);
+  }
+
+  bool _ensureDeferredSignupValid() {
+    if (!_isDeferredSignupExpired()) {
+      return true;
+    }
+    _clearDeferredOwnerSignup();
+    _errorMessage =
+        'Signup session expired. Please sign up again and verify phone OTP.';
+    notifyListeners();
+    return false;
+  }
+
   Future<void> _sendOtpForFlow(_OtpFlow flow, String phone) async {
     switch (flow) {
       case _OtpFlow.ownerPhoneVerification:
-      case _OtpFlow.deferredOwnerSignup:
+      case _OtpFlow.deferredSignup:
         await _authService.sendPhoneChangeOtp(phone: phone);
         return;
       case _OtpFlow.ownerLogin:
+        await _authService.sendPhoneOtp(phone: phone, shouldCreateUser: false);
+        return;
+      case _OtpFlow.playerLogin:
+        await _authService.sendPhoneOtp(phone: phone, shouldCreateUser: true);
+        return;
       case _OtpFlow.forgotPassword:
-        await _authService.sendPhoneOtp(phone: phone);
+        await _authService.sendPhoneOtp(phone: phone, shouldCreateUser: false);
         return;
       case _OtpFlow.none:
         throw 'OTP flow is not initialized.';
@@ -552,42 +637,42 @@ class AuthProvider extends ChangeNotifier {
               '')
           .trim();
 
-      if (resolvedPhone.isNotEmpty) {
-        final existingByPhone = await _dbService.getOwnerByPhone(resolvedPhone);
-        if (existingByPhone != null) {
-          final existingPhoneOwnerId = existingByPhone['id']?.toString();
-          if (existingPhoneOwnerId != uid) {
-            _errorMessage =
-                'This phone number is already registered with another account.';
-            notifyListeners();
-            return false;
-          }
+      if (resolvedPhone.isEmpty || resolvedPhone.startsWith('pending_')) {
+        _errorMessage =
+            'Phone verification is required before loading owner dashboard.';
+        notifyListeners();
+        return false;
+      }
+
+      final existingByPhone = await _dbService.getOwnerByPhone(resolvedPhone);
+      if (existingByPhone != null) {
+        final existingPhoneOwnerId = existingByPhone['id']?.toString();
+        if (existingPhoneOwnerId != uid) {
+          _errorMessage =
+              'This phone number is already registered with another account.';
+          notifyListeners();
+          return false;
         }
       }
 
       final ownerName = _resolveOwnerName(emailFallback: email);
-      final phoneForCreate = resolvedPhone.isEmpty
-          ? 'pending_${uid.substring(0, 8)}'
-          : resolvedPhone;
+
+      final authMethods = <String>{
+        if (_deferredOwnerSignup?.role == UserRole.owner &&
+            (_deferredOwnerSignup?.method ?? '').trim().isNotEmpty)
+          _deferredOwnerSignup!.method.trim(),
+        'otp',
+      }.toList()
+        ..sort();
 
       await _dbService.createOwnerProfile(
         id: uid,
         name: ownerName,
         email: email,
-        phone: phoneForCreate,
+        phone: resolvedPhone,
         hasPassword: _deferredOwnerSignup?.hasPassword ?? true,
+        authMethods: authMethods,
       );
-
-      final methods = <String>{
-        if ((_deferredOwnerSignup?.method ?? '').trim().isNotEmpty)
-          _deferredOwnerSignup!.method.trim(),
-        if (resolvedPhone.isNotEmpty) 'otp',
-      };
-      if (methods.isNotEmpty) {
-        await _dbService.updateOwner(uid, {
-          'auth_methods': methods.toList()..sort(),
-        });
-      }
 
       await _loadUserProfile(uid);
 
@@ -618,6 +703,15 @@ class AuthProvider extends ChangeNotifier {
     }
 
     if (isInDeferredSignupFlow) {
+      if (_deferredOwnerSignup?.role != UserRole.owner) {
+        _errorMessage = 'Pending signup belongs to a player account.';
+        notifyListeners();
+        return false;
+      }
+      return _ensureDeferredSignupValid();
+    }
+
+    if (_currentOwner != null) {
       return true;
     }
 
@@ -632,13 +726,11 @@ class AuthProvider extends ChangeNotifier {
     return true;
   }
 
-  /// Owner-only Google OAuth login/signup.
-  ///
-  /// Missing owner profile auto-enters deferred signup flow.
-  Future<bool> signInOwnerWithGoogle() async {
+  Future<bool> _signInWithGoogleForRole(UserRole role) async {
     try {
       _isLoading = true;
       _errorMessage = null;
+      _blockingDialogMessage = null;
       notifyListeners();
 
       final launched = await _authService.signInWithGoogle();
@@ -658,11 +750,14 @@ class AuthProvider extends ChangeNotifier {
 
       await _loadUserProfile(uid);
 
-      if (_currentPlayer != null) {
-        throw 'This account is not an owner account.';
+      if (role == UserRole.owner && _currentPlayer != null) {
+        throw 'This account is already linked as a player. Please continue with player login.';
+      }
+      if (role == UserRole.player && _currentOwner != null) {
+        throw 'This account is already linked as an owner. Please continue with owner login.';
       }
 
-      if (_currentOwner != null) {
+      if (role == UserRole.owner && _currentOwner != null) {
         await _ensureOwnerAuthMethods({'google'});
 
         final updatedName =
@@ -681,44 +776,78 @@ class AuthProvider extends ChangeNotifier {
         return true;
       }
 
-      final ownerByEmail = await _dbService.getOwnerByEmail(email);
-      if (ownerByEmail != null) {
-        final existingOwnerId = ownerByEmail['id'] as String?;
-        if (existingOwnerId == uid) {
-          final resolvedName =
-              _authService.currentUser?.userMetadata?['full_name'] as String? ??
-                  _authService.currentUser?.userMetadata?['name'] as String? ??
-                  email.split('@').first;
-          await _dbService.updateOwner(uid, {
-            'name': resolvedName.trim(),
-            'email': email,
-          });
-          await _loadUserProfile(uid);
-          await _ensureOwnerAuthMethods({'google'});
-          _isLoading = false;
-          notifyListeners();
-          return true;
-        }
+      if (role == UserRole.player && _currentPlayer != null) {
+        final methods = _mergeAuthMethods(
+          existing: _currentPlayer!.authMethods,
+          add: 'google',
+        );
+        await _dbService.updatePlayer(_currentPlayer!.uid, {
+          'auth_methods': methods,
+          'has_password': _currentPlayer!.hasPassword,
+        });
+        await _loadUserProfile(_currentPlayer!.uid);
 
-        // Supabase should normally auto-link identities for the same email.
-        // If IDs differ, keep session safe and ask user to use existing method.
-        throw 'Account already exists with email login. Please log in with email once, then try Google again.';
+        _isLoading = false;
+        notifyListeners();
+        return true;
       }
 
-      // Defer owner profile creation until phone OTP verification succeeds.
+      final ownerByEmail = await _dbService.getOwnerByEmail(email);
+      final playerByEmail = await _dbService.getPlayerByEmail(email);
+
+      if (role == UserRole.owner &&
+          playerByEmail != null &&
+          (playerByEmail['id']?.toString() ?? '') != uid) {
+        _setBlockingDialogMessage(
+          'This email is already linked to a player account. Please log in with the existing method first.',
+        );
+        throw 'Email is already linked to another account identity.';
+      }
+
+      if (role == UserRole.player &&
+          ownerByEmail != null &&
+          (ownerByEmail['id']?.toString() ?? '') != uid) {
+        _setBlockingDialogMessage(
+          'This email is already linked to an owner account. Please log in with the existing method first.',
+        );
+        throw 'Email is already linked to another account identity.';
+      }
+
+      // Missing profile: move to pending signup and enforce phone OTP.
       final resolvedName =
           _authService.currentUser?.userMetadata?['full_name'] as String? ??
               _authService.currentUser?.userMetadata?['name'] as String? ??
               email.split('@').first;
 
-      _deferredOwnerSignup = _DeferredOwnerSignupData(
-        uid: uid,
+      final existingPending = await _dbService.getPendingSignup(uid);
+      final pendingPhone = (existingPending?['phone'] ?? '').toString();
+      final pendingMethod = (existingPending?['auth_method'] ?? 'google')
+          .toString()
+          .trim()
+          .toLowerCase();
+
+      await _dbService.upsertPendingSignup(
+        userId: uid,
+        role: role,
         name: resolvedName.trim(),
         email: email,
-        phone: '',
-        method: 'google',
+        phone: pendingPhone,
+        authMethod: pendingMethod.isEmpty ? 'google' : pendingMethod,
         hasPassword: false,
       );
+
+      _deferredOwnerSignup = _DeferredOwnerSignupData(
+        uid: uid,
+        role: role,
+        name: resolvedName.trim(),
+        email: email,
+        phone: pendingPhone,
+        method: pendingMethod.isEmpty ? 'google' : pendingMethod,
+        hasPassword: false,
+        createdAt: DateTime.now(),
+        resumed: existingPending != null,
+      );
+      _isResumingPendingSignup = existingPending != null;
 
       _authState = AuthStatus.authenticated;
       _isLoading = false;
@@ -736,6 +865,16 @@ class AuthProvider extends ChangeNotifier {
     }
   }
 
+  /// Owner-only Google OAuth login/signup.
+  Future<bool> signInOwnerWithGoogle() async {
+    return _signInWithGoogleForRole(UserRole.owner);
+  }
+
+  /// Player Google OAuth login/signup.
+  Future<bool> signInPlayerWithGoogle() async {
+    return _signInWithGoogleForRole(UserRole.player);
+  }
+
   /// Sign in existing user (Email/Password)
   Future<bool> signIn({
     required String email,
@@ -744,6 +883,7 @@ class AuthProvider extends ChangeNotifier {
     try {
       _authState = AuthStatus.loading;
       _errorMessage = null;
+      _blockingDialogMessage = null;
       notifyListeners();
 
       final uid = await _authService.signInWithEmail(
@@ -754,8 +894,9 @@ class AuthProvider extends ChangeNotifier {
       await _loadUserProfile(uid);
 
       if (_currentOwner == null) {
+        final loggedInAsPlayer = _currentPlayer != null;
         await signOut();
-        if (_currentPlayer != null) {
+        if (loggedInAsPlayer) {
           throw 'This account is not an owner account.';
         }
         throw 'Owner account not found. Please sign up.';
@@ -791,17 +932,112 @@ class AuthProvider extends ChangeNotifier {
     }
   }
 
-  /// Send OTP to phone number (for login only)
+  /// Player email/password login.
+  Future<bool> signInPlayer({
+    required String email,
+    required String password,
+  }) async {
+    try {
+      _authState = AuthStatus.loading;
+      _errorMessage = null;
+      _blockingDialogMessage = null;
+      notifyListeners();
+
+      final uid = await _authService.signInWithEmail(
+        email: email,
+        password: password,
+      );
+
+      await _loadUserProfile(uid);
+
+      if (_currentPlayer == null) {
+        final loggedInAsOwner = _currentOwner != null;
+        await signOut();
+        if (loggedInAsOwner) {
+          throw 'This account is not a player account.';
+        }
+        throw 'Player account not found. Please sign up.';
+      }
+
+      return true;
+    } catch (e) {
+      _authState = AuthStatus.error;
+
+      final baseMessage = _friendlyAuthError(
+        e,
+        fallback: 'Could not sign in. Please try again.',
+      );
+
+      final normalizedEmail = email.trim().toLowerCase();
+      final playerByEmail = await _dbService.getPlayerByEmail(normalizedEmail);
+      final playerMethods = playerByEmail?['auth_methods'];
+      final authMethods = playerMethods is List
+          ? List<String>.from(playerMethods.map((m) => m.toString()))
+          : const <String>[];
+
+      if (baseMessage == 'Invalid email or password.' &&
+          authMethods.contains('google') &&
+          !authMethods.contains('email')) {
+        _errorMessage =
+            'This account uses Google sign-in. Continue with Google, or set a password using Forgot Password.';
+      } else {
+        _errorMessage = baseMessage;
+      }
+
+      notifyListeners();
+      return false;
+    }
+  }
+
+  /// Send OTP to phone number.
+  ///
+  /// Pending signup flow uses phone-change OTP and persists pending phone.
+  /// Owner legacy login flow still uses SMS login OTP.
   Future<bool> sendPhoneOtp(String phone) async {
     try {
       _isLoading = true;
       _errorMessage = null;
+      _blockingDialogMessage = null;
       notifyListeners();
+
+      final normalizedPhone = phone.trim();
 
       // Deferred signup also needs OTP while user is authenticated.
       if (isInDeferredSignupFlow && _authService.currentUserId != null) {
-        _setOtpContext(phone: phone, flow: _OtpFlow.deferredOwnerSignup);
-        await _sendOtpForFlow(_otpFlow, phone);
+        if (!_ensureDeferredSignupValid()) {
+          _isLoading = false;
+          return false;
+        }
+
+        final uid = _authService.currentUserId!;
+        final availability = await _dbService.checkPhoneAvailabilityGlobal(
+          phone: normalizedPhone,
+          excludeUserId: uid,
+        );
+        if (availability['is_available'] != true) {
+          _setBlockingDialogMessage(
+            'This phone number is already linked to another account. Please use a different number or log in with that account.',
+          );
+          _isLoading = false;
+          _errorMessage = 'Phone number already linked to another account.';
+          notifyListeners();
+          return false;
+        }
+
+        final deferred = _deferredOwnerSignup!;
+        _deferredOwnerSignup = deferred.copyWith(phone: normalizedPhone);
+        await _dbService.upsertPendingSignup(
+          userId: deferred.uid,
+          role: deferred.role,
+          name: deferred.name,
+          email: deferred.email,
+          phone: normalizedPhone,
+          authMethod: deferred.method,
+          hasPassword: deferred.hasPassword,
+        );
+
+        _setOtpContext(phone: normalizedPhone, flow: _OtpFlow.deferredSignup);
+        await _sendOtpForFlow(_otpFlow, normalizedPhone);
         _isLoading = false;
         notifyListeners();
         return true;
@@ -809,8 +1045,26 @@ class AuthProvider extends ChangeNotifier {
 
       // Authenticated owners must verify phone to unlock app access.
       if (_currentOwner != null && _authService.currentUserId != null) {
-        _setOtpContext(phone: phone, flow: _OtpFlow.ownerPhoneVerification);
-        await _sendOtpForFlow(_otpFlow, phone);
+        final ownerId = _currentOwner!.uid;
+        final availability = await _dbService.checkPhoneAvailabilityGlobal(
+          phone: normalizedPhone,
+          excludeUserId: ownerId,
+        );
+        if (availability['is_available'] != true) {
+          _setBlockingDialogMessage(
+            'This phone number is already linked to another account. Please use a different number or log in with that account.',
+          );
+          _isLoading = false;
+          _errorMessage = 'Phone number already linked to another account.';
+          notifyListeners();
+          return false;
+        }
+
+        _setOtpContext(
+          phone: normalizedPhone,
+          flow: _OtpFlow.ownerPhoneVerification,
+        );
+        await _sendOtpForFlow(_otpFlow, normalizedPhone);
         _isLoading = false;
         notifyListeners();
         return true;
@@ -819,14 +1073,15 @@ class AuthProvider extends ChangeNotifier {
       // Login OTP: owner must exist by phone.
       bool ownerExistsByPhone = false;
       try {
-        ownerExistsByPhone = await _dbService.ownerExists(phone: phone);
+        ownerExistsByPhone =
+            await _dbService.ownerExists(phone: normalizedPhone);
       } catch (e) {
         debugPrint(
             'ownerExists check failed, falling back to table lookup: $e');
       }
 
       if (!ownerExistsByPhone) {
-        final owner = await _dbService.getOwnerByPhone(phone);
+        final owner = await _dbService.getOwnerByPhone(normalizedPhone);
         ownerExistsByPhone = owner != null;
       }
 
@@ -838,8 +1093,8 @@ class AuthProvider extends ChangeNotifier {
         return false;
       }
 
-      _setOtpContext(phone: phone, flow: _OtpFlow.ownerLogin);
-      await _sendOtpForFlow(_otpFlow, phone);
+      _setOtpContext(phone: normalizedPhone, flow: _OtpFlow.ownerLogin);
+      await _sendOtpForFlow(_otpFlow, normalizedPhone);
 
       _isLoading = false;
       notifyListeners();
@@ -855,6 +1110,19 @@ class AuthProvider extends ChangeNotifier {
     }
   }
 
+  /// Send OTP for player login/signup flow.
+  Future<bool> sendPlayerOtp(String phone) async {
+    final pending = _deferredOwnerSignup;
+    if (pending != null && pending.role == UserRole.player) {
+      return sendPhoneOtp(phone);
+    }
+
+    _errorMessage =
+        'Player phone OTP is only available during signup verification.';
+    notifyListeners();
+    return false;
+  }
+
   /// Verify OTP and sign in
   Future<bool> verifyOTP(String smsCode) async {
     try {
@@ -867,18 +1135,37 @@ class AuthProvider extends ChangeNotifier {
       }
 
       if (_otpFlow == _OtpFlow.ownerPhoneVerification ||
-          _otpFlow == _OtpFlow.deferredOwnerSignup) {
+          _otpFlow == _OtpFlow.deferredSignup) {
         await _authService.verifyPhoneChangeOtp(
           phone: _phoneNumber!,
           token: smsCode,
         );
 
-        if (_otpFlow == _OtpFlow.deferredOwnerSignup) {
-          // Store verified phone and complete DB profile creation in dashboard step.
+        if (_otpFlow == _OtpFlow.deferredSignup) {
           final deferred = _deferredOwnerSignup;
-          if (deferred != null) {
-            _deferredOwnerSignup = deferred.copyWith(phone: _phoneNumber!);
+          if (deferred == null) {
+            throw 'Pending signup not found. Please restart signup.';
           }
+
+          final verifiedPhone = _phoneNumber!.trim();
+          _deferredOwnerSignup = deferred.copyWith(phone: verifiedPhone);
+
+          await _dbService.finalizePendingSignup(
+            userId: deferred.uid,
+            verifiedPhone: verifiedPhone,
+          );
+          await _loadUserProfile(deferred.uid);
+
+          if (deferred.role == UserRole.owner && _currentOwner == null) {
+            throw 'Could not load owner profile after verification.';
+          }
+          if (deferred.role == UserRole.player && _currentPlayer == null) {
+            throw 'Could not load player profile after verification.';
+          }
+
+          _clearDeferredOwnerSignup();
+          _isResumingPendingSignup = false;
+          _clearOtpContext();
           _otpFlow = _OtpFlow.none;
           _isLoading = false;
           notifyListeners();
@@ -908,6 +1195,29 @@ class AuthProvider extends ChangeNotifier {
         );
 
         _isForgotPasswordOtpVerified = true;
+        _otpFlow = _OtpFlow.none;
+        _isLoading = false;
+        notifyListeners();
+        return true;
+      }
+
+      if (_otpFlow == _OtpFlow.playerLogin) {
+        final response = await _authService.verifyPhoneOtp(
+          phone: _phoneNumber!,
+          token: smsCode,
+        );
+
+        final uid = response.user?.id;
+        if (uid == null || uid.isEmpty) {
+          throw 'Authentication failed.';
+        }
+
+        await _loadUserProfile(uid);
+
+        if (_currentOwner != null) {
+          throw 'This account is registered as an owner. Use owner login.';
+        }
+
         _otpFlow = _OtpFlow.none;
         _isLoading = false;
         notifyListeners();
@@ -953,18 +1263,33 @@ class AuthProvider extends ChangeNotifier {
         e,
         fallback: 'Could not verify OTP. Please try again.',
       );
+      final lower = (_errorMessage ?? '').toLowerCase();
+      if (lower.contains('phone') &&
+          (lower.contains('already') || lower.contains('linked'))) {
+        _setBlockingDialogMessage(
+          'This phone number is already linked to another account. Please use a different number or log in with that account.',
+        );
+      }
       notifyListeners();
       return false;
     }
   }
 
   /// Complete deferred signup for Owner after OTP verification
-  /// This creates the database profile that was deferred until OTP was verified
+  /// Compatibility method retained for owner dashboard fallback paths.
   Future<bool> completeDeferredOwnerSignup() async {
     try {
       final deferred = _deferredOwnerSignup;
       if (deferred == null) {
-        throw 'Not in deferred signup flow.';
+        return true;
+      }
+
+      if (deferred.role != UserRole.owner) {
+        return true;
+      }
+
+      if (!_ensureDeferredSignupValid()) {
+        return false;
       }
 
       if (deferred.uid.trim().isEmpty ||
@@ -977,22 +1302,10 @@ class AuthProvider extends ChangeNotifier {
       _isLoading = true;
       notifyListeners();
 
-      // Create owner profile in database
-      await _dbService.createOwnerProfile(
-        id: deferred.uid,
-        name: deferred.name,
-        email: deferred.email,
-        phone: deferred.phone,
-        hasPassword: deferred.hasPassword,
+      await _dbService.finalizePendingSignup(
+        userId: deferred.uid,
+        verifiedPhone: deferred.phone,
       );
-
-      final mergedMethods = _mergeAuthMethods(
-        existing: [deferred.method],
-        add: 'otp',
-      );
-      await _dbService.updateOwner(deferred.uid, {
-        'auth_methods': mergedMethods,
-      });
 
       // Load the created profile
       await _loadUserProfile(deferred.uid);
@@ -1026,6 +1339,7 @@ class AuthProvider extends ChangeNotifier {
       _currentPlayer = null;
       _clearOtpContext();
       _clearDeferredOwnerSignup();
+      _blockingDialogMessage = null;
       _authState = AuthStatus.unauthenticated;
       notifyListeners();
     } catch (e) {
@@ -1049,12 +1363,14 @@ class AuthProvider extends ChangeNotifier {
       _currentOwner = null;
       _currentPlayer = null;
       _authState = AuthStatus.unauthenticated;
+      _blockingDialogMessage = null;
       notifyListeners();
     } catch (e) {
       // Even if signout fails, clear all local state
       _currentOwner = null;
       _currentPlayer = null;
       _authState = AuthStatus.unauthenticated;
+      _blockingDialogMessage = null;
       _errorMessage = 'Failed to cancel signup: ${e.toString()}';
       notifyListeners();
     }
@@ -1252,20 +1568,19 @@ class AuthProvider extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// Check if phone number is already registered to another owner.
+  /// Check if phone number is globally available.
   /// Returns null if phone is available, or returns error message if taken.
   Future<String?> checkPhoneAvailability(String phone) async {
     try {
-      final existingEmail = await _dbService.checkPhoneAlreadyRegistered(phone);
-      if (existingEmail != null) {
-        // Check if it's the current user's phone (for re-verification scenarios)
-        final currentEmail =
-            _deferredOwnerSignup?.email ?? _currentOwner?.email;
-        if (currentEmail != null &&
-            existingEmail.toLowerCase() == currentEmail.toLowerCase()) {
-          return null; // Same user, phone is available for them
-        }
-        return 'This phone number is already registered with another account.';
+      final availability = await _dbService.checkPhoneAvailabilityGlobal(
+        phone: phone.trim(),
+        excludeUserId: _authService.currentUserId,
+      );
+      if (availability['is_available'] != true) {
+        const message =
+            'This phone number is already linked to another account. Please use a different number or log in with that account.';
+        _setBlockingDialogMessage(message);
+        return message;
       }
       return null; // Phone is available
     } catch (e) {
@@ -1277,6 +1592,7 @@ class AuthProvider extends ChangeNotifier {
   /// Clear error message
   void clearError() {
     _errorMessage = null;
+    _blockingDialogMessage = null;
     if (_authState == AuthStatus.error) {
       _authState = AuthStatus.unauthenticated;
     }
@@ -1291,7 +1607,16 @@ class AuthProvider extends ChangeNotifier {
   }
 
   /// Verify phone - alias for sendPhoneOtp (for UI compatibility)
-  Future<bool> verifyPhone(String phone) async {
+  Future<bool> verifyPhone(
+    String phone, {
+    UserRole role = UserRole.owner,
+  }) async {
+    if (isInDeferredSignupFlow) {
+      return await sendPhoneOtp(phone);
+    }
+    if (role == UserRole.player) {
+      return await sendPlayerOtp(phone);
+    }
     return await sendPhoneOtp(phone);
   }
 
@@ -1480,25 +1805,29 @@ class AuthProvider extends ChangeNotifier {
 
   void _clearDeferredOwnerSignup() {
     _deferredOwnerSignup = null;
+    _isResumingPendingSignup = false;
   }
 
   Future<void> _syncOwnerAfterOtp({
     required String ownerId,
     String? verifiedPhone,
   }) async {
-    final mergedMethods = _mergeAuthMethods(
-      existing: _currentOwner?.authMethods ?? const ['email'],
-      add: 'otp',
-    );
-
-    final payload = <String, dynamic>{
-      'auth_methods': mergedMethods,
-    };
-    if (verifiedPhone != null && verifiedPhone.trim().isNotEmpty) {
-      payload['phone'] = verifiedPhone.trim();
+    final normalizedPhone = (verifiedPhone ?? _phoneNumber ?? '').trim();
+    if (normalizedPhone.isNotEmpty) {
+      await _dbService.syncOwnerAfterOtp(
+        ownerId: ownerId,
+        verifiedPhone: normalizedPhone,
+      );
+    } else {
+      final mergedMethods = _mergeAuthMethods(
+        existing: _currentOwner?.authMethods ?? const ['email'],
+        add: 'otp',
+      );
+      await _dbService.updateOwner(ownerId, {
+        'auth_methods': mergedMethods,
+      });
     }
 
-    await _dbService.updateOwner(ownerId, payload);
     await _loadUserProfile(ownerId);
 
     if (_currentOwner == null) {

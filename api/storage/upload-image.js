@@ -1,6 +1,19 @@
 import { supabase } from "../_utils/supabase.js";
 import { applyCors } from "../_utils/cors.js";
 
+function resolveBucketName() {
+  const raw = String(process.env.STORAGE_BUCKET || "").trim();
+  if (!raw || raw === "STORAGE_BUCKET") {
+    return "turf-images";
+  }
+
+  if (raw.includes("://") || raw.includes("/")) {
+    return "turf-images";
+  }
+
+  return raw;
+}
+
 export const config = {
   api: {
     bodyParser: {
@@ -17,6 +30,7 @@ export default async function handler(req, res) {
   }
 
   try {
+    const bucketName = resolveBucketName();
     const { imageData, turfId, fileName, contentType } = req.body || {};
 
     if (!imageData || !turfId || !fileName) {
@@ -33,7 +47,7 @@ export default async function handler(req, res) {
 
     // Upload to Supabase Storage
     const { data, error } = await supabase.storage
-      .from("turf-images")
+      .from(bucketName)
       .upload(path, buffer, {
         contentType: contentType || "image/jpeg",
         upsert: true,
@@ -46,7 +60,7 @@ export default async function handler(req, res) {
 
     // Get public URL
     const { data: urlData } = supabase.storage
-      .from("turf-images")
+      .from(bucketName)
       .getPublicUrl(path);
 
     return res.json({

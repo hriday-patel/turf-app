@@ -62,11 +62,28 @@ class _SplashScreenState extends State<SplashScreen>
 
     if (!mounted) return;
 
-    if (isAuthenticated && authProvider.currentUserRole == UserRole.owner) {
-      Navigator.pushReplacementNamed(context, AppRoutes.ownerDashboard);
-    } else {
-      Navigator.pushReplacementNamed(context, AppRoutes.loginSelection);
+    if (isAuthenticated) {
+      if (authProvider.currentUserRole == UserRole.owner) {
+        Navigator.pushReplacementNamed(context, AppRoutes.ownerDashboard);
+        return;
+      }
+      if (authProvider.currentUserRole == UserRole.player) {
+        Navigator.pushReplacementNamed(context, AppRoutes.playerHome);
+        return;
+      }
+      if (authProvider.hasPendingSignup) {
+        if (authProvider.pendingSignupRole == UserRole.owner) {
+          Navigator.pushReplacementNamed(context, AppRoutes.ownerAuth);
+          return;
+        }
+        if (authProvider.pendingSignupRole == UserRole.player) {
+          Navigator.pushReplacementNamed(context, AppRoutes.playerAuth);
+          return;
+        }
+      }
     }
+
+    Navigator.pushReplacementNamed(context, AppRoutes.loginSelection);
   }
 
   @override

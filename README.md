@@ -1,131 +1,105 @@
 # Turf Booking App
 
-A production-ready Flutter mobile app for booking Box Cricket / Turf slots.
+Production-focused Flutter app for turf owners and players, built on Supabase.
 
-## Features
+## Stack
 
-### Owner System (Phase 1 - Complete)
-- ✅ Owner Authentication (Login/Signup)
-- ✅ Owner Dashboard with stats
-- ✅ Add Turf with 6-tier pricing rules
-- ✅ Turf Management with verification status
-- ✅ Slot Generation & Management
-- ✅ Booking Management
-- ✅ Manual Booking (Phone/Walk-in)
+- Frontend: Flutter + Provider
+- Backend/Data: Supabase (Auth + Postgres + RLS)
+- Serverless utilities: Vercel functions in api/
+- Media storage: Supabase Storage via direct upload + API proxy
 
-### Player System (Phase 2 - Planned)
-- 🔲 Player Authentication
-- 🔲 Turf Discovery & Search
-- 🔲 Slot Selection & Booking
-- 🔲 Online/Offline Payment
-- 🔲 Booking History
+## Local Setup
 
-## Tech Stack
+1. Install dependencies
 
-- **Frontend**: Flutter
-- **Backend**: Firebase
-  - Firebase Authentication
-  - Cloud Firestore
-  - Cloud Storage
-- **State Management**: Provider
-- **Payment**: Razorpay (abstracted)
-
-## Getting Started
-
-### Prerequisites
-- Flutter SDK (>=3.0.0)
-- Firebase CLI
-- Android Studio / Xcode
-
-### Setup
-
-1. **Clone the repository**
-   ```bash
-   git clone <repo-url>
-   cd Turf-App
-   ```
-
-2. **Install dependencies**
-   ```bash
-   flutter pub get
-   ```
-
-3. **Configure Firebase**
-   ```bash
-   # Install FlutterFire CLI
-   dart pub global activate flutterfire_cli
-   
-   # Configure Firebase
-   flutterfire configure
-   ```
-
-4. **Update Firebase Options**
-   - Replace placeholders in `lib/firebase_options.dart`
-   - Add `google-services.json` (Android)
-   - Add `GoogleService-Info.plist` (iOS)
-
-5. **Deploy Firestore Rules**
-   ```bash
-   firebase deploy --only firestore:rules
-   ```
-
-6. **Run the app**
-   ```bash
-   flutter run
-   ```
-
-## Project Structure
-
-```
-lib/
-├── main.dart                 # App entry point
-├── firebase_options.dart     # Firebase configuration
-├── app/
-│   ├── app.dart              # Main app widget
-│   └── routes.dart           # App routes
-├── config/
-│   ├── colors.dart           # Color palette
-│   └── theme.dart            # Theme configuration
-├── core/
-│   ├── constants/
-│   │   ├── enums.dart        # All enums
-│   │   └── strings.dart      # String constants
-│   └── utils/
-│       └── price_calculator.dart
-├── data/
-│   ├── models/               # Data models
-│   └── services/             # Firebase services
-└── features/
-    ├── auth/                 # Authentication
-    └── owner/                # Owner screens
+```bash
+flutter pub get
+npm install
 ```
 
-## Pricing System
+2. Configure runtime values
 
-The app supports 6-tier pricing:
-| Day Type | Time | Example Price |
-|----------|------|---------------|
-| Weekday | Day (6AM-6PM) | ₹1000/hr |
-| Weekday | Night (6PM-11PM) | ₹1200/hr |
-| Weekend | Day | ₹1400/hr |
-| Weekend | Night | ₹1600/hr |
-| Holiday | Day | ₹1800/hr |
-| Holiday | Night | ₹2000/hr |
+Use .env.example as reference. For Flutter, pass values as dart-defines:
 
-## Slot Booking Flow
+```bash
+flutter run -d chrome \
+  --dart-define=SUPABASE_URL=SUPABASE_URL \
+  --dart-define=SUPABASE_ANON_KEY=SUPABASE_ANON_KEY \
+  --dart-define=STORAGE_BUCKET=STORAGE_BUCKET
+```
 
-1. User selects slot → Reserved (10 min timeout)
-2. Chooses payment mode:
-   - **Online**: Pay → Slot BOOKED
-   - **Offline**: Slot BOOKED immediately (Pay at turf)
-3. Owner can see all bookings and payment status
+3. Configure serverless environment (Vercel)
 
-## Security
+- SUPABASE_URL
+- SUPABASE_SERVICE_ROLE_KEY
+- STORAGE_BUCKET
+- WHATSAPP_API_KEY
+- WHATSAPP_PHONE_ID
 
-- Role-based access control via Firestore rules
-- Owners can only access their own turfs
-- Transaction-based slot reservation prevents double booking
+## Supabase Migration Steps
 
-## License
+Run schema and migrations in Supabase SQL Editor (in order):
 
-MIT License
+1. supabase/schema.sql (baseline)
+2. supabase/migrations/add_number_of_nets_and_status.sql
+3. supabase/migrations/20260130_add_advance_amount.sql
+4. supabase/migrations/20260316_add_renovation_net_numbers.sql
+5. supabase/migrations/20260321_add_owner_has_password.sql
+6. supabase/migrations/20260330_auth_player_hardening.sql
+
+## Core Flows
+
+### Owner
+
+- Email/password signup with deferred owner profile completion after OTP
+- Google owner auth with progressive password unlock support
+- OTP verification gates dashboard access for missing/invalid phone state
+- Turf creation/editing with multi-net slot generation and pricing sync
+- Atomic booking create/cancel via Postgres RPCs
+
+### Player (MVP)
+
+- Phone OTP auth entry + profile completion
+- Browse approved turfs
+- View slots by date
+- Book available slot (app booking)
+- View own bookings
+
+## Current Status
+
+### Done
+
+- Secure Supabase config loading via dart-defines (removed hardcoded credentials)
+- Added .env.example placeholder template
+- Added owner OTP atomic sync RPC integration
+- Added migration for auth + player access policy hardening
+- Added Player Home MVP screen and routing
+- Added player bookings query and slot viewing capability via RLS policy
+- Storage serverless bucket selection now environment-driven
+
+### Partially Done
+
+- WhatsApp Cloud API webhook persistence is still minimal (logs + ack only)
+- Full booking lifecycle tests are focused but not exhaustive integration tests
+
+### Pending
+
+- Full payment gateway integration for player online payments
+- Advanced player discovery filters and location search
+- End-to-end CI pipeline for migration + app smoke validation
+
+## SECURITY_NOTES
+
+- Never commit real credentials. Use placeholders from .env.example.
+- Rotate SUPABASE_SERVICE_ROLE_KEY and WHATSAPP_API_KEY periodically.
+- Keep WHATSAPP_API_KEY and SUPABASE_SERVICE_ROLE_KEY server-side only.
+- If any real key was previously committed, rotate it in the provider console and invalidate old tokens.
+
+## Validation Commands
+
+```bash
+flutter analyze
+flutter test
+flutter build web --release --dart-define=SUPABASE_URL=SUPABASE_URL --dart-define=SUPABASE_ANON_KEY=SUPABASE_ANON_KEY --dart-define=STORAGE_BUCKET=STORAGE_BUCKET
+```
