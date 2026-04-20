@@ -17,15 +17,18 @@ class StorageService {
   );
 
   // API base URL for server-side uploads (bypasses CORS)
+  static const String _defaultApiBaseUrl =
+      'https://fieldpass-business.vercel.app/api';
+
   static const String _apiBaseUrlDefine = String.fromEnvironment(
     'API_BASE_URL',
-    defaultValue: 'API_BASE_URL',
+    defaultValue: _defaultApiBaseUrl,
   );
 
   static String get _apiBaseUrl {
     final raw = _apiBaseUrlDefine.trim();
     if (raw.isEmpty || raw == 'API_BASE_URL') {
-      return '';
+      return _defaultApiBaseUrl;
     }
     return raw.endsWith('/') ? raw.substring(0, raw.length - 1) : raw;
   }
@@ -90,17 +93,6 @@ class StorageService {
     required String fileName,
     int retryCount = 5,
   }) async {
-    if (_apiBaseUrl.isEmpty) {
-      debugPrint(
-          'Storage API upload skipped: missing API_BASE_URL dart-define');
-      return await _uploadDirect(
-        imageBytes: imageBytes,
-        turfId: turfId,
-        fileName: fileName,
-        retryCount: 3,
-      );
-    }
-
     Exception? lastError;
 
     // Sanitize turfId and fileName to prevent URI errors

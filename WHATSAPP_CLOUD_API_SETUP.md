@@ -10,9 +10,9 @@ These endpoints are implemented in:
 - `api/whatsapp/send-message.js`
 - `api/whatsapp/webhook.js`
 
-## 1) Configure Hosting Environment Variables
+## 1) Configure Vercel Environment Variables
 
-In your hosting environment settings, add:
+In your Vercel project settings, add:
 
 - `WHATSAPP_API_KEY`
   - Permanent system-user token with:
@@ -30,14 +30,14 @@ In your hosting environment settings, add:
 
 In your WhatsApp app's webhook configuration:
 
-- Callback URL: `https://<your-api-domain>/api/whatsapp/webhook`
+- Callback URL: `https://fieldpass-business.vercel.app/api/whatsapp/webhook`
 - Verify token: same value as `WHATSAPP_WEBHOOK_VERIFY_TOKEN`
 - Subscribe to message-related fields (at minimum `messages`).
 
 ## 3) Test Sending a Message via Your API
 
 ```bash
-curl -X POST 'https://<your-api-domain>/api/whatsapp/send-message' \
+curl -X POST 'https://fieldpass-business.vercel.app/api/whatsapp/send-message' \
   -H 'Content-Type: application/json' \
   -d '{
     "to": "919999999999",
@@ -48,7 +48,7 @@ curl -X POST 'https://<your-api-domain>/api/whatsapp/send-message' \
 Template send payload format:
 
 ```bash
-curl -X POST 'https://<your-api-domain>/api/whatsapp/send-message' \
+curl -X POST 'https://fieldpass-business.vercel.app/api/whatsapp/send-message' \
   -H 'Content-Type: application/json' \
   -d '{
     "to": "919999999999",
@@ -66,10 +66,12 @@ The Flutter service now calls your server endpoint from `WhatsAppService`.
 Optional dart-define:
 
 ```bash
---dart-define=API_BASE_URL=https://<your-api-domain>/api
+--dart-define=API_BASE_URL=https://fieldpass-business.vercel.app/api
 ```
 
-If not provided, WhatsApp API calls are skipped and logged.
+If not provided, this project defaults to:
+
+- `https://fieldpass-business.vercel.app/api`
 
 ## 5) Where Messages Are Triggered
 

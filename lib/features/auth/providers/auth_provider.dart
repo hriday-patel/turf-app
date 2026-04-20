@@ -7,6 +7,7 @@ import '../../../data/models/owner_model.dart';
 import '../../../data/models/player_model.dart';
 import '../../../core/constants/enums.dart';
 import '../../../core/utils/auth_flow_rules.dart';
+import '../utils/auth_form_utils.dart';
 
 enum AuthStatus {
   initial,
@@ -263,12 +264,7 @@ class AuthProvider extends ChangeNotifier {
 
   /// Validate password strength
   bool _isStrongPassword(String password) {
-    if (password.length < 8) return false;
-    if (!password.contains(RegExp(r'[A-Z]'))) return false;
-    if (!password.contains(RegExp(r'[a-z]'))) return false;
-    if (!password.contains(RegExp(r'[0-9]'))) return false;
-    if (!password.contains(RegExp(r'[!@#$%^&*(),.?":{}|<>]'))) return false;
-    return true;
+    return AuthFormUtils.isStrongPassword(password);
   }
 
   String _friendlyAuthError(
@@ -402,7 +398,7 @@ class AuthProvider extends ChangeNotifier {
         throw 'Password must be at least 8 characters with uppercase, lowercase, number, and special character.';
       }
 
-      final normalizedPhone = phone.trim();
+      final normalizedPhone = AuthFormUtils.normalizeIndianPhone(phone);
       final availability = await _dbService.checkPhoneAvailabilityGlobal(
         phone: normalizedPhone,
       );
@@ -553,7 +549,7 @@ class AuthProvider extends ChangeNotifier {
   }
 
   String _normalizedEmail(String? value) {
-    return (value ?? '').trim().toLowerCase();
+    return AuthFormUtils.normalizeEmail(value ?? '');
   }
 
   String _resolveOwnerName({String? emailFallback}) {
@@ -911,7 +907,7 @@ class AuthProvider extends ChangeNotifier {
         fallback: 'Could not sign in. Please try again.',
       );
 
-      final normalizedEmail = email.trim().toLowerCase();
+      final normalizedEmail = AuthFormUtils.normalizeEmail(email);
       final ownerByEmail = await _dbService.getOwnerByEmail(normalizedEmail);
       final ownerMethods = ownerByEmail?['auth_methods'];
       final authMethods = ownerMethods is List
@@ -968,7 +964,7 @@ class AuthProvider extends ChangeNotifier {
         fallback: 'Could not sign in. Please try again.',
       );
 
-      final normalizedEmail = email.trim().toLowerCase();
+      final normalizedEmail = AuthFormUtils.normalizeEmail(email);
       final playerByEmail = await _dbService.getPlayerByEmail(normalizedEmail);
       final playerMethods = playerByEmail?['auth_methods'];
       final authMethods = playerMethods is List
@@ -1000,7 +996,7 @@ class AuthProvider extends ChangeNotifier {
       _blockingDialogMessage = null;
       notifyListeners();
 
-      final normalizedPhone = phone.trim();
+      final normalizedPhone = AuthFormUtils.normalizeIndianPhone(phone);
 
       // Deferred signup also needs OTP while user is authenticated.
       if (isInDeferredSignupFlow && _authService.currentUserId != null) {
@@ -1409,7 +1405,7 @@ class AuthProvider extends ChangeNotifier {
       _errorMessage = null;
       notifyListeners();
 
-      final normalizedEmail = email.trim().toLowerCase();
+      final normalizedEmail = AuthFormUtils.normalizeEmail(email);
       final ownerData = await _dbService.getOwnerByEmail(normalizedEmail);
 
       if (ownerData == null) {
@@ -1650,7 +1646,7 @@ class AuthProvider extends ChangeNotifier {
       _errorMessage = null;
       notifyListeners();
 
-      final normalizedEmail = expectedEmail.trim().toLowerCase();
+      final normalizedEmail = AuthFormUtils.normalizeEmail(expectedEmail);
 
       await _authService.refreshSession();
       final currentAuthEmail =

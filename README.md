@@ -6,7 +6,7 @@ Production-focused Flutter app for turf owners and players, built on Supabase.
 
 - Frontend: Flutter + Provider
 - Backend/Data: Supabase (Auth + Postgres + RLS)
-- Serverless utilities: Node serverless handlers in api/
+- Serverless utilities: Vercel serverless handlers in api/
 - Media storage: Supabase Storage via direct upload + API proxy
 
 ## Local Setup
@@ -33,22 +33,31 @@ For Android release builds, use the PowerShell helper to ensure required
 Supabase runtime config is embedded into the AAB:
 
 ```powershell
-./scripts/build_android_release.ps1 -SupabaseUrl "SUPABASE_URL" -SupabaseAnonKey "SUPABASE_ANON_KEY" -StorageBucket "STORAGE_BUCKET"
+./scripts/build_android_release.ps1 -SupabaseUrl "SUPABASE_URL" -SupabaseAnonKey "SUPABASE_ANON_KEY" -StorageBucket "STORAGE_BUCKET" -ApiBaseUrl "https://fieldpass-business.vercel.app/api"
 ```
 
-3. Configure serverless environment (hosting platform of your choice)
+If `-ApiBaseUrl` is omitted, the script uses `API_BASE_URL` from `.env` and
+falls back to `https://fieldpass-business.vercel.app/api`.
+
+3. Configure serverless environment (Vercel)
 
 - SUPABASE_URL
 - SUPABASE_SERVICE_ROLE_KEY
 - STORAGE_BUCKET
 - WHATSAPP_API_KEY
 - WHATSAPP_PHONE_ID
+- WHATSAPP_WEBHOOK_VERIFY_TOKEN
+- WHATSAPP_GRAPH_API_VERSION (optional, defaults to v23.0)
 
 Optional runtime define for app calls to your serverless APIs:
 
 ```bash
---dart-define=API_BASE_URL=https://<your-api-domain>/api
+--dart-define=API_BASE_URL=https://fieldpass-business.vercel.app/api
 ```
+
+If `API_BASE_URL` is not provided, app services default to:
+
+`https://fieldpass-business.vercel.app/api`
 
 ## Supabase Migration Steps
 

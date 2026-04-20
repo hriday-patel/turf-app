@@ -9,15 +9,18 @@ class WhatsAppService {
   // Default admin WhatsApp number for business notifications.
   static const String adminPhone = '919773424512';
 
+  static const String _defaultApiBaseUrl =
+      'https://fieldpass-business.vercel.app/api';
+
   static const String _apiBaseUrlDefine = String.fromEnvironment(
     'API_BASE_URL',
-    defaultValue: 'API_BASE_URL',
+    defaultValue: _defaultApiBaseUrl,
   );
 
   static String get _apiBaseUrl {
     final raw = _apiBaseUrlDefine.trim();
     if (raw.isEmpty || raw == 'API_BASE_URL') {
-      return '';
+      return _defaultApiBaseUrl;
     }
     return raw.endsWith('/') ? raw.substring(0, raw.length - 1) : raw;
   }
@@ -65,11 +68,6 @@ Thank you for your booking! 🙏
       return false;
     }
 
-    if (_apiBaseUrl.isEmpty) {
-      debugPrint('WhatsApp send skipped: missing API_BASE_URL dart-define');
-      return false;
-    }
-
     try {
       final response = await http
           .post(
@@ -105,12 +103,6 @@ Thank you for your booking! 🙏
   }) async {
     final cleanPhone = _normalizePhone(toPhone);
     if (cleanPhone == null || templateName.trim().isEmpty) {
-      return false;
-    }
-
-    if (_apiBaseUrl.isEmpty) {
-      debugPrint(
-          'WhatsApp template send skipped: missing API_BASE_URL dart-define');
       return false;
     }
 

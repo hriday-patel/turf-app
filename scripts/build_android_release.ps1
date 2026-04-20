@@ -1,7 +1,8 @@
 param(
   [string]$SupabaseUrl,
   [string]$SupabaseAnonKey,
-  [string]$StorageBucket = ""
+  [string]$StorageBucket = "",
+  [string]$ApiBaseUrl = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -51,6 +52,17 @@ if ([string]::IsNullOrWhiteSpace($SupabaseAnonKey)) {
 if ([string]::IsNullOrWhiteSpace($StorageBucket)) {
   $StorageBucket = Get-EnvFileValue -Path $envFilePath -Key "STORAGE_BUCKET"
 }
+if ([string]::IsNullOrWhiteSpace($ApiBaseUrl)) {
+  $ApiBaseUrl = Get-EnvFileValue -Path $envFilePath -Key "API_BASE_URL"
+}
+if ([string]::IsNullOrWhiteSpace($ApiBaseUrl)) {
+  $ApiBaseUrl = "https://fieldpass-business.vercel.app/api"
+}
+
+$ApiBaseUrl = $ApiBaseUrl.Trim()
+if ($ApiBaseUrl.EndsWith("/")) {
+  $ApiBaseUrl = $ApiBaseUrl.TrimEnd("/")
+}
 
 if ([string]::IsNullOrWhiteSpace($SupabaseUrl) -or [string]::IsNullOrWhiteSpace($SupabaseAnonKey)) {
   throw "Missing SUPABASE_URL/SUPABASE_ANON_KEY. Provide params or create .env with those keys before building."
@@ -59,6 +71,7 @@ if ([string]::IsNullOrWhiteSpace($SupabaseUrl) -or [string]::IsNullOrWhiteSpace(
 $defines = @{
   SUPABASE_URL = $SupabaseUrl
   SUPABASE_ANON_KEY = $SupabaseAnonKey
+  API_BASE_URL = $ApiBaseUrl
 }
 
 if (![string]::IsNullOrWhiteSpace($StorageBucket)) {

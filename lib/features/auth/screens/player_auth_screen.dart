@@ -7,6 +7,8 @@ import '../providers/auth_provider.dart';
 import '../../../app/routes.dart';
 import '../../../core/constants/enums.dart';
 import '../../../core/utils/app_toast.dart';
+import '../utils/auth_form_utils.dart';
+import '../widgets/pending_signup_verification_dialog.dart';
 
 class PlayerAuthScreen extends StatefulWidget {
   const PlayerAuthScreen({super.key});
@@ -56,33 +58,6 @@ class _PlayerAuthScreenState extends State<PlayerAuthScreen>
     _signupPasswordController.dispose();
     _signupConfirmPasswordController.dispose();
     super.dispose();
-  }
-
-  bool _isStrongPassword(String password) {
-    final hasMinLength = password.length >= 8;
-    final hasUpper = password.contains(RegExp(r'[A-Z]'));
-    final hasLower = password.contains(RegExp(r'[a-z]'));
-    final hasNumber = password.contains(RegExp(r'[0-9]'));
-    final hasSpecial = password.contains(RegExp(r'[!@#$%^&*(),.?":{}|<>]'));
-    return hasMinLength && hasUpper && hasLower && hasNumber && hasSpecial;
-  }
-
-  bool _isValidEmail(String email) {
-    final normalized = email.trim();
-    final emailRegex = RegExp(r'^[^\s@]+@[^\s@]+\.[^\s@]+$');
-    return emailRegex.hasMatch(normalized);
-  }
-
-  bool _isValidIndianPhone(String phone) {
-    return RegExp(r'^\d{10}$').hasMatch(phone.trim());
-  }
-
-  String _normalizeIndianPhone(String phone) {
-    final compact = phone.trim();
-    if (compact.startsWith('+')) {
-      return compact;
-    }
-    return '+91$compact';
   }
 
   Future<void> _resumePendingSignupIfNeeded() async {
@@ -143,7 +118,7 @@ class _PlayerAuthScreenState extends State<PlayerAuthScreen>
     final signupSuccess = await authProvider.signUp(
       name: _signupNameController.text.trim(),
       email: _signupEmailController.text.trim(),
-      phone: _normalizeIndianPhone(_signupPhoneController.text),
+      phone: AuthFormUtils.normalizeIndianPhone(_signupPhoneController.text),
       password: _signupPasswordController.text.trim(),
       role: UserRole.player,
     );
@@ -185,162 +160,12 @@ class _PlayerAuthScreenState extends State<PlayerAuthScreen>
       return true;
     }
 
-    final phoneController = TextEditingController(
-      text: authProvider.deferredSignupPhone.replaceFirst('+91', ''),
-    );
-    final otpController = TextEditingController();
-
-    bool otpSent = false;
-    bool busy = false;
-    String? dialogError;
-
-    final result = await showDialog<bool>(
+    return await showPendingSignupVerificationDialog(
       context: context,
-      barrierDismissible: false,
-      builder: (dialogContext) {
-        return StatefulBuilder(
-          builder: (context, setDialogState) {
-            Future<void> sendOtp() async {
-              final phone = phoneController.text.trim();
-              if (!RegExp(r'^\d{10}$').hasMatch(phone)) {
-                setDialogState(() {
-                  dialogError = 'Enter a valid 10-digit phone number.';
-                });
-                return;
-              }
-
-              final normalizedPhone = '+91$phone';
-              setDialogState(() {
-                busy = true;
-                dialogError = null;
-              });
-
-              final phoneError =
-                  await authProvider.checkPhoneAvailability(normalizedPhone);
-              if (phoneError != null) {
-                setDialogState(() {
-                  busy = false;
-                  dialogError = phoneError;
-                });
-                return;
-              }
-
-              final sent = await authProvider.verifyPhone(
-                normalizedPhone,
-                role: UserRole.player,
-              );
-
-              setDialogState(() {
-                busy = false;
-                otpSent = sent;
-                dialogError = sent
-                    ? null
-                    : (authProvider.errorMessage ??
-                        'Could not send OTP. Please try again.');
-              });
-            }
-
-            Future<void> verifyOtpAndFinalize() async {
-              final otp = otpController.text.trim();
-              if (!RegExp(r'^\d{6}$').hasMatch(otp)) {
-                setDialogState(() {
-                  dialogError = 'Enter a valid 6-digit OTP.';
-                });
-                return;
-              }
-
-              setDialogState(() {
-                busy = true;
-                dialogError = null;
-              });
-
-              final verified = await authProvider.verifyOTP(otp);
-              if (!verified || authProvider.currentPlayer == null) {
-                setDialogState(() {
-                  busy = false;
-                  dialogError = authProvider.errorMessage ??
-                      'OTP verification failed. Please try again.';
-                });
-                return;
-              }
-
-              if (!dialogContext.mounted) return;
-              Navigator.of(dialogContext).pop(true);
-            }
-
-            return AlertDialog(
-              title: const Text('Complete Phone Verification'),
-              content: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  TextField(
-                    controller: phoneController,
-                    keyboardType: TextInputType.phone,
-                    enabled: !otpSent && !busy,
-                    maxLength: 10,
-                    decoration: const InputDecoration(
-                      labelText: 'Phone Number',
-                      prefixText: '+91 ',
-                    ),
-                  ),
-                  if (otpSent)
-                    TextField(
-                      controller: otpController,
-                      keyboardType: TextInputType.number,
-                      enabled: !busy,
-                      maxLength: 6,
-                      decoration: const InputDecoration(
-                        labelText: 'Enter OTP',
-                      ),
-                    ),
-                  if (dialogError != null)
-                    Padding(
-                      padding: const EdgeInsets.only(top: 8),
-                      child: Text(
-                        dialogError!,
-                        style: const TextStyle(color: Colors.red),
-                      ),
-                    ),
-                ],
-              ),
-              actions: [
-                TextButton(
-                  onPressed: busy
-                      ? null
-                      : () async {
-                          await authProvider.cancelDeferredSignup();
-                          if (!dialogContext.mounted) return;
-                          Navigator.of(dialogContext).pop(false);
-                        },
-                  child: const Text('Cancel'),
-                ),
-                ElevatedButton(
-                  onPressed: busy
-                      ? null
-                      : () async {
-                          if (!otpSent) {
-                            await sendOtp();
-                          } else {
-                            await verifyOtpAndFinalize();
-                          }
-                        },
-                  child: Text(
-                    busy
-                        ? 'Please wait...'
-                        : (otpSent ? 'Verify OTP' : 'Send OTP'),
-                  ),
-                ),
-              ],
-            );
-          },
-        );
-      },
+      authProvider: authProvider,
+      role: UserRole.player,
+      initialPhone: authProvider.deferredSignupPhone,
     );
-
-    phoneController.dispose();
-    otpController.dispose();
-
-    return result == true;
   }
 
   Future<void> _showProviderError(AuthProvider authProvider) async {
@@ -490,7 +315,7 @@ class _PlayerAuthScreenState extends State<PlayerAuthScreen>
                 if (val == null || val.trim().isEmpty) {
                   return 'Email is required';
                 }
-                return _isValidEmail(val)
+                return AuthFormUtils.isValidEmail(val)
                     ? null
                     : 'Enter a valid email address';
               },
@@ -584,7 +409,7 @@ class _PlayerAuthScreenState extends State<PlayerAuthScreen>
                     if (val == null || val.trim().isEmpty) {
                       return 'Email is required';
                     }
-                    return _isValidEmail(val)
+                    return AuthFormUtils.isValidEmail(val)
                         ? null
                         : 'Enter a valid email address';
                   },
@@ -604,7 +429,7 @@ class _PlayerAuthScreenState extends State<PlayerAuthScreen>
                     if (val == null || val.trim().isEmpty) {
                       return 'Phone number is required';
                     }
-                    return _isValidIndianPhone(val)
+                    return AuthFormUtils.isValidIndianPhoneInput(val)
                         ? null
                         : 'Enter a valid 10-digit phone number';
                   },
@@ -628,7 +453,7 @@ class _PlayerAuthScreenState extends State<PlayerAuthScreen>
                     if (val == null || val.isEmpty) {
                       return 'Password is required';
                     }
-                    if (!_isStrongPassword(val)) {
+                    if (!AuthFormUtils.isStrongPassword(val)) {
                       return 'Min 8 chars, upper, lower, number, special';
                     }
                     return null;

@@ -1,498 +1,335 @@
-# Two-Authentication-Flow Implementation Guide
+# Authentication Flows - Current Implementation
 
 ## Project: FieldPass Business (Turf App)
 
-**Date**: March 21, 2026  
-**Status**: ✅ Complete and Compiled Successfully
+**Last Updated**: April 21, 2026
+**Status**: Implemented in app code and analyzer-clean
 
 ---
 
-## 1. System Overview
+## 1. Overview
 
-This document describes the implementation of a **two-tier authentication system** with the following flows:
+The app uses a role-based authentication system with separate entry flows for:
 
-### Flow 1: Google OAuth Authentication
+- Owner
+- Player
 
-- Signup via Google
-- Login via Google (always available)
-- Phone OTP login (always available)
-- Email+Password login (only if user sets password)
+Supported sign-in methods in the current codebase:
 
-### Flow 2: Manual Authentication
+- Email and password
+- Google OAuth
+- Phone OTP (owner phone login and verification gates)
 
-- Signup with email, phone, and password
-- Login with email + password (always available)
-- Phone OTP login (always available)
-- Login with Google (if same email is linked)
+Important behavior:
 
----
-
-## 2. Architecture Changes
-
-### 2.1 Database Schema Changes
-
-**File**: `supabase/migrations/20260321_add_owner_has_password.sql`
-
-```sql
-ALTER TABLE owners ADD COLUMN has_password BOOLEAN DEFAULT false;
-```
-
-**Purpose**: Tracks whether an owner has set a password (for Google users who unlock manual login).
-
-**Backend RPC Update Required**:
-
-```sql
-CREATE OR REPLACE FUNCTION create_owner_profile(
-  user_id UUID,
-  user_name TEXT,
-  user_email TEXT,
-  user_phone TEXT,
-  user_has_password BOOLEAN DEFAULT false
-)
-```
-
-### 2.2 Model Changes
-
-**File**: `lib/data/models/owner_model.dart`
-
-```dart
-class OwnerModel {
-  // ... existing fields ...
-  final bool hasPassword;  // NEW FIELD
-
-  OwnerModel({
-    // ... existing params ...
-    this.hasPassword = false,  // Default: Google users have no password
-    required this.createdAt,
-    this.updatedAt,
-  });
-}
-```
-
-**Key Points**:
-
-- Default is `false` (Google users start without password)
-- Set to `true` on manual signup
-- Updated when Google user sets password via `setPasswordForGoogleUser()`
-
-### 2.3 Auth Provider Changes
-
-**File**: `lib/features/auth/providers/auth_provider.dart`
-
-#### Change 1: Manual Signup Sets hasPassword=true
-
-```dart
-Future<bool> signUp({
-  required String name,
-  required String email,
-  required String phone,
-  required String password,
-  required UserRole role,
-}) async {
-  // ...
-  await _dbService.createOwnerProfile(
-    id: uid,
-    name: name,
-    email: email,
-    phone: phone,
-    hasPassword: true,  // NEW: Manual signup always has password
-  );
-}
-```
-
-#### Change 2: New Method - Set Password for Google Users
-
-```dart
-/// Set password for Google user (unlocks manual login option)
-Future<bool> setPasswordForGoogleUser(String newPassword) async {
-  // Validates password strength
-  // Updates auth password
-  // Sets has_password=true in database
-  // Returns true on success
-}
-```
-
-**Usage**: Call this when a Google user wants to set a password (e.g., in Profile or Forgot Password screen).
-
-### 2.4 Database Service Changes
-
-**File**: `lib/data/services/database_service.dart`
-
-```dart
-Future<void> createOwnerProfile({
-  required String id,
-  required String name,
-  required String email,
-  required String phone,
-  bool hasPassword = false,  // NEW PARAMETER
-}) async {
-  await _client.rpc('create_owner_profile', params: {
-    'user_id': id,
-    'user_name': name,
-    'user_email': email,
-    'user_phone': phone,
-    'user_has_password': hasPassword,  // NEW PARAM
-  });
-}
-```
-
-### 2.5 Dashboard Phone Gate Changes
-
-**File**: `lib/features/owner/screens/owner_dashboard_screen.dart`
-
-**New Feature**: "Back to Login" Button
-
-```dart
-Widget _buildPhoneVerificationLock(AuthProvider authProvider) {
-  // ... phone verification modal ...
-  // NEW: Added button at bottom:
-
-  SizedBox(
-    width: double.infinity,
-    child: TextButton(
-      onPressed: () async {
-        final confirmed = await showDialog<bool>(
-          context: context,
-          builder: (ctx) => AlertDialog(
-            title: const Text('Go Back?'),
-            content: const Text(
-              'You\'ll need to complete phone verification to access the dashboard.',
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(ctx, false),
-                child: const Text('Cancel'),
-              ),
-              TextButton(
-                onPressed: () => Navigator.pop(ctx, true),
-                child: const Text('Go Back to Login'),
-              ),
-            ],
-          ),
-        );
-        if (confirmed ?? false) {
-          await authProvider.signOut();
-          if (mounted) {
-            Navigator.pushReplacementNamed(context, AppRoutes.ownerAuth);
-          }
-        }
-      },
-      child: const Text('Back to Login', style: TextStyle(fontSize: 12)),
-    ),
-  ),
-}
-```
-
-**Behavior**:
-
-- Shows confirmation dialog when clicked
-- Clears session and signs out user
-- Returns to login screen with `pushReplacementNamed()` (safe navigation)
-- Does NOT delete account, just logs out
+- New signups are first saved as pending signups.
+- Profile creation is finalized only after phone OTP verification.
+- Existing sessions are restored on app start and routed by role.
 
 ---
 
-## 3. Complete Authentication Flows
+## 2. Core Components
 
-### Flow 1: Google OAuth Signup (New Account)
+### 2.1 Auth state and orchestration
 
-```
-1. User clicks "Sign Up with Google" button
-2. Google authentication dialog
-3. User completes Google OAuth flow
-4. AuthProvider creates OwnerModel with:
-   - authMethods: ['google']
-   - hasPassword: false
-5. Dashboard loaded with phone verification modal
-6. Background blurred, UI locked
-7. Owner enters phone number → OTP sent
-8. Owner enters OTP → verified
-9. Phone field added to owner record
-10. authMethods updated to include 'otp'
-11. Dashboard unlocked, full access
-12. [Optional] Owner can click "Back to Login" to sign out
-```
+- `lib/features/auth/providers/auth_provider.dart`
+  - Central source of truth for auth state (`AuthStatus`)
+  - Handles signup/login, OTP state machine, deferred signup, profile loading, role checks
 
-### Flow 2: Google OAuth Login (Existing Account)
+### 2.2 Supabase auth operations
 
-```
-1. User on login screen
-2. Three options now available:
-   a) "Login with Email" (shows if hasPassword=true)
-   b) "Login with Phone OTP"
-   c) "Login with Google"
-3. User clicks "Login with Google"
-4. Google auth dialog
-5. Session created, owner verified
-6. Redirected to dashboard
-7. If phone already verified: Full access
-8. If phone NOT verified: Phone gate modal appears
-```
+- `lib/data/services/auth_service.dart`
+  - Email signup/login
+  - Google OAuth start
+  - OTP send/verify for SMS and phone-change flow
+  - Password/email update and sign out
 
-### Flow 3: Manual Authentication Signup (New Account)
+### 2.3 Database/RPC integration
 
-```
-1. User on signup tab
-2. Fills: Name, Email, Phone, Password, Confirm Password
-3. All fields validated
-4. AuthProvider creates OwnerModel with:
-   - authMethods: ['email']
-   - hasPassword: true
-5. Dashboard loaded with phone verification modal
-6. [Same OTP flow as Google signup]
-7. Phone verified → Dashboard unlocked
-8. [Optional] Owner can click "Back to Login" to sign out
-```
+- `lib/data/services/database_service.dart`
+  - Owner/player profile creation and lookup
+  - Global phone availability checks
+  - Pending signup upsert/get/finalize
+  - Owner OTP sync (`sync_owner_after_otp`)
 
-### Flow 4: Manual Authentication Login (Existing Account)
+### 2.4 Shared auth UI utilities
 
-```
-1. User on login tab
-2. Toggles available:
-   - Email + Password (always shown for manual users)
-   - Phone OTP
-   - [Google option varies by site configuration]
-3. User enters email + password
-4. Credentials verified
-5. Session created
-6. Redirected to dashboard
-7. If phone already verified: Full access
-8. If phone NOT verified: Phone gate modal appears
-```
+- `lib/features/auth/utils/auth_form_utils.dart`
+  - Shared validation and normalization
+  - Email, password, OTP, phone validators and formatters
 
-### Flow 5: Google User Unlocks Manual Login (Password Update)
-
-**Scenario**: Google-only user wants to also login with email+password
-
-```
-1. Owner in Profile section or Forgot Password flow
-2. Sets/creates password
-3. Calls: authProvider.setPasswordForGoogleUser(newPassword)
-4. AuthProvider:
-   a) Validates password strength
-   b) Updates Supabase auth password
-   c) Updates database: has_password = true
-5. On next login: Owner now has 3 options:
-   - Email + Password (newly enabled)
-   - Phone OTP
-   - Login with Google
-```
+- `lib/features/auth/widgets/pending_signup_verification_dialog.dart`
+  - Shared OTP verification modal for pending owner/player signups
 
 ---
 
-## 4. Implementation Status
+## 3. App Startup and Session Routing
 
-### ✅ Completed Components
+### Splash flow
 
-| Component                       | File                          | Status       |
-| ------------------------------- | ----------------------------- | ------------ |
-| hasPassword field               | `owner_model.dart`            | ✅ Completed |
-| Manual signup sets hasPassword  | `auth_provider.dart`          | ✅ Completed |
-| setPasswordForGoogleUser()      | `auth_provider.dart`          | ✅ Completed |
-| createOwnerProfile param update | `database_service.dart`       | ✅ Completed |
-| Back button in phone gate       | `owner_dashboard_screen.dart` | ✅ Completed |
-| Confirmation dialog             | `owner_dashboard_screen.dart` | ✅ Completed |
-| Migration file                  | `supabase/migrations/`        | ✅ Completed |
+- `lib/features/auth/screens/splash_screen.dart`
 
-### ✅ Compilation Status
+Routing logic on startup:
 
-All files compile **without errors**:
-
-- ✅ `owner_model.dart`
-- ✅ `auth_provider.dart`
-- ✅ `database_service.dart`
-- ✅ `owner_dashboard_screen.dart`
-- ✅ `owner_auth_screen.dart`
+1. Check existing auth session via `authProvider.checkAuthState()`.
+2. If authenticated with owner profile -> route to owner dashboard.
+3. If authenticated with player profile -> route to player home.
+4. If authenticated but pending signup exists:
+   - pending owner -> route to owner auth screen
+   - pending player -> route to player auth screen
+5. Otherwise -> route to login selection.
 
 ---
 
-## 5. Remaining Backend Setup
+## 4. Owner Flows
 
-The following **backend RPC functions** need to be created/updated in Supabase:
+### 4.1 Owner email/password login
 
-### 1. Update create_owner_profile RPC
+Entry screen: `lib/features/auth/screens/owner_auth_screen.dart`
 
-```sql
-CREATE OR REPLACE FUNCTION create_owner_profile(
-  user_id UUID,
-  user_name TEXT,
-  user_email TEXT,
-  user_phone TEXT,
-  user_has_password BOOLEAN DEFAULT false
-)
-RETURNS void AS $$
-BEGIN
-  INSERT INTO owners (id, name, email, phone, has_password, auth_methods, created_at)
-  VALUES (user_id, user_name, user_email, user_phone, user_has_password, ARRAY['email'], NOW())
-  ON CONFLICT (id) DO UPDATE SET
-    has_password = EXCLUDED.has_password,
-    updated_at = NOW();
-END;
-$$ LANGUAGE plpgsql SECURITY DEFINER;
+Flow:
 
--- Grant permissions
-GRANT EXECUTE ON FUNCTION create_owner_profile TO authenticated, anon;
-```
+1. User chooses Owner -> Login -> Email.
+2. `authProvider.signIn(email, password)`.
+3. Provider ensures account is owner role, signs out if role mismatch.
+4. On success, app continues to owner dashboard readiness checks.
 
-### 2. Run Migration
+### 4.2 Owner phone OTP login (existing owner)
 
-```bash
-supabase migration up
-```
+Entry screen: `lib/features/auth/screens/owner_auth_screen.dart`
 
-Or manually run:
+Flow:
 
-```sql
-ALTER TABLE owners ADD COLUMN has_password BOOLEAN DEFAULT false;
-CREATE INDEX idx_owners_has_password ON owners(has_password);
-```
+1. User chooses Owner -> Login -> Phone.
+2. Send OTP: `authProvider.verifyPhone(phone)`.
+3. Provider verifies owner exists by phone.
+4. Verify OTP: `authProvider.verifyOTP(code)`.
+5. Provider loads owner profile and syncs OTP auth method.
 
----
+### 4.3 Owner manual signup (deferred + OTP)
 
-## 6. Testing Scenarios
+Entry screen: `lib/features/auth/screens/owner_auth_screen.dart`
 
-### Test Case 1: Google User Signup → Phone Gate → Dashboard
+Flow:
 
-1. [ ] Click "Sign Up with Google"
-2. [ ] Complete Google auth
-3. [ ] Phone verification modal appears with blurred background
-4. [ ] Enter phone → OTP sent
-5. [ ] Enter OTP → Verified
-6. [ ] Dashboard unlocks
-7. [ ] Check database: `has_password = false`, `auth_methods = ['google', 'otp']`
+1. User fills name/email/phone/password.
+2. `authProvider.signUp(..., role: owner)`:
+   - creates Supabase auth user
+   - saves pending signup via RPC
+   - stores deferred signup state in provider
+3. Shared pending signup OTP dialog is shown.
+4. OTP verify finalizes pending signup via RPC.
+5. Owner profile is loaded and user can proceed.
 
-### Test Case 2: Google User Signup → Back to Login
+### 4.4 Owner Google flow
 
-1. [ ] Click "Sign Up with Google"
-2. [ ] Complete Google auth
-3. [ ] Phone gate appears
-4. [ ] Click "Back to Login"
-5. [ ] Confirmation dialog shown
-6. [ ] Click "Go Back to Login"
-7. [ ] Session cleared, redirected to login screen
-8. [ ] Account still exists (not deleted)
+Entry screen: `lib/features/auth/screens/owner_auth_screen.dart`
 
-### Test Case 3: Manual Signup → Phone Gate → Dashboard
+Flow:
 
-1. [ ] On signup tab, fill all fields (name, email, phone, password)
-2. [ ] Click "Sign Up"
-3. [ ] Phone verification modal appears
-4. [ ] Complete OTP flow
-5. [ ] Dashboard unlocks
-6. [ ] Check database: `has_password = true`, `auth_methods = ['email', 'otp']`
+1. User taps Google (login or signup path).
+2. `authProvider.signInOwnerWithGoogle()`.
+3. Provider behavior:
+   - existing owner profile -> continue (and ensure `google` auth method)
+   - no profile -> create pending signup and require OTP finalization
+   - cross-role conflict -> blocks with clear message
 
-### Test Case 4: Manual Login
+### 4.5 Owner dashboard phone verification lock
 
-1. [ ] On login tab, email toggle selected
-2. [ ] Enter email + password
-3. [ ] Click "Login with Email"
-4. [ ] If phone verified: Dashboard with full access
-5. [ ] If phone not verified: Phone gate appears
+Screen: `lib/features/owner/screens/owner_dashboard_screen.dart`
 
-### Test Case 5: Google User Sets Password
+Behavior:
 
-1. [ ] Google user in profile/settings
-2. [ ] Triggers password set flow
-3. [ ] Calls `setPasswordForGoogleUser(newPassword)`
-4. [ ] Password successfully set
-5. [ ] Check database: `has_password = true`
-6. [ ] Logout and login with email+password
-7. [ ] Works as expected
+- If owner phone is unverified or pending, dashboard shows verification lock overlay.
+- Owner must send/verify OTP to unlock full access.
+- Supports resend/edit number.
+- Allows "Back to Login" or "Cancel Signup" with confirmation.
+
+### 4.6 Owner forgot password by OTP
+
+Screen: `lib/features/auth/screens/owner_auth_screen.dart`
+
+Flow:
+
+1. Enter email.
+2. Provider resolves registered phone.
+3. Send OTP and verify OTP.
+4. Set new password.
+5. Provider sets `has_password=true` and ensures `email` auth method.
 
 ---
 
-## 7. Key Design Decisions
+## 5. Player Flows
 
-### Decision 1: hasPassword Flag Instead of Query Auth Methods
+### 5.1 Player email/password login
 
-- **Why**: Simpler, faster database queries
-- **When**: Only for determining if manual login is available
-- **Alternative Considered**: Query Supabase auth for password existence (slower)
+Entry screen: `lib/features/auth/screens/player_auth_screen.dart`
 
-### Decision 2: Back Button Signs Out Completely
+Flow:
 
-- **Why**: Ensures clean session state, prevents token confusion
-- **When**: User confirms going back from phone gate
-- **Alternative Considered**: Keep session and return to signup (risky with partial state)
+1. User chooses Player -> Login.
+2. `authProvider.signInPlayer(email, password)`.
+3. Provider ensures account is player role, signs out on mismatch.
+4. On success -> player home.
 
-### Decision 3: Phone Gate at Dashboard Level (Not Auth Level)
+### 5.2 Player Google flow
 
-- **Why**: Better UX (shows dashboard preview while locked), simpler routing
-- **When**: After any signup or new phone verification needed
-- **Alternative**: Auth-level gate (rejected - worse UX)
+Entry screen: `lib/features/auth/screens/player_auth_screen.dart`
 
-### Decision 4: Progressive Password Unlock (setPasswordForGoogleUser)
+Flow:
 
-- **Why**: Gives Google users choice to add password later
-- **When**: User in settings/profile/forgot-password screens
-- **Alternative**: Mandate password at signup (rejected - worse UX)
+1. User taps Google.
+2. `authProvider.signInPlayerWithGoogle()`.
+3. Provider behavior:
+   - existing player profile -> continue (and ensure `google` auth method)
+   - no profile -> pending signup created and OTP required
+   - cross-role conflict -> blocked
 
----
+### 5.3 Player manual signup (deferred + OTP)
 
-## 8. Error Handling
+Entry screen: `lib/features/auth/screens/player_auth_screen.dart`
 
-All authentication methods include friendly error messages:
+Flow:
 
-- **Invalid Credentials**: "Invalid email or password."
-- **Account Exists**: "Account already exists. Please log in instead."
-- **Network Error**: "Network issue. Please check your connection and try again."
-- **Password Too Weak**: "Password must be at least 8 characters with uppercase, lowercase, number, and special character."
-- **Google Not Configured**: "Google login is not configured yet. Please contact support."
-- **SMS Not Configured**: "Phone OTP is not configured yet. Please use email login for now."
+1. User fills signup form and submits.
+2. `authProvider.signUp(..., role: player)`.
+3. Shared pending signup OTP dialog is shown.
+4. OTP verification finalizes pending signup and creates player profile.
+5. On success -> player home.
 
----
+### 5.4 Player phone OTP note
 
-## 9. Security Considerations
+Current implementation does **not** expose a standalone player phone-login tab.
 
-✅ **Password Strength**: 8+ chars, uppercase, lowercase, number, special char
-✅ **Session Management**: All auth changes trigger refresh
-✅ **RLS Policies**: Database RPC uses SECURITY DEFINER
-✅ **OTP Verification**: Required before dashboard access
-✅ **Logout on Back**: Prevents unattended session exposure
+- `sendPlayerOtp()` is currently used only for pending player signup verification context.
 
 ---
 
-## 10. File Summary
+## 6. OTP Flow Mapping (Provider State Machine)
 
-| File                          | Changes                                     | Lines | Status |
-| ----------------------------- | ------------------------------------------- | ----- | ------ |
-| `owner_model.dart`            | +hasPassword field                          | +15   | ✅     |
-| `auth_provider.dart`          | +setPasswordForGoogleUser() + signup update | +60   | ✅     |
-| `database_service.dart`       | +hasPassword param                          | +3    | ✅     |
-| `owner_dashboard_screen.dart` | +Back button + confirmation                 | +40   | ✅     |
-| `migration file`              | +new schema changes                         | +20   | ✅     |
+Provider enum: `_OtpFlow`
 
-**Total**: 5 files modified, 138 lines added, 0 errors, 100% compilation success
+- `ownerLogin`
+  - send: `signInWithOtp(shouldCreateUser: false)`
+  - verify: `verifyOTP(type: sms)`
 
----
+- `playerLogin`
+  - send: `signInWithOtp(shouldCreateUser: true)`
+  - verify: `verifyOTP(type: sms)`
+  - used in constrained paths only
 
-## 11. Deployment Checklist
+- `ownerPhoneVerification`
+  - send: `updateUser(phone)`
+  - verify: `verifyOTP(type: phoneChange)`
 
-- [ ] Run Supabase migration: `supabase migration up`
-- [ ] Update backend RPC function `create_owner_profile`
-- [ ] Test all authentication flows locally
-- [ ] Deploy Flutter app to TestFlight/Android beta
-- [ ] Monitor auth errors in production
-- [ ] Verify phone gate appears correctly
-- [ ] Verify back button works and clears session
-- [ ] Test password setting for Google users
+- `deferredSignup`
+  - send: `updateUser(phone)`
+  - verify: `verifyOTP(type: phoneChange)`
+  - then finalize pending signup via RPC
 
----
-
-## 12. Future Enhancements
-
-**Potential future additions** (not in current scope):
-
-- Track last login method per session
-- Show "Last used: Google" hint on login screen
-- Allow Google users to remove password setting
-- Implement "Sign in with Apple" for iOS
-- Add biometric authentication option
-- Passwordless email link login option
+- `forgotPassword`
+  - send: `signInWithOtp`
+  - verify: `verifyOTP(type: sms)`
 
 ---
 
-**Document Version**: 1.0  
-**Last Updated**: March 21, 2026  
-**Implementation Complete**: ✅ Yes  
-**All Tests Passing**: ✅ Zero Compilation Errors
+## 7. Data Model and Auth Metadata
+
+### Owner model
+
+- `lib/data/models/owner_model.dart`
+- Key auth fields:
+  - `authMethods`
+  - `hasPassword`
+  - `phone`
+
+### Player model
+
+- `lib/data/models/player_model.dart`
+- Key auth fields:
+  - `authMethods`
+  - `hasPassword`
+  - `phone`
+
+### Deferred signup TTL
+
+- `lib/core/utils/auth_flow_rules.dart`
+- Pending signup expires after 30 minutes (`deferredSignupTtl`).
+
+---
+
+## 8. Required Supabase Functions / RPC Contracts
+
+The current implementation depends on the following RPC functions:
+
+- `check_owner_exists`
+- `create_owner_profile`
+- `create_player_profile`
+- `check_phone_availability`
+- `upsert_pending_signup`
+- `get_pending_signup`
+- `finalize_pending_signup`
+- `sync_owner_after_otp`
+
+If any of these are missing/misaligned, signup/verification behavior can fail or partially complete.
+
+---
+
+## 9. Validation and Security Behaviors
+
+Shared auth validation now lives in `auth_form_utils.dart`:
+
+- Email format validation
+- Indian phone input validation and normalization to E.164-style `+91xxxxxxxxxx`
+- OTP format validation (6 digits)
+- Password strength validation
+
+Additional protections:
+
+- Global phone conflict checks before OTP send and before finalize
+- Role mismatch protection on login
+- Blocking dialog messages for cross-account conflicts
+- Fallback error mapping for auth/provider/network failures
+
+---
+
+## 10. Known Implementation Notes
+
+1. OTP provider path in current code is Supabase Auth OTP APIs.
+2. MSG91 is not wired as a primary OTP backend in this code path yet.
+3. Owner dashboard contains a separate in-dashboard verification lock for unverified phone access.
+
+---
+
+## 11. Quick Test Matrix
+
+### Owner
+
+- Email login success/failure and role mismatch handling
+- Phone OTP login success/failure
+- Manual signup -> pending dialog -> OTP -> finalize
+- Google signin/signup -> pending handling where profile missing
+- Dashboard phone lock verify + resend + cancel/back behavior
+- Forgot password OTP -> set new password
+
+### Player
+
+- Email login success/failure and role mismatch handling
+- Manual signup -> pending dialog -> OTP -> finalize
+- Google signin/signup -> pending handling where profile missing
+- Resume pending signup on relaunch
+
+---
+
+## 12. File Index
+
+- `lib/features/auth/providers/auth_provider.dart`
+- `lib/data/services/auth_service.dart`
+- `lib/data/services/database_service.dart`
+- `lib/features/auth/screens/splash_screen.dart`
+- `lib/features/auth/screens/owner_auth_screen.dart`
+- `lib/features/auth/screens/player_auth_screen.dart`
+- `lib/features/auth/widgets/pending_signup_verification_dialog.dart`
+- `lib/features/auth/utils/auth_form_utils.dart`
+- `lib/features/owner/screens/owner_dashboard_screen.dart`
+- `lib/core/utils/auth_flow_rules.dart`

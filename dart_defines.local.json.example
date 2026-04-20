@@ -1,5 +1,6 @@
 {
   "SUPABASE_URL": "SUPABASE_URL",
   "SUPABASE_ANON_KEY": "SUPABASE_ANON_KEY",
-  "STORAGE_BUCKET": "turf-images"
+  "STORAGE_BUCKET": "turf-images",
+  "API_BASE_URL": "https://fieldpass-business.vercel.app/api"
 }
