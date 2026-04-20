@@ -17,10 +17,18 @@ class StorageService {
   );
 
   // API base URL for server-side uploads (bypasses CORS)
-  static const String _apiBaseUrl = String.fromEnvironment(
+  static const String _apiBaseUrlDefine = String.fromEnvironment(
     'API_BASE_URL',
-    defaultValue: 'https://turf-app-lyart.vercel.app/api',
+    defaultValue: 'API_BASE_URL',
   );
+
+  static String get _apiBaseUrl {
+    final raw = _apiBaseUrlDefine.trim();
+    if (raw.isEmpty || raw == 'API_BASE_URL') {
+      return '';
+    }
+    return raw.endsWith('/') ? raw.substring(0, raw.length - 1) : raw;
+  }
 
   static String get _turfBucket {
     final raw = _storageBucketValue.trim();
@@ -58,7 +66,7 @@ class StorageService {
     final String name = fileName ?? '${_uuid.v4()}.jpg';
 
     // Use API proxy on web, direct upload on mobile
-    if (kIsWeb) {
+    if (kIsWeb && _apiBaseUrl.isNotEmpty) {
       return await _uploadViaApi(
         imageBytes: imageBytes,
         turfId: turfId,
@@ -82,6 +90,17 @@ class StorageService {
     required String fileName,
     int retryCount = 5,
   }) async {
+    if (_apiBaseUrl.isEmpty) {
+      debugPrint(
+          'Storage API upload skipped: missing API_BASE_URL dart-define');
+      return await _uploadDirect(
+        imageBytes: imageBytes,
+        turfId: turfId,
+        fileName: fileName,
+        retryCount: 3,
+      );
+    }
+
     Exception? lastError;
 
     // Sanitize turfId and fileName to prevent URI errors

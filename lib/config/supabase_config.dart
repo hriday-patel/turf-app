@@ -46,10 +46,13 @@ class SupabaseConfig {
   static const String _cachedAnonKey = 'runtime.supabase.anon_key';
 
   static const String runCommandHint =
-      "flutter run -d chrome --dart-define='SUPABASE_URL=<SUPABASE_URL>' --dart-define='SUPABASE_ANON_KEY=<SUPABASE_ANON_KEY>'";
+      "flutter run --dart-define='SUPABASE_URL=<SUPABASE_URL>' --dart-define='SUPABASE_ANON_KEY=<SUPABASE_ANON_KEY>'";
 
   static const String runFromFileHint =
-      'flutter run -d chrome --dart-define-from-file=dart_defines.local.json';
+      'flutter run --dart-define-from-file=dart_defines.local.json';
+
+  static const String releaseBuildHint =
+      'flutter build appbundle --release --dart-define-from-file=dart_defines.local.json';
 
   static const String restartHint =
       'Dart-define changes require stopping all existing flutter run sessions and launching again.';

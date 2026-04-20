@@ -6,7 +6,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 class AuthService {
   SupabaseClient get _client => Supabase.instance.client;
   static const String _androidOAuthRedirect =
-      'com.example.turf_app://login-callback/';
+      'com.fieldpass.business://login-callback';
 
   // Current user getters
   User? get currentUser => _client.auth.currentUser;

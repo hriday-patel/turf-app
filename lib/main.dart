@@ -63,7 +63,7 @@ void main() async {
                   ),
                   const SizedBox(height: 24),
                   const Text(
-                    'Please provide SUPABASE_URL and SUPABASE_ANON_KEY via --dart-define.\n\nPreferred:\n${SupabaseConfig.runFromFileHint}\n\nDirect:\n${SupabaseConfig.runCommandHint}\n\n${SupabaseConfig.restartHint}',
+                    'Please provide SUPABASE_URL and SUPABASE_ANON_KEY via --dart-define.\n\nPreferred:\n${SupabaseConfig.runFromFileHint}\n\nDirect:\n${SupabaseConfig.runCommandHint}\n\nRelease build:\n${SupabaseConfig.releaseBuildHint}\n\n${SupabaseConfig.restartHint}',
                     textAlign: TextAlign.center,
                   ),
                 ],

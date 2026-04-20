@@ -1,7 +1,7 @@
 name: turf_app
 description: A production-ready mobile app for booking Box Cricket / Turf slots.
 publish_to: "none"
-version: 1.0.0+1
+version: 1.0.2+3
 
 environment:
   sdk: ">=3.0.0 <4.0.0"

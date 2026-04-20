@@ -18,40 +18,40 @@ class LoginSelectionScreen extends StatelessWidget {
           children: [
             const AbstractBgShapes(),
             SafeArea(
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 24),
-            child: Column(
-              children: [
-                const Spacer(flex: 1),
-                
-                // App Branding
-                _buildBranding(context),
-                
-                const Spacer(flex: 1),
-                
-                // Player Login Button (Primary)
-                _buildPlayerButton(context),
-                
-                const SizedBox(height: 16),
-                
-                // OR Divider
-                _buildDivider(context),
-                
-                const SizedBox(height: 16),
-                
-                // Feature Highlights
-                _buildFeatureHighlights(context),
-                
-                const Spacer(flex: 2),
-                
-                // Owner Login Link
-                _buildOwnerLink(context),
-                
-                const SizedBox(height: 32),
-              ],
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 24),
+                child: Column(
+                  children: [
+                    const Spacer(flex: 1),
+
+                    // App Branding
+                    _buildBranding(context),
+
+                    const Spacer(flex: 1),
+
+                    // Player Login Button (Primary)
+                    _buildPlayerButton(context),
+
+                    const SizedBox(height: 16),
+
+                    // OR Divider
+                    _buildDivider(context),
+
+                    const SizedBox(height: 16),
+
+                    // Feature Highlights
+                    _buildFeatureHighlights(context),
+
+                    const Spacer(flex: 2),
+
+                    // Owner Login Link
+                    _buildOwnerLink(context),
+
+                    const SizedBox(height: 32),
+                  ],
+                ),
+              ),
             ),
-          ),
-          ),
           ],
         ),
       ),
@@ -79,7 +79,7 @@ class LoginSelectionScreen extends StatelessWidget {
           ),
         ),
         const SizedBox(height: 24),
-        
+
         // App Name
         Text(
           AppStrings.appName,
@@ -91,7 +91,7 @@ class LoginSelectionScreen extends StatelessWidget {
           ),
         ),
         const SizedBox(height: 8),
-        
+
         // Tagline
         Text(
           AppStrings.appTagline,
@@ -164,7 +164,8 @@ class LoginSelectionScreen extends StatelessWidget {
     );
   }
 
-  Widget _buildFeatureRow(BuildContext context, IconData icon, String title, String subtitle) {
+  Widget _buildFeatureRow(
+      BuildContext context, IconData icon, String title, String subtitle) {
     final c = AppColors.of(context);
     return Row(
       children: [
@@ -208,8 +209,9 @@ class LoginSelectionScreen extends StatelessWidget {
 
   Widget _buildOwnerLink(BuildContext context) {
     final c = AppColors.of(context);
-    return Row(
-      mainAxisAlignment: MainAxisAlignment.center,
+    return Wrap(
+      alignment: WrapAlignment.center,
+      crossAxisAlignment: WrapCrossAlignment.center,
       children: [
         Text(
           'Are you a turf owner? ',
@@ -225,6 +227,8 @@ class LoginSelectionScreen extends StatelessWidget {
           ),
           child: Text(
             AppStrings.loginAsOwner,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
             style: TextStyle(
               fontSize: 14,
               fontWeight: FontWeight.w600,

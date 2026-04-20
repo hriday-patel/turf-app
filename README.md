@@ -6,7 +6,7 @@ Production-focused Flutter app for turf owners and players, built on Supabase.
 
 - Frontend: Flutter + Provider
 - Backend/Data: Supabase (Auth + Postgres + RLS)
-- Serverless utilities: Vercel functions in api/
+- Serverless utilities: Node serverless handlers in api/
 - Media storage: Supabase Storage via direct upload + API proxy
 
 ## Local Setup
@@ -29,13 +29,26 @@ flutter run -d chrome \
   --dart-define=STORAGE_BUCKET=STORAGE_BUCKET
 ```
 
-3. Configure serverless environment (Vercel)
+For Android release builds, use the PowerShell helper to ensure required
+Supabase runtime config is embedded into the AAB:
+
+```powershell
+./scripts/build_android_release.ps1 -SupabaseUrl "SUPABASE_URL" -SupabaseAnonKey "SUPABASE_ANON_KEY" -StorageBucket "STORAGE_BUCKET"
+```
+
+3. Configure serverless environment (hosting platform of your choice)
 
 - SUPABASE_URL
 - SUPABASE_SERVICE_ROLE_KEY
 - STORAGE_BUCKET
 - WHATSAPP_API_KEY
 - WHATSAPP_PHONE_ID
+
+Optional runtime define for app calls to your serverless APIs:
+
+```bash
+--dart-define=API_BASE_URL=https://<your-api-domain>/api
+```
 
 ## Supabase Migration Steps
 
