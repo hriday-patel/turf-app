@@ -20,11 +20,8 @@ class DatabaseService {
       });
       return result == true;
     } catch (e) {
-      // RPC failed - this is expected if function not deployed
-      // Return false to allow signup attempt - unique constraint will catch duplicates
-      // This is safe because createOwnerProfile uses security definer RPC
       debugPrint('check_owner_exists RPC failed: $e');
-      return false;
+      rethrow;
     }
   }
 

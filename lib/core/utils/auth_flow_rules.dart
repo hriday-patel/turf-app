@@ -25,4 +25,14 @@ class AuthFlowRules {
     final phone = value.trim();
     return phone.isNotEmpty && !phone.startsWith('pending_');
   }
+
+  static bool requiresOwnerPhoneVerificationGate({
+    required bool hasPendingOwnerSignup,
+    required String ownerPhone,
+  }) {
+    if (hasPendingOwnerSignup) {
+      return true;
+    }
+    return !isVerifiedPhone(ownerPhone);
+  }
 }

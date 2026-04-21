@@ -594,9 +594,7 @@ class _OwnerDashboardScreenState extends State<OwnerDashboardScreen>
   @override
   Widget build(BuildContext context) {
     final authProvider = Provider.of<AuthProvider>(context);
-    final isPhoneLocked = authProvider.isInDeferredSignupFlow ||
-        (authProvider.currentOwner != null &&
-            !authProvider.isOwnerPhoneVerified);
+    final isPhoneLocked = authProvider.requiresOwnerPhoneVerificationGate;
 
     final c = AppColors.of(context);
     return Stack(

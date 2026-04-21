@@ -58,31 +58,39 @@ class _SplashScreenState extends State<SplashScreen>
     if (!mounted) return;
 
     final authProvider = Provider.of<AuthProvider>(context, listen: false);
-    final isAuthenticated = await authProvider.checkAuthState();
+    await authProvider.checkAuthState();
 
     if (!mounted) return;
 
-    if (isAuthenticated) {
-      if (authProvider.currentUserRole == UserRole.owner) {
-        Navigator.pushReplacementNamed(context, AppRoutes.ownerDashboard);
+    final hasSession = authProvider.currentUserId != null;
+    if (!hasSession) {
+      Navigator.pushReplacementNamed(context, AppRoutes.loginSelection);
+      return;
+    }
+
+    if (authProvider.currentUserRole == UserRole.owner) {
+      Navigator.pushReplacementNamed(context, AppRoutes.ownerDashboard);
+      return;
+    }
+
+    if (authProvider.currentUserRole == UserRole.player) {
+      Navigator.pushReplacementNamed(context, AppRoutes.playerHome);
+      return;
+    }
+
+    if (authProvider.hasPendingSignup && !authProvider.isPendingSignupExpired) {
+      if (authProvider.pendingSignupRole == UserRole.owner) {
+        Navigator.pushReplacementNamed(context, AppRoutes.ownerAuth);
         return;
       }
-      if (authProvider.currentUserRole == UserRole.player) {
-        Navigator.pushReplacementNamed(context, AppRoutes.playerHome);
+      if (authProvider.pendingSignupRole == UserRole.player) {
+        Navigator.pushReplacementNamed(context, AppRoutes.playerAuth);
         return;
-      }
-      if (authProvider.hasPendingSignup) {
-        if (authProvider.pendingSignupRole == UserRole.owner) {
-          Navigator.pushReplacementNamed(context, AppRoutes.ownerAuth);
-          return;
-        }
-        if (authProvider.pendingSignupRole == UserRole.player) {
-          Navigator.pushReplacementNamed(context, AppRoutes.playerAuth);
-          return;
-        }
       }
     }
 
+    await authProvider.signOut();
+    if (!mounted) return;
     Navigator.pushReplacementNamed(context, AppRoutes.loginSelection);
   }
 

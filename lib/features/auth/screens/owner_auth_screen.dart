@@ -8,7 +8,6 @@ import '../../../app/routes.dart';
 import '../../../core/constants/enums.dart';
 import '../../../core/utils/app_toast.dart';
 import '../utils/auth_form_utils.dart';
-import '../widgets/pending_signup_verification_dialog.dart';
 
 class OwnerAuthScreen extends StatefulWidget {
   const OwnerAuthScreen({super.key});
@@ -47,12 +46,14 @@ class _OwnerAuthScreenState extends State<OwnerAuthScreen>
   final _signupPhoneController = TextEditingController();
   final _signupPasswordController = TextEditingController();
   final _signupConfirmPasswordController = TextEditingController();
+  final _googlePhoneController = TextEditingController();
 
   // Form Keys
   final _loginEmailFormKey = GlobalKey<FormState>();
   final _loginPhoneFormKey = GlobalKey<FormState>();
   final _signupFormKey = GlobalKey<FormState>();
   final _forgotPasswordFormKey = GlobalKey<FormState>();
+  final _googlePhoneFormKey = GlobalKey<FormState>();
 
   @override
   void initState() {
@@ -65,6 +66,10 @@ class _OwnerAuthScreenState extends State<OwnerAuthScreen>
           if (_tabController.index == 1) _otpSent = false;
         });
       }
+    });
+
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      await _resumePendingOwnerSignupIfNeeded();
     });
   }
 
@@ -80,6 +85,7 @@ class _OwnerAuthScreenState extends State<OwnerAuthScreen>
     _signupPhoneController.dispose();
     _signupPasswordController.dispose();
     _signupConfirmPasswordController.dispose();
+    _googlePhoneController.dispose();
     _forgotEmailController.dispose();
     _forgotOtpController.dispose();
     _forgotNewPasswordController.dispose();
@@ -88,6 +94,26 @@ class _OwnerAuthScreenState extends State<OwnerAuthScreen>
   }
 
   // ==================== ACTIONS ====================
+
+  Future<void> _resumePendingOwnerSignupIfNeeded() async {
+    if (!mounted) return;
+    final authProvider = Provider.of<AuthProvider>(context, listen: false);
+    if (!authProvider.hasPendingSignup ||
+        authProvider.pendingSignupRole != UserRole.owner) {
+      return;
+    }
+
+    if (authProvider.requiresOwnerGooglePhoneCollection) {
+      setState(() {
+        _googlePhoneController.clear();
+      });
+      return;
+    }
+
+    final ready = await authProvider.ensureOwnerReadyForDashboard();
+    if (!mounted || !ready) return;
+    Navigator.pushReplacementNamed(context, AppRoutes.ownerDashboard);
+  }
 
   Future<void> _handleEmailLogin() async {
     if (!_loginEmailFormKey.currentState!.validate()) return;
@@ -99,7 +125,7 @@ class _OwnerAuthScreenState extends State<OwnerAuthScreen>
     );
 
     if (success && mounted) {
-      await _continueToOwnerDashboardOrPhoneGate(authProvider);
+      await _continueToOwnerDashboard(authProvider);
     } else if (mounted && authProvider.errorMessage != null) {
       await _showProviderError(authProvider);
     }
@@ -137,7 +163,7 @@ class _OwnerAuthScreenState extends State<OwnerAuthScreen>
         await authProvider.verifyOTP(_loginOtpController.text.trim());
 
     if (success && mounted) {
-      await _continueToOwnerDashboardOrPhoneGate(authProvider);
+      await _continueToOwnerDashboard(authProvider);
     } else if (mounted && authProvider.errorMessage != null) {
       await _showProviderError(authProvider);
     }
@@ -159,7 +185,7 @@ class _OwnerAuthScreenState extends State<OwnerAuthScreen>
     );
 
     if (success && mounted) {
-      await _continueToOwnerDashboardOrPhoneGate(authProvider);
+      await _continueToOwnerDashboard(authProvider);
     } else if (mounted && authProvider.errorMessage != null) {
       await _showProviderError(authProvider);
     }
@@ -178,10 +204,34 @@ class _OwnerAuthScreenState extends State<OwnerAuthScreen>
     final success = await authProvider.signInOwnerWithGoogle();
 
     if (success && mounted) {
-      await _continueToOwnerDashboardOrPhoneGate(authProvider);
+      if (authProvider.requiresOwnerGooglePhoneCollection) {
+        setState(() {
+          _googlePhoneController.clear();
+        });
+        return;
+      }
+      await _continueToOwnerDashboard(authProvider);
     } else if (mounted && authProvider.errorMessage != null) {
       await _showProviderError(authProvider);
     }
+  }
+
+  Future<void> _handleGooglePhoneCollectionContinue() async {
+    if (!_googlePhoneFormKey.currentState!.validate()) return;
+
+    final authProvider = Provider.of<AuthProvider>(context, listen: false);
+    final normalizedPhone =
+        AuthFormUtils.normalizeIndianPhone(_googlePhoneController.text);
+    final staged =
+        await authProvider.stageOwnerGoogleSignupPhone(normalizedPhone);
+    if (!mounted) return;
+
+    if (!staged) {
+      await _showProviderError(authProvider);
+      return;
+    }
+
+    await _continueToOwnerDashboard(authProvider);
   }
 
   // ==================== FORGOT PASSWORD HANDLERS ====================
@@ -277,12 +327,7 @@ class _OwnerAuthScreenState extends State<OwnerAuthScreen>
     return 'xxxxxx$last4';
   }
 
-  Future<void> _continueToOwnerDashboardOrPhoneGate(
-      AuthProvider authProvider) async {
-    final pendingCompleted =
-        await _completePendingOwnerSignupIfNeeded(authProvider);
-    if (!mounted || !pendingCompleted) return;
-
+  Future<void> _continueToOwnerDashboard(AuthProvider authProvider) async {
     final ready = await authProvider.ensureOwnerReadyForDashboard();
     if (!mounted) return;
 
@@ -295,21 +340,6 @@ class _OwnerAuthScreenState extends State<OwnerAuthScreen>
     }
 
     Navigator.pushReplacementNamed(context, AppRoutes.ownerDashboard);
-  }
-
-  Future<bool> _completePendingOwnerSignupIfNeeded(
-      AuthProvider authProvider) async {
-    if (!authProvider.isInDeferredSignupFlow ||
-        authProvider.pendingSignupRole != UserRole.owner) {
-      return true;
-    }
-
-    return await showPendingSignupVerificationDialog(
-      context: context,
-      authProvider: authProvider,
-      role: UserRole.owner,
-      initialPhone: authProvider.deferredSignupPhone,
-    );
   }
 
   Future<void> _showProviderError(AuthProvider authProvider) async {
@@ -348,15 +378,28 @@ class _OwnerAuthScreenState extends State<OwnerAuthScreen>
     showAppToast(context, message, type: ToastType.success);
   }
 
+  void _seedGooglePhoneIfNeeded(AuthProvider authProvider) {
+    if (_googlePhoneController.text.trim().isNotEmpty) return;
+    final phone = authProvider.deferredSignupPhone.trim();
+    if (phone.isEmpty) return;
+    _googlePhoneController.text = AuthFormUtils.stripIndiaDialCode(phone);
+  }
+
   // ==================== UI BUILDERS ====================
 
   @override
   Widget build(BuildContext context) {
     final c = AppColors.of(context);
+    final authProvider = Provider.of<AuthProvider>(context);
 
     // Show forgot password flow if active
     if (_showForgotPassword) {
       return _buildForgotPasswordScreen();
+    }
+
+    if (authProvider.requiresOwnerGooglePhoneCollection) {
+      _seedGooglePhoneIfNeeded(authProvider);
+      return _buildGooglePhoneCollectionScreen();
     }
 
     return Scaffold(
@@ -492,6 +535,126 @@ class _OwnerAuthScreenState extends State<OwnerAuthScreen>
           else
             _buildPhoneLoginForm(),
         ],
+      ),
+    );
+  }
+
+  Widget _buildGooglePhoneCollectionScreen() {
+    final c = AppColors.of(context);
+    return Scaffold(
+      backgroundColor: c.background,
+      body: GlassScaffoldBackground(
+        child: Stack(
+          children: [
+            const AbstractBgShapes(),
+            SafeArea(
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.all(24),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        IconButton(
+                          icon: Icon(Icons.arrow_back_ios,
+                              color: c.textPrimary, size: 20),
+                          onPressed: () async {
+                            final authProvider = Provider.of<AuthProvider>(
+                                context,
+                                listen: false);
+                            await authProvider.cancelDeferredSignup();
+                            if (!mounted) return;
+                            Navigator.pushReplacementNamed(
+                              context,
+                              AppRoutes.loginSelection,
+                            );
+                          },
+                        ),
+                        Expanded(
+                          child: Text(
+                            'Complete Sign Up',
+                            textAlign: TextAlign.center,
+                            style: TextStyle(
+                              color: c.textPrimary,
+                              fontWeight: FontWeight.bold,
+                              fontSize: 18,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 48),
+                      ],
+                    ),
+                    const SizedBox(height: 30),
+                    Text(
+                      'Add Phone Number',
+                      style: TextStyle(
+                        color: c.textPrimary,
+                        fontSize: 24,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                    Text(
+                      'Google sign-in completed. Add your phone number to continue to dashboard. OTP verification will be required next.',
+                      style: TextStyle(
+                        color: c.textSecondary,
+                        fontSize: 14,
+                      ),
+                    ),
+                    const SizedBox(height: 22),
+                    Form(
+                      key: _googlePhoneFormKey,
+                      child: TextFormField(
+                        controller: _googlePhoneController,
+                        decoration: _inputDecoration(
+                                context, 'Phone Number', Icons.phone)
+                            .copyWith(
+                          prefixText: '+91 ',
+                          prefixStyle:
+                              const TextStyle(fontWeight: FontWeight.bold),
+                        ),
+                        keyboardType: TextInputType.phone,
+                        maxLength: 10,
+                        validator: (val) {
+                          if (val == null || val.trim().isEmpty) {
+                            return 'Phone number is required';
+                          }
+                          return AuthFormUtils.isValidIndianPhoneInput(val)
+                              ? null
+                              : 'Enter a valid 10-digit phone number';
+                        },
+                      ),
+                    ),
+                    const SizedBox(height: 18),
+                    _buildSubmitButton(
+                      'Continue to Dashboard',
+                      _handleGooglePhoneCollectionContinue,
+                    ),
+                    const SizedBox(height: 12),
+                    Center(
+                      child: TextButton(
+                        onPressed: () async {
+                          final authProvider =
+                              Provider.of<AuthProvider>(context, listen: false);
+                          await authProvider.cancelDeferredSignup();
+                          if (!mounted) return;
+                          Navigator.pushReplacementNamed(
+                            context,
+                            AppRoutes.loginSelection,
+                          );
+                        },
+                        child: Text(
+                          'Cancel Sign Up',
+                          style: TextStyle(color: c.textSecondary),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
