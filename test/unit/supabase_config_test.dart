@@ -1,5 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:turf_app/config/supabase_config.dart';
+import 'package:fieldpass_business/config/supabase_config.dart';
 
 void main() {
   group('SupabaseConfig', () {

@@ -1,5 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:turf_app/core/utils/booking_flow_rules.dart';
+import 'package:fieldpass_business/core/utils/booking_flow_rules.dart';
 
 void main() {
   group('BookingFlowRules', () {

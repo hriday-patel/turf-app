@@ -1,5 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:turf_app/core/utils/slot_business_rules.dart';
+import 'package:fieldpass_business/core/utils/slot_business_rules.dart';
 
 void main() {
   group('SlotBusinessRules', () {

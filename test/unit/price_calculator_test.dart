@@ -1,7 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:turf_app/core/utils/price_calculator.dart';
-import 'package:turf_app/data/models/turf_model.dart';
-import 'package:turf_app/core/constants/enums.dart';
+import 'package:fieldpass_business/core/utils/price_calculator.dart';
+import 'package:fieldpass_business/data/models/turf_model.dart';
+import 'package:fieldpass_business/core/constants/enums.dart';
 
 void main() {
   late PricingRules pricingRules;
@@ -14,22 +14,70 @@ void main() {
           netNumber: 1,
           netName: 'Net 1',
           weekday: DayTypePricing(
-            morning: TimeSlotPricing(label: 'Morning', startTime: '06:00', endTime: '12:00', price: 1000),
-            afternoon: TimeSlotPricing(label: 'Afternoon', startTime: '12:00', endTime: '18:00', price: 1100),
-            evening: TimeSlotPricing(label: 'Evening', startTime: '18:00', endTime: '00:00', price: 1200),
-            night: TimeSlotPricing(label: 'Night', startTime: '00:00', endTime: '06:00', price: 900),
+            morning: TimeSlotPricing(
+                label: 'Morning',
+                startTime: '06:00',
+                endTime: '12:00',
+                price: 1000),
+            afternoon: TimeSlotPricing(
+                label: 'Afternoon',
+                startTime: '12:00',
+                endTime: '18:00',
+                price: 1100),
+            evening: TimeSlotPricing(
+                label: 'Evening',
+                startTime: '18:00',
+                endTime: '00:00',
+                price: 1200),
+            night: TimeSlotPricing(
+                label: 'Night',
+                startTime: '00:00',
+                endTime: '06:00',
+                price: 900),
           ),
           weekend: DayTypePricing(
-            morning: TimeSlotPricing(label: 'Morning', startTime: '06:00', endTime: '12:00', price: 1400),
-            afternoon: TimeSlotPricing(label: 'Afternoon', startTime: '12:00', endTime: '18:00', price: 1500),
-            evening: TimeSlotPricing(label: 'Evening', startTime: '18:00', endTime: '00:00', price: 1600),
-            night: TimeSlotPricing(label: 'Night', startTime: '00:00', endTime: '06:00', price: 1300),
+            morning: TimeSlotPricing(
+                label: 'Morning',
+                startTime: '06:00',
+                endTime: '12:00',
+                price: 1400),
+            afternoon: TimeSlotPricing(
+                label: 'Afternoon',
+                startTime: '12:00',
+                endTime: '18:00',
+                price: 1500),
+            evening: TimeSlotPricing(
+                label: 'Evening',
+                startTime: '18:00',
+                endTime: '00:00',
+                price: 1600),
+            night: TimeSlotPricing(
+                label: 'Night',
+                startTime: '00:00',
+                endTime: '06:00',
+                price: 1300),
           ),
           holiday: DayTypePricing(
-            morning: TimeSlotPricing(label: 'Morning', startTime: '06:00', endTime: '12:00', price: 1800),
-            afternoon: TimeSlotPricing(label: 'Afternoon', startTime: '12:00', endTime: '18:00', price: 1900),
-            evening: TimeSlotPricing(label: 'Evening', startTime: '18:00', endTime: '00:00', price: 2000),
-            night: TimeSlotPricing(label: 'Night', startTime: '00:00', endTime: '06:00', price: 1700),
+            morning: TimeSlotPricing(
+                label: 'Morning',
+                startTime: '06:00',
+                endTime: '12:00',
+                price: 1800),
+            afternoon: TimeSlotPricing(
+                label: 'Afternoon',
+                startTime: '12:00',
+                endTime: '18:00',
+                price: 1900),
+            evening: TimeSlotPricing(
+                label: 'Evening',
+                startTime: '18:00',
+                endTime: '00:00',
+                price: 2000),
+            night: TimeSlotPricing(
+                label: 'Night',
+                startTime: '00:00',
+                endTime: '06:00',
+                price: 1700),
           ),
         ),
       ],
@@ -37,7 +85,6 @@ void main() {
   });
 
   group('PriceCalculator.calculateSlotPrice', () {
-    
     group('Weekday pricing', () {
       test('should apply weekday day price for Monday morning', () {
         // Monday, 2026-01-26 10:00
@@ -196,7 +243,8 @@ void main() {
 
   group('PriceCalculator.getPriceLabel', () {
     test('should return correct label for WEEKEND_MORNING', () {
-      expect(PriceCalculator.getPriceLabel('WEEKEND_MORNING'), 'Weekend (Morning)');
+      expect(PriceCalculator.getPriceLabel('WEEKEND_MORNING'),
+          'Weekend (Morning)');
     });
 
     test('should return correct label for HOLIDAY_NIGHT', () {
