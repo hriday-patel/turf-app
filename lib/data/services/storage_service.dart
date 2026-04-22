@@ -101,6 +101,14 @@ class StorageService {
 
     for (int attempt = 1; attempt <= retryCount; attempt++) {
       try {
+        // Server requires a valid Supabase Bearer token (S1) and verifies
+        // ownership of `turfId` before accepting the upload (S2).
+        final accessToken = _client.auth.currentSession?.accessToken;
+        if (accessToken == null || accessToken.isEmpty) {
+          debugPrint('API upload aborted: no active Supabase session');
+          return null;
+        }
+
         // Convert bytes to base64
         final String base64Image = base64Encode(imageBytes);
 
@@ -109,12 +117,14 @@ class StorageService {
               Uri.parse('$_apiBaseUrl/storage/upload-image'),
               headers: {
                 'Content-Type': 'application/json',
+                'Authorization': 'Bearer $accessToken',
               },
               body: jsonEncode({
+                // Server ignores client-supplied fileName/contentType (S3, S4)
+                // and generates its own. We still send turfId and the base64
+                // image; everything else is determined server-side.
                 'imageData': base64Image,
                 'turfId': sanitizedTurfId,
-                'fileName': sanitizedFileName,
-                'contentType': 'image/jpeg',
               }),
             )
             .timeout(const Duration(seconds: 90));

@@ -335,18 +335,57 @@ class _AddTurfScreenState extends State<AddTurfScreen> with RouteAware {
     }
   }
 
+  // U3: Image upload caps (must match server enforcement in api/storage/upload-image.js)
+  static const int _maxImagesPerTurf = 10;
+  static const int _maxImageBytes = 5 * 1024 * 1024; // 5 MB
+
   Future<void> _pickImages() async {
     try {
+      final int currentTotal = _existingImages.length + _selectedImages.length;
+      final int remainingSlots = _maxImagesPerTurf - currentTotal;
+      if (remainingSlots <= 0) {
+        _showError(
+            'You already have $_maxImagesPerTurf images. Remove some to add new ones.');
+        return;
+      }
+
       final List<XFile> images = await _imagePicker.pickMultiImage(
         maxWidth: 1920,
         maxHeight: 1080,
         imageQuality: 85,
       );
 
-      if (images.isNotEmpty) {
+      if (images.isEmpty) return;
+
+      // Truncate to remaining slot count.
+      final List<XFile> trimmed = images.length > remainingSlots
+          ? images.sublist(0, remainingSlots)
+          : images;
+
+      // Reject any over the per-image size cap before adding.
+      final List<XFile> accepted = [];
+      int rejectedTooLarge = 0;
+      for (final xf in trimmed) {
+        final bytes = await xf.length();
+        if (bytes > _maxImageBytes) {
+          rejectedTooLarge++;
+          continue;
+        }
+        accepted.add(xf);
+      }
+
+      if (accepted.isNotEmpty) {
         setState(() {
-          _selectedImages.addAll(images);
+          _selectedImages.addAll(accepted);
         });
+      }
+
+      if (images.length > remainingSlots) {
+        _showError(
+            'Only $remainingSlots more image(s) allowed (max $_maxImagesPerTurf per turf).');
+      } else if (rejectedTooLarge > 0) {
+        _showError(
+            '$rejectedTooLarge image(s) skipped — each must be 5 MB or smaller.');
       }
     } catch (e) {
       _showError('Failed to pick images: $e');
@@ -405,6 +444,8 @@ class _AddTurfScreenState extends State<AddTurfScreen> with RouteAware {
   }
 
   Future<void> _submitTurf() async {
+    // U4: Prevent double-submit. Set flag synchronously before any async work.
+    if (_isLoading) return;
     setState(() => _isLoading = true);
 
     try {
@@ -841,7 +882,13 @@ class _AddTurfScreenState extends State<AddTurfScreen> with RouteAware {
               label: 'Turf Name',
               hint: 'Champions Arena',
               prefixIcon: Icons.stadium,
-              validator: (v) => v?.isEmpty == true ? 'Required' : null,
+              maxLength: 60,
+              validator: (v) {
+                final t = v?.trim() ?? '';
+                if (t.isEmpty) return 'Required';
+                if (t.length > 60) return 'Max 60 characters';
+                return null;
+              },
             ),
             const SizedBox(height: 16),
 
@@ -854,7 +901,13 @@ class _AddTurfScreenState extends State<AddTurfScreen> with RouteAware {
               hint: '123, Sports Complex, Andheri West',
               prefixIcon: Icons.location_on,
               maxLines: 2,
-              validator: (v) => v?.isEmpty == true ? 'Required' : null,
+              maxLength: 200,
+              validator: (v) {
+                final t = v?.trim() ?? '';
+                if (t.isEmpty) return 'Required';
+                if (t.length > 200) return 'Max 200 characters';
+                return null;
+              },
             ),
             const SizedBox(height: 16),
 
@@ -872,6 +925,12 @@ class _AddTurfScreenState extends State<AddTurfScreen> with RouteAware {
               hint: 'Premium turf with floodlights and covered seating...',
               prefixIcon: Icons.description,
               maxLines: 3,
+              maxLength: 1000,
+              validator: (v) {
+                final t = v?.trim() ?? '';
+                if (t.length > 1000) return 'Max 1000 characters';
+                return null;
+              },
             ),
           ],
         ),
@@ -1276,7 +1335,20 @@ class _AddTurfScreenState extends State<AddTurfScreen> with RouteAware {
                     child: TextFormField(
                       controller: controllers[slot['label']!],
                       keyboardType: TextInputType.number,
-                      inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+                      inputFormatters: [
+                        FilteringTextInputFormatter.digitsOnly,
+                        LengthLimitingTextInputFormatter(5),
+                      ],
+                      // U2: Hard price bounds — ₹50 min, ₹50,000 max per slot
+                      validator: (v) {
+                        final raw = v?.trim() ?? '';
+                        if (raw.isEmpty) return 'Required';
+                        final n = int.tryParse(raw);
+                        if (n == null) return 'Invalid';
+                        if (n < 50) return 'Min ₹50';
+                        if (n > 50000) return 'Max ₹50,000';
+                        return null;
+                      },
                       decoration: InputDecoration(
                         prefixText: '₹ ',
                         border: OutlineInputBorder(
@@ -1663,6 +1735,7 @@ class _AddTurfScreenState extends State<AddTurfScreen> with RouteAware {
     required String hint,
     required IconData prefixIcon,
     int maxLines = 1,
+    int? maxLength,
     String? Function(String?)? validator,
   }) {
     final c = AppColors.of(context);
@@ -1681,6 +1754,10 @@ class _AddTurfScreenState extends State<AddTurfScreen> with RouteAware {
         TextFormField(
           controller: controller,
           maxLines: maxLines,
+          maxLength: maxLength,
+          inputFormatters: maxLength != null
+              ? [LengthLimitingTextInputFormatter(maxLength)]
+              : null,
           validator: validator,
           decoration: InputDecoration(
             hintText: hint,

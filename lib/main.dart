@@ -8,6 +8,7 @@ import 'features/owner/providers/slot_provider.dart';
 import 'features/owner/providers/booking_provider.dart';
 import 'config/supabase_config.dart';
 import 'config/theme_provider.dart';
+import 'data/services/secure_local_storage.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -22,9 +23,24 @@ void main() async {
     }
 
     // Initialize Supabase
+    final projectRef = Uri.parse(config.url).host.split('.').first;
+    final sessionStorageKey = 'sb-$projectRef-auth-token';
+
     await Supabase.initialize(
       url: config.url,
       anonKey: config.anonKey,
+      authOptions: FlutterAuthClientOptions(
+        authFlowType: AuthFlowType.pkce,
+        // Ensures the SDK consumes the OAuth code from the deep-link URI
+        // (com.fieldpass.business://login-callback?code=...) and exchanges
+        // it for a session automatically.
+        detectSessionInUri: true,
+        // Persist the session in platform-secure storage instead of plain
+        // SharedPreferences. Performs a one-time migration of any existing
+        // plaintext session on first run after upgrade.
+        localStorage: SecureLocalStorage(persistSessionKey: sessionStorageKey),
+        pkceAsyncStorage: const SecureGotrueAsyncStorage(),
+      ),
     );
 
     runApp(

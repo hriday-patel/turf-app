@@ -74,6 +74,87 @@ class _SettingsScreenState extends State<SettingsScreen> {
     return null;
   }
 
+  /// Prompt the user for their current account password.
+  /// Returns the entered password, or null if the dialog was cancelled.
+  /// Used as a defense-in-depth re-auth step before sensitive account
+  /// changes (email / password update).
+  Future<String?> _promptCurrentPassword(String purpose) async {
+    final controller = TextEditingController();
+    bool obscure = true;
+    String? errorText;
+
+    final result = await showDialog<String>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) {
+        return StatefulBuilder(
+          builder: (ctx, setDialogState) {
+            return AlertDialog(
+              title: const Text('Confirm your password'),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Enter your current password to confirm this $purpose.',
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: controller,
+                    obscureText: obscure,
+                    autofocus: true,
+                    enableSuggestions: false,
+                    autocorrect: false,
+                    autofillHints: const [AutofillHints.password],
+                    decoration: InputDecoration(
+                      labelText: 'Current password',
+                      errorText: errorText,
+                      suffixIcon: IconButton(
+                        icon: Icon(
+                          obscure ? Icons.visibility : Icons.visibility_off,
+                        ),
+                        onPressed: () =>
+                            setDialogState(() => obscure = !obscure),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () {
+                    if (Navigator.canPop(dialogContext)) {
+                      Navigator.pop(dialogContext);
+                    }
+                  },
+                  child: const Text('Cancel'),
+                ),
+                ElevatedButton(
+                  onPressed: () {
+                    final entered = controller.text;
+                    if (entered.isEmpty) {
+                      setDialogState(
+                        () => errorText = 'Password is required',
+                      );
+                      return;
+                    }
+                    if (Navigator.canPop(dialogContext)) {
+                      Navigator.pop(dialogContext, entered);
+                    }
+                  },
+                  child: const Text('Confirm'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+
+    controller.dispose();
+    return result;
+  }
+
   Future<void> _updateEmail() async {
     final newEmail = _emailController.text.trim();
     final error = _validateEmail(newEmail);
@@ -97,8 +178,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
     if (!mounted || !otpVerified) return;
 
+    final currentPassword = await _promptCurrentPassword('email update');
+    if (!mounted || currentPassword == null) return;
+
     setState(() => _isEmailLoading = true);
-    final success = await authProvider.updateEmail(newEmail);
+    final success = await authProvider.updateEmail(newEmail, currentPassword);
 
     if (!mounted) return;
     setState(() => _isEmailLoading = false);
@@ -257,8 +341,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
     if (!mounted || !otpVerified) return;
 
+    final currentPassword = await _promptCurrentPassword('password update');
+    if (!mounted || currentPassword == null) return;
+
     setState(() => _isPasswordLoading = true);
-    final success = await authProvider.updatePassword(newPassword);
+    final success =
+        await authProvider.updatePassword(newPassword, currentPassword);
 
     if (!mounted) return;
     setState(() => _isPasswordLoading = false);
@@ -622,6 +710,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
           TextFormField(
             controller: _newPasswordController,
             obscureText: _obscureNewPassword,
+            enableSuggestions: false,
+            autocorrect: false,
+            autofillHints: const [AutofillHints.newPassword],
             decoration: InputDecoration(
               labelText: 'New Password',
               prefixIcon: const Icon(Icons.lock_outline),
@@ -642,6 +733,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
           TextFormField(
             controller: _confirmPasswordController,
             obscureText: _obscureConfirmPassword,
+            enableSuggestions: false,
+            autocorrect: false,
+            autofillHints: const [AutofillHints.newPassword],
             decoration: InputDecoration(
               labelText: 'Confirm New Password',
               prefixIcon: const Icon(Icons.lock_outline),
@@ -700,9 +794,132 @@ class _SettingsScreenState extends State<SettingsScreen> {
               }
             },
           ),
+          Divider(color: c.glassBorder, height: 1),
+          ListTile(
+            leading: Icon(Icons.delete_forever, color: c.error),
+            title: Text('Delete Account',
+                style: TextStyle(color: c.error, fontWeight: FontWeight.w600)),
+            subtitle: const Text(
+              'Permanently remove your account, turfs, and bookings.',
+              style: TextStyle(fontSize: 12),
+            ),
+            onTap: () async {
+              final didDelete = await _confirmAndDeleteAccount();
+              if (didDelete && mounted) {
+                Navigator.pushNamedAndRemoveUntil(
+                    context, '/login-selection', (route) => false);
+              }
+            },
+          ),
         ],
       ),
     );
+  }
+
+  Future<bool> _confirmAndDeleteAccount() async {
+    final c = AppColors.of(context);
+    final authProvider = Provider.of<AuthProvider>(context, listen: false);
+
+    // Step 1: scary confirmation dialog with typed-confirmation gate.
+    final confirmed = await showDialog<bool>(
+          context: context,
+          barrierDismissible: false,
+          builder: (ctx) {
+            final controller = TextEditingController();
+            bool canDelete = false;
+            bool isLoading = false;
+            String? errorText;
+
+            return StatefulBuilder(
+              builder: (dialogContext, setDialogState) {
+                return PopScope(
+                  canPop: !isLoading,
+                  child: AlertDialog(
+                    title: Text(
+                      'Delete account?',
+                      style: TextStyle(color: c.error),
+                    ),
+                    content: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text(
+                          'This will permanently delete:',
+                          style: TextStyle(fontWeight: FontWeight.w600),
+                        ),
+                        const SizedBox(height: 8),
+                        const Text('• Your owner profile'),
+                        const Text('• All your turfs and slot configurations'),
+                        const Text('• All bookings made on your turfs'),
+                        const Text('• Your uploaded images'),
+                        const SizedBox(height: 12),
+                        const Text(
+                          'This action CANNOT be undone.',
+                          style: TextStyle(fontWeight: FontWeight.w600),
+                        ),
+                        const SizedBox(height: 16),
+                        const Text('Type DELETE to confirm:'),
+                        const SizedBox(height: 8),
+                        TextField(
+                          controller: controller,
+                          autofocus: true,
+                          textCapitalization: TextCapitalization.characters,
+                          enabled: !isLoading,
+                          decoration: InputDecoration(
+                            border: const OutlineInputBorder(),
+                            hintText: 'DELETE',
+                            errorText: errorText,
+                          ),
+                          onChanged: (value) {
+                            setDialogState(() {
+                              canDelete = value.trim() == 'DELETE';
+                              errorText = null;
+                            });
+                          },
+                        ),
+                      ],
+                    ),
+                    actions: [
+                      TextButton(
+                        onPressed: isLoading
+                            ? null
+                            : () => Navigator.pop(dialogContext, false),
+                        child: const Text('Cancel'),
+                      ),
+                      TextButton(
+                        onPressed: (canDelete && !isLoading)
+                            ? () async {
+                                setDialogState(() => isLoading = true);
+                                final ok = await authProvider.deleteAccount();
+                                if (!mounted) return;
+                                if (!ok) {
+                                  setDialogState(() {
+                                    isLoading = false;
+                                    errorText = authProvider.errorMessage ??
+                                        'Could not delete account.';
+                                  });
+                                  return;
+                                }
+                                if (Navigator.canPop(dialogContext)) {
+                                  Navigator.pop(dialogContext, true);
+                                }
+                              }
+                            : null,
+                        child: isLoading
+                            ? const _BouncingBallLoader()
+                            : Text('Delete forever',
+                                style: TextStyle(color: c.error)),
+                      ),
+                    ],
+                  ),
+                );
+              },
+            );
+          },
+        ) ??
+        false;
+
+    return confirmed;
   }
 
   Future<bool> _confirmAndSignOut() async {

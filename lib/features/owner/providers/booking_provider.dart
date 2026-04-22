@@ -261,9 +261,7 @@ class BookingProvider extends ChangeNotifier {
   /// Mark payment as received (for offline bookings)
   Future<bool> markPaymentReceived(String bookingId) async {
     try {
-      await _dbService.updateBooking(bookingId, {
-        'payment_status': 'PAID',
-      });
+      await _dbService.markBookingPaymentReceived(bookingId);
 
       _bookings = _bookings
           .map((booking) => booking.bookingId == bookingId

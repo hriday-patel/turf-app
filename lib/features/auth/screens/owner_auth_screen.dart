@@ -55,6 +55,10 @@ class _OwnerAuthScreenState extends State<OwnerAuthScreen>
   final _forgotPasswordFormKey = GlobalKey<FormState>();
   final _googlePhoneFormKey = GlobalKey<FormState>();
 
+  // Defensive auto-nav for OAuth deep-link returns.
+  AuthProvider? _authProviderRef;
+  bool _autoNavScheduled = false;
+
   @override
   void initState() {
     super.initState();
@@ -69,12 +73,56 @@ class _OwnerAuthScreenState extends State<OwnerAuthScreen>
     });
 
     WidgetsBinding.instance.addPostFrameCallback((_) async {
+      if (!mounted) return;
+      _authProviderRef = Provider.of<AuthProvider>(context, listen: false);
+      _authProviderRef!.addListener(_handleAuthProviderChanged);
       await _resumePendingOwnerSignupIfNeeded();
+      // One-shot check in case owner profile is already loaded by the time
+      // we attach (e.g. session restored before this screen mounted).
+      _handleAuthProviderChanged();
+    });
+  }
+
+  void _handleAuthProviderChanged() {
+    if (!mounted) return;
+    if (_autoNavScheduled) return;
+    final ap = _authProviderRef;
+    if (ap == null) return;
+
+    // Don't fight an in-progress submit / forgot-password flow.
+    if (_showForgotPassword) return;
+
+    // Only navigate when we're the active route on top of the stack.
+    final route = ModalRoute.of(context);
+    if (route == null || !route.isCurrent) return;
+
+    final readyOwner = ap.currentOwner != null;
+    final pendingGoogleAwaitingPhone = ap.requiresOwnerGooglePhoneCollection;
+    final pendingOwnerWithPhone = ap.hasPendingSignup &&
+        ap.pendingSignupRole == UserRole.owner &&
+        ap.deferredSignupPhone.trim().isNotEmpty;
+
+    if (!readyOwner && !pendingOwnerWithPhone) return;
+    if (pendingGoogleAwaitingPhone) return; // stay on phone collection screen
+
+    _autoNavScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) {
+        _autoNavScheduled = false;
+        return;
+      }
+      final currentRoute = ModalRoute.of(context);
+      if (currentRoute == null || !currentRoute.isCurrent) {
+        _autoNavScheduled = false;
+        return;
+      }
+      Navigator.pushReplacementNamed(context, AppRoutes.ownerDashboard);
     });
   }
 
   @override
   void dispose() {
+    _authProviderRef?.removeListener(_handleAuthProviderChanged);
     _tabController.dispose();
     _loginEmailController.dispose();
     _loginPasswordController.dispose();

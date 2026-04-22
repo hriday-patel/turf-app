@@ -11,14 +11,34 @@ create extension if not exists "pgcrypto";
 -- STORAGE BUCKETS
 -- =====================================================
 
--- Create storage buckets for images
-insert into storage.buckets (id, name, public)
-values ('turf-images', 'turf-images', true)
-on conflict (id) do update set public = true;
+-- Create storage buckets for images.
+-- file_size_limit: 5 MB (5 * 1024 * 1024 = 5242880 bytes)
+-- allowed_mime_types: only common image formats; blocks executables/PDFs/large videos
+insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+values (
+  'turf-images',
+  'turf-images',
+  true,
+  5242880,
+  array['image/jpeg', 'image/png', 'image/webp']
+)
+on conflict (id) do update set
+  public = excluded.public,
+  file_size_limit = excluded.file_size_limit,
+  allowed_mime_types = excluded.allowed_mime_types;
 
-insert into storage.buckets (id, name, public)
-values ('profile-images', 'profile-images', true)
-on conflict (id) do update set public = true;
+insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+values (
+  'profile-images',
+  'profile-images',
+  true,
+  5242880,
+  array['image/jpeg', 'image/png', 'image/webp']
+)
+on conflict (id) do update set
+  public = excluded.public,
+  file_size_limit = excluded.file_size_limit,
+  allowed_mime_types = excluded.allowed_mime_types;
 
 -- Drop existing storage policies (if any)
 drop policy if exists "turf_images_select" on storage.objects;
@@ -34,48 +54,77 @@ drop policy if exists "Allow authenticated uploads" on storage.objects;
 drop policy if exists "Allow authenticated updates" on storage.objects;
 drop policy if exists "Allow authenticated deletes" on storage.objects;
 
--- Storage policies for turf-images bucket (public read, authenticated write)
+-- Storage policies for turf-images bucket
+-- Read: public (anyone can view turf images on the app)
+-- Write/Update/Delete: only the owner of the turf, and only inside their own
+--   turf folder (path must be 'turfs/{turfId}/...' where the turf belongs to them).
 create policy "turf_images_select" on storage.objects
   for select using (bucket_id = 'turf-images');
 
 create policy "turf_images_insert" on storage.objects
   for insert with check (
-    bucket_id = 'turf-images' 
-    and auth.role() = 'authenticated'
+    bucket_id = 'turf-images'
+    and auth.uid() is not null
+    and (storage.foldername(name))[1] = 'turfs'
+    and exists (
+      select 1 from turfs t
+      where t.id::text = (storage.foldername(name))[2]
+        and t.owner_id = auth.uid()
+    )
   );
 
 create policy "turf_images_update" on storage.objects
   for update using (
-    bucket_id = 'turf-images' 
-    and auth.role() = 'authenticated'
+    bucket_id = 'turf-images'
+    and auth.uid() is not null
+    and (storage.foldername(name))[1] = 'turfs'
+    and exists (
+      select 1 from turfs t
+      where t.id::text = (storage.foldername(name))[2]
+        and t.owner_id = auth.uid()
+    )
   );
 
 create policy "turf_images_delete" on storage.objects
   for delete using (
-    bucket_id = 'turf-images' 
-    and auth.role() = 'authenticated'
+    bucket_id = 'turf-images'
+    and auth.uid() is not null
+    and (storage.foldername(name))[1] = 'turfs'
+    and exists (
+      select 1 from turfs t
+      where t.id::text = (storage.foldername(name))[2]
+        and t.owner_id = auth.uid()
+    )
   );
 
 -- Storage policies for profile-images bucket
+-- Read: public. Write/Update/Delete: only inside the user's own folder
+--   ('users/{auth.uid()}/...').
 create policy "profile_images_select" on storage.objects
   for select using (bucket_id = 'profile-images');
 
 create policy "profile_images_insert" on storage.objects
   for insert with check (
-    bucket_id = 'profile-images' 
-    and auth.role() = 'authenticated'
+    bucket_id = 'profile-images'
+    and auth.uid() is not null
+    and (storage.foldername(name))[1] = 'users'
+    and (storage.foldername(name))[2] = auth.uid()::text
   );
 
 create policy "profile_images_update" on storage.objects
   for update using (
-    bucket_id = 'profile-images' 
-    and auth.role() = 'authenticated'
+    bucket_id = 'profile-images'
+    and auth.uid() is not null
+    and (storage.foldername(name))[1] = 'users'
+    and (storage.foldername(name))[2] = auth.uid()::text
   );
 
 create policy "profile_images_delete" on storage.objects
   for delete using (
-    bucket_id = 'profile-images' 
-    and auth.role() = 'authenticated'
+    bucket_id = 'profile-images'
+    and auth.uid() is not null
+    and (storage.foldername(name))[1] = 'users'
+    and (storage.foldername(name))[2] = auth.uid()::text
   );
 
 -- =====================================================
@@ -214,8 +263,11 @@ create unique index if not exists bookings_slot_unique
 
 create index if not exists idx_owners_has_password on owners (has_password);
 create index if not exists idx_players_has_password on players (has_password);
+-- Note: players.email and players.phone already have UNIQUE constraints from
+-- the table definition, which auto-create unique indexes. Extra indexes here
+-- would just duplicate them. The lower(email) variant is kept because the
+-- unique constraint is case-sensitive and login lookups are case-insensitive.
 create unique index if not exists idx_players_email_lower_unique on players (lower(email));
-create unique index if not exists idx_players_phone_unique on players (phone);
 create index if not exists idx_pending_auth_signups_email on pending_auth_signups (lower(email));
 create index if not exists idx_pending_auth_signups_phone on pending_auth_signups (phone)
   where btrim(phone) <> '';
@@ -367,6 +419,11 @@ declare
   normalized_phone text;
   normalized_email text;
 begin
+  -- Identity check: only the logged-in user may create/update their own owner profile.
+  if auth.uid() is null or auth.uid() <> user_id then
+    raise exception 'Not authorized to create this profile';
+  end if;
+
   normalized_phone := btrim(coalesce(user_phone, ''));
   normalized_email := lower(btrim(coalesce(user_email, '')));
 
@@ -464,6 +521,11 @@ declare
   merged_methods text[];
   add_method text;
 begin
+  -- Identity check: only the logged-in owner may sync their own auth methods.
+  if auth.uid() is null or auth.uid() <> p_owner_id then
+    raise exception 'Not authorized to sync this owner';
+  end if;
+
   if p_owner_id is null then
     raise exception 'Owner id is required';
   end if;
@@ -517,6 +579,11 @@ declare
   normalized_phone text;
   normalized_email text;
 begin
+  -- Identity check: only the logged-in user may create/update their own player profile.
+  if auth.uid() is null or auth.uid() <> user_id then
+    raise exception 'Not authorized to create this profile';
+  end if;
+
   normalized_phone := btrim(coalesce(user_phone, ''));
   normalized_email := lower(btrim(coalesce(user_email, '')));
 
@@ -598,6 +665,8 @@ end;
 $$;
 
 -- Check phone availability globally across owners, players and pending signups.
+-- Returns only an availability flag and a generic source label. The matching
+-- user id is intentionally NOT returned to prevent user enumeration / id leaks.
 create or replace function check_phone_availability(
   p_phone text,
   p_exclude_user_id uuid default null
@@ -626,12 +695,8 @@ begin
     where o.phone = normalized_phone
       and (p_exclude_user_id is null or o.id <> p_exclude_user_id)
   ) then
-    return query
-    select false, 'owners'::text, o.id
-    from owners o
-    where o.phone = normalized_phone
-      and (p_exclude_user_id is null or o.id <> p_exclude_user_id)
-    limit 1;
+    -- Do not leak owner id.
+    return query select false, 'owners'::text, null::uuid;
     return;
   end if;
 
@@ -641,12 +706,8 @@ begin
     where p.phone = normalized_phone
       and (p_exclude_user_id is null or p.id <> p_exclude_user_id)
   ) then
-    return query
-    select false, 'players'::text, p.id
-    from players p
-    where p.phone = normalized_phone
-      and (p_exclude_user_id is null or p.id <> p_exclude_user_id)
-    limit 1;
+    -- Do not leak player id.
+    return query select false, 'players'::text, null::uuid;
     return;
   end if;
 
@@ -657,13 +718,8 @@ begin
       and pas.phone = normalized_phone
       and (p_exclude_user_id is null or pas.user_id <> p_exclude_user_id)
   ) then
-    return query
-    select false, 'pending_auth_signups'::text, pas.user_id
-    from pending_auth_signups pas
-    where btrim(pas.phone) <> ''
-      and pas.phone = normalized_phone
-      and (p_exclude_user_id is null or pas.user_id <> p_exclude_user_id)
-    limit 1;
+    -- Do not leak pending user id.
+    return query select false, 'pending_auth_signups'::text, null::uuid;
     return;
   end if;
 
@@ -693,6 +749,11 @@ declare
   normalized_method text;
   availability record;
 begin
+  -- Identity check: only the logged-in user may write their own pending signup row.
+  if auth.uid() is null or auth.uid() <> p_user_id then
+    raise exception 'Not authorized to upsert this pending signup';
+  end if;
+
   normalized_role := upper(btrim(coalesce(p_role, '')));
   normalized_name := btrim(coalesce(p_name, ''));
   normalized_email := lower(btrim(coalesce(p_email, '')));
@@ -783,6 +844,11 @@ security definer
 set search_path = public
 as $$
 begin
+  -- Identity check: only the logged-in user may read their own pending signup row.
+  if auth.uid() is null or auth.uid() <> p_user_id then
+    raise exception 'Not authorized to read this pending signup';
+  end if;
+
   return query
   select
     pas.user_id,
@@ -815,6 +881,11 @@ declare
   resolved_phone text;
   resolved_methods text[];
 begin
+  -- Identity check: only the logged-in user may finalize their own pending signup.
+  if auth.uid() is null or auth.uid() <> p_user_id then
+    raise exception 'Not authorized to finalize this pending signup';
+  end if;
+
   select * into pending_record
   from pending_auth_signups
   where user_id = p_user_id
@@ -917,9 +988,32 @@ set search_path = public
 as $$
 declare
   slot_record slots%rowtype;
+  v_owner_id uuid;
 begin
+  -- Auth required: only logged-in users may reserve, and only for themselves.
+  if auth.uid() is null then
+    raise exception 'Authentication required';
+  end if;
+  if p_reserved_by is null or p_reserved_by <> auth.uid() then
+    raise exception 'Cannot reserve a slot on behalf of another user';
+  end if;
+
   select * into slot_record from slots where id = p_slot_id for update;
   if not found then
+    return false;
+  end if;
+
+  -- Slot must belong to an approved turf to be reservable by the public.
+  select owner_id into v_owner_id
+  from turfs
+  where id = slot_record.turf_id
+    and (is_approved = true or owner_id = auth.uid());
+  if v_owner_id is null then
+    return false;
+  end if;
+
+  -- Slot date must not be in the past.
+  if slot_record.date < current_date then
     return false;
   end if;
 
@@ -953,7 +1047,30 @@ language plpgsql
 security definer
 set search_path = public
 as $$
+declare
+  slot_record slots%rowtype;
 begin
+  -- Auth required.
+  if auth.uid() is null then
+    raise exception 'Authentication required';
+  end if;
+
+  select * into slot_record from slots where id = p_slot_id for update;
+  if not found then
+    return;
+  end if;
+
+  -- Allow release if caller is the reserver, OR the owner of the turf.
+  if not (
+    slot_record.reserved_by = auth.uid()
+    or exists (
+      select 1 from turfs t
+      where t.id = slot_record.turf_id and t.owner_id = auth.uid()
+    )
+  ) then
+    raise exception 'Not authorized to release this slot';
+  end if;
+
   update slots
     set status = 'AVAILABLE',
         reserved_until = null,
@@ -969,7 +1086,28 @@ language plpgsql
 security definer
 set search_path = public
 as $$
+declare
+  slot_record slots%rowtype;
 begin
+  -- Auth required.
+  if auth.uid() is null then
+    raise exception 'Authentication required';
+  end if;
+
+  select * into slot_record from slots where id = p_slot_id for update;
+  if not found then
+    return;
+  end if;
+
+  -- Only the turf owner may directly mark a slot as BOOKED via this helper.
+  -- (The full create_booking_atomic flow has its own checks for app users.)
+  if not exists (
+    select 1 from turfs t
+    where t.id = slot_record.turf_id and t.owner_id = auth.uid()
+  ) then
+    raise exception 'Not authorized to book this slot';
+  end if;
+
   update slots
     set status = 'BOOKED',
         reserved_until = null,
@@ -1109,7 +1247,38 @@ language plpgsql
 security definer
 set search_path = public
 as $$
+declare
+  booking_record bookings%rowtype;
+  v_owner_id uuid;
 begin
+  -- Auth required.
+  if auth.uid() is null then
+    raise exception 'Authentication required';
+  end if;
+
+  select * into booking_record from bookings where id = p_booking_id for update;
+  if not found then
+    raise exception 'Booking not found';
+  end if;
+
+  -- Sanity: the slot id passed in must match the one on the booking.
+  if booking_record.slot_id <> p_slot_id then
+    raise exception 'Slot id does not match booking';
+  end if;
+
+  -- Authorization: caller must be either
+  --   (a) the turf owner of this booking, OR
+  --   (b) the player who made the booking (booking.user_id)
+  select t.owner_id into v_owner_id
+  from turfs t where t.id = booking_record.turf_id;
+
+  if not (
+    auth.uid() = v_owner_id
+    or (booking_record.user_id is not null and booking_record.user_id = auth.uid())
+  ) then
+    raise exception 'Not authorized to cancel this booking';
+  end if;
+
   update bookings
     set booking_status = 'CANCELLED',
         cancelled_at = now(),
@@ -1128,3 +1297,125 @@ begin
   return true;
 end;
 $$;
+
+-- ============================================================================
+-- EXECUTE PERMISSIONS (Phase 1 audit fixes - BUG-08)
+-- Lock down RPCs that previously could be called by anonymous users.
+-- check_phone_availability stays callable by `anon` because the signup screen
+-- needs to verify a phone before the user is logged in, but it now returns
+-- only a boolean + generic source label (no user ids).
+-- check_owner_exists is restricted to authenticated users only.
+-- ============================================================================
+revoke execute on function check_owner_exists(text, text) from anon, public;
+grant execute on function check_owner_exists(text, text) to authenticated;
+
+-- check_phone_availability: still allow anon (needed for signup), but explicitly grant.
+grant execute on function check_phone_availability(text, uuid) to anon, authenticated;
+
+-- ============================================================================
+-- TRIGGER: bookings_immutable_columns_guard (BUG-09)
+-- Prevent updates to columns that should never change after a booking is
+-- created. Only operational fields (status, payment, cancellation, audit
+-- columns) may change after insert.
+-- ============================================================================
+create or replace function bookings_immutable_columns_guard()
+returns trigger
+language plpgsql
+as $$
+begin
+  if NEW.amount            is distinct from OLD.amount            then raise exception 'amount is immutable';            end if;
+  if NEW.customer_phone    is distinct from OLD.customer_phone    then raise exception 'customer_phone is immutable';    end if;
+  if NEW.customer_name     is distinct from OLD.customer_name     then raise exception 'customer_name is immutable';     end if;
+  if NEW.user_id           is distinct from OLD.user_id           then raise exception 'user_id is immutable';           end if;
+  if NEW.slot_id           is distinct from OLD.slot_id           then raise exception 'slot_id is immutable';           end if;
+  if NEW.owner_id          is distinct from OLD.owner_id          then raise exception 'owner_id is immutable';          end if;
+  if NEW.turf_id           is distinct from OLD.turf_id           then raise exception 'turf_id is immutable';           end if;
+  if NEW.booking_date      is distinct from OLD.booking_date      then raise exception 'booking_date is immutable';      end if;
+  if NEW.start_time        is distinct from OLD.start_time        then raise exception 'start_time is immutable';        end if;
+  if NEW.end_time          is distinct from OLD.end_time          then raise exception 'end_time is immutable';          end if;
+  if NEW.turf_name         is distinct from OLD.turf_name         then raise exception 'turf_name is immutable';         end if;
+  if NEW.net_number        is distinct from OLD.net_number        then raise exception 'net_number is immutable';        end if;
+  if NEW.booking_source    is distinct from OLD.booking_source    then raise exception 'booking_source is immutable';    end if;
+  if NEW.payment_mode      is distinct from OLD.payment_mode      then raise exception 'payment_mode is immutable';      end if;
+  if NEW.created_at        is distinct from OLD.created_at        then raise exception 'created_at is immutable';        end if;
+  if NEW.created_by        is distinct from OLD.created_by        then raise exception 'created_by is immutable';        end if;
+  return NEW;
+end;
+$$;
+
+drop trigger if exists trg_bookings_immutable_columns_guard on bookings;
+create trigger trg_bookings_immutable_columns_guard
+before update on bookings
+for each row
+execute function bookings_immutable_columns_guard();
+
+-- ============================================================================
+-- TRIGGER: slots_no_release_with_active_booking (BUG-10)
+-- Block any UPDATE that flips a slot back to AVAILABLE while a CONFIRMED
+-- booking still exists for that slot. Use cancel_booking() instead.
+-- ============================================================================
+create or replace function slots_no_release_with_active_booking()
+returns trigger
+language plpgsql
+as $$
+begin
+  if NEW.status = 'AVAILABLE'
+     and OLD.status is distinct from 'AVAILABLE'
+     and exists (
+       select 1 from bookings b
+       where b.slot_id = NEW.id
+         and b.booking_status = 'CONFIRMED'
+     )
+  then
+    raise exception 'Cannot release slot: a confirmed booking still exists. Cancel the booking first.';
+  end if;
+  return NEW;
+end;
+$$;
+
+drop trigger if exists trg_slots_no_release_with_active_booking on slots;
+create trigger trg_slots_no_release_with_active_booking
+before update on slots
+for each row
+execute function slots_no_release_with_active_booking();
+
+-- ============================================================================
+-- TRIGGERS: owners/players role exclusivity (EDGE-01)
+-- A given auth user id may exist in only one of (owners, players).
+-- ============================================================================
+create or replace function owners_no_dup_in_players()
+returns trigger
+language plpgsql
+as $$
+begin
+  if exists (select 1 from players where id = NEW.id) then
+    raise exception 'This user already has a player account; cannot also create an owner account';
+  end if;
+  return NEW;
+end;
+$$;
+
+drop trigger if exists trg_owners_no_dup_in_players on owners;
+create trigger trg_owners_no_dup_in_players
+before insert on owners
+for each row
+execute function owners_no_dup_in_players();
+
+create or replace function players_no_dup_in_owners()
+returns trigger
+language plpgsql
+as $$
+begin
+  if exists (select 1 from owners where id = NEW.id) then
+    raise exception 'This user already has an owner account; cannot also create a player account';
+  end if;
+  return NEW;
+end;
+$$;
+
+drop trigger if exists trg_players_no_dup_in_owners on players;
+create trigger trg_players_no_dup_in_owners
+before insert on players
+for each row
+execute function players_no_dup_in_owners();
+

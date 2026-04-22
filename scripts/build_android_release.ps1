@@ -1,4 +1,4 @@
-param(
+﻿param(
   [string]$SupabaseUrl,
   [string]$SupabaseAnonKey,
   [string]$StorageBucket = "",
@@ -109,12 +109,22 @@ try {
     Write-Warning "flutter pub get failed (often due to Windows symlink checks). Continuing to build appbundle directly."
   }
 
-  & $flutterCmd build appbundle --release --dart-define-from-file=dart_defines.local.json
+  $symbolsDir = Join-Path $projectRoot "build\symbols"
+  if (!(Test-Path $symbolsDir)) {
+    New-Item -ItemType Directory -Path $symbolsDir | Out-Null
+  }
+
+  & $flutterCmd build appbundle --release `
+    --dart-define-from-file=dart_defines.local.json `
+    --obfuscate `
+    --split-debug-info=$symbolsDir
   if ($LASTEXITCODE -ne 0) {
     throw "flutter build appbundle failed"
   }
 
   Write-Host "Release bundle generated at: build/app/outputs/bundle/release/app-release.aab"
+  Write-Host "Obfuscation symbols saved to: $symbolsDir"
+  Write-Host "IMPORTANT: keep the build/symbols folder safe -- without it, crash reports from this AAB cannot be deobfuscated."
 }
 finally {
   Set-Location $projectRoot

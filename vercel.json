@@ -2,6 +2,7 @@
   "version": 2,
   "builds": [
     { "src": "api/**/*.js", "use": "@vercel/node" },
+    { "src": "public/**", "use": "@vercel/static" },
     { "src": "build/web/**", "use": "@vercel/static" }
   ],
   "routes": [
@@ -17,6 +18,8 @@
       "src": "/api/whatsapp/webhook",
       "dest": "/api/whatsapp/webhook.js"
     },
+    { "src": "/privacy-policy/?", "dest": "/public/privacy-policy.html" },
+    { "src": "/delete-account/?", "dest": "/public/delete-account.html" },
     { "src": "/(.*)", "dest": "/build/web/$1" }
   ],
   "headers": [

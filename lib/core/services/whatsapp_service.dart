@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
+import 'package:supabase_flutter/supabase_flutter.dart';
 
 /// WhatsApp Booking Confirmation Service
 /// Sends messages via your server-side WhatsApp Cloud API proxy.
@@ -23,6 +24,20 @@ class WhatsAppService {
       return _defaultApiBaseUrl;
     }
     return raw.endsWith('/') ? raw.substring(0, raw.length - 1) : raw;
+  }
+
+  /// Build auth headers with the current Supabase access token.
+  /// Server requires a logged-in user (W1).
+  static Map<String, String>? _authHeaders() {
+    final token = Supabase.instance.client.auth.currentSession?.accessToken;
+    if (token == null || token.isEmpty) {
+      debugPrint('WhatsApp send skipped: no Supabase session.');
+      return null;
+    }
+    return {
+      'Content-Type': 'application/json',
+      'Authorization': 'Bearer $token',
+    };
   }
 
   /// Send booking confirmation to customer via WhatsApp
@@ -68,11 +83,14 @@ Thank you for your booking! 🙏
       return false;
     }
 
+    final headers = _authHeaders();
+    if (headers == null) return false;
+
     try {
       final response = await http
           .post(
             Uri.parse('$_apiBaseUrl/whatsapp/send-message'),
-            headers: const {'Content-Type': 'application/json'},
+            headers: headers,
             body: jsonEncode({
               'to': cleanPhone,
               'message': message.trim(),
@@ -106,11 +124,14 @@ Thank you for your booking! 🙏
       return false;
     }
 
+    final headers = _authHeaders();
+    if (headers == null) return false;
+
     try {
       final response = await http
           .post(
             Uri.parse('$_apiBaseUrl/whatsapp/send-message'),
-            headers: const {'Content-Type': 'application/json'},
+            headers: headers,
             body: jsonEncode({
               'to': cleanPhone,
               'template': {

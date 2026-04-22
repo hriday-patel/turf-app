@@ -1,0 +1,209 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Privacy Policy — FieldPass Business</title>
+    <style>
+      :root {
+        color-scheme: light;
+      }
+      body {
+        font-family:
+          -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+        max-width: 760px;
+        margin: 0 auto;
+        padding: 32px 24px;
+        color: #1a1a1a;
+        line-height: 1.6;
+      }
+      h1 {
+        font-size: 28px;
+        margin-bottom: 4px;
+      }
+      h2 {
+        font-size: 20px;
+        margin-top: 32px;
+        border-bottom: 1px solid #eee;
+        padding-bottom: 6px;
+      }
+      .meta {
+        color: #666;
+        font-size: 14px;
+        margin-bottom: 24px;
+      }
+      a {
+        color: #1a73e8;
+      }
+      ul {
+        padding-left: 24px;
+      }
+      code {
+        background: #f4f4f4;
+        padding: 2px 6px;
+        border-radius: 4px;
+        font-size: 13px;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Privacy Policy</h1>
+    <p class="meta">FieldPass Business · Last updated: 23 April 2026</p>
+
+    <p>
+      FieldPass Business ("we", "our", "the app") is a turf-management
+      application for sports-facility owners. This policy explains what personal
+      data we collect, why we collect it, how we store it, and how you can
+      request its deletion.
+    </p>
+
+    <h2>1. Data we collect</h2>
+    <ul>
+      <li>
+        <strong>Account info:</strong> name, email address, phone number, and
+        (optionally) a profile photo. Collected when you sign up; required to
+        create and authenticate your account.
+      </li>
+      <li>
+        <strong>Authentication data:</strong> password (stored hashed by
+        Supabase Auth), Google OAuth tokens, one-time SMS codes. Used only to
+        log you in.
+      </li>
+      <li>
+        <strong>Turf data:</strong> turf name, type, address, city, photos,
+        opening hours, slot durations, pricing rules, and a list of public
+        holidays. Collected when you list a turf.
+      </li>
+      <li>
+        <strong>Booking data:</strong> bookings created on your turfs, including
+        player name, player phone, slot times, advance amount, payment status,
+        and transaction IDs (where applicable).
+      </li>
+      <li>
+        <strong>App activity:</strong> actions you take in the app such as
+        creating turfs, blocking slots, and updating bookings — stored so the
+        app can show you your history.
+      </li>
+      <li>
+        <strong>Crash diagnostics:</strong> none. We do not currently ship
+        Firebase Crashlytics, Sentry, or any third-party analytics SDK.
+      </li>
+      <li>
+        <strong>Advertising IDs:</strong> we do not collect or use the Android
+        Advertising ID. We do not show ads.
+      </li>
+    </ul>
+
+    <h2>2. Where your data is stored</h2>
+    <p>
+      All app data is stored in
+      <a href="https://supabase.com" target="_blank" rel="noopener">Supabase</a
+      >, hosted in Supabase's cloud infrastructure. Backend API calls are routed
+      through
+      <a href="https://vercel.com" target="_blank" rel="noopener">Vercel</a>
+      serverless functions. WhatsApp message delivery uses the
+      <a
+        href="https://developers.facebook.com/docs/whatsapp/cloud-api"
+        target="_blank"
+        rel="noopener"
+        >WhatsApp Cloud API</a
+      >
+      operated by Meta Platforms, Inc.
+    </p>
+    <p>
+      All data in transit is encrypted using HTTPS / TLS. On your device, your
+      login session is stored in the operating system's hardware-backed secure
+      storage (Android Keystore / iOS Keychain).
+    </p>
+
+    <h2>3. How we use your data</h2>
+    <ul>
+      <li>To create, authenticate, and operate your owner account.</li>
+      <li>To display your turfs, slots, and bookings inside the app.</li>
+      <li>
+        To send booking-confirmation messages to the players who book your turfs
+        (via WhatsApp).
+      </li>
+      <li>
+        To diagnose user-reported errors when you share a screenshot or session
+        info with our support.
+      </li>
+    </ul>
+
+    <h2>4. Data we do NOT collect</h2>
+    <ul>
+      <li>Precise GPS location.</li>
+      <li>Contacts, calendar, microphone, or call logs.</li>
+      <li>
+        Files outside of images you explicitly pick from the system gallery.
+      </li>
+      <li>
+        Health, fitness, financial-instrument (card / bank) data, web browsing
+        history, or any sensitive demographic data.
+      </li>
+    </ul>
+
+    <h2>5. Sharing with third parties</h2>
+    <p>
+      We do not sell or share your personal data with advertising networks, data
+      brokers, or any third party for marketing purposes. The third-party
+      processors below are used only to operate the service:
+    </p>
+    <ul>
+      <li>
+        <strong>Supabase</strong> — database + authentication + file storage.
+      </li>
+      <li><strong>Vercel</strong> — serverless backend hosting.</li>
+      <li>
+        <strong>Meta WhatsApp Cloud API</strong> — to deliver
+        booking-confirmation messages.
+      </li>
+      <li>
+        <strong>Google</strong> — only when you choose "Sign in with Google"
+        (your Google account email is provided to us by Google).
+      </li>
+    </ul>
+
+    <h2>6. Account deletion &amp; data deletion</h2>
+    <p>
+      You can permanently delete your account and all associated data in two
+      ways:
+    </p>
+    <ol>
+      <li>
+        <strong>From inside the app:</strong> Profile Settings → Account →
+        <em>Delete Account</em>. This action is immediate and irreversible.
+      </li>
+      <li>
+        <strong>Without the app:</strong> visit
+        <a href="/delete-account">/delete-account</a> and follow the
+        instructions to email a deletion request from your registered email
+        address.
+      </li>
+    </ol>
+    <p>
+      When you delete your account, the following are removed within 30 days
+      from all production systems and backups: your owner profile, your turfs,
+      your slot configurations, all bookings on your turfs, your uploaded
+      images, and your authentication record.
+    </p>
+
+    <h2>7. Children</h2>
+    <p>
+      The app is intended for users aged 18 and older. We do not knowingly
+      collect data from children under 13.
+    </p>
+
+    <h2>8. Changes to this policy</h2>
+    <p>
+      If we make material changes, we will update the "Last updated" date above
+      and notify users in-app on next launch.
+    </p>
+
+    <h2>9. Contact</h2>
+    <p>
+      For privacy questions or data-access / data-deletion requests by email,
+      contact <a href="mailto:support@fieldpass.app">support@fieldpass.app</a>.
+    </p>
+  </body>
+</html>

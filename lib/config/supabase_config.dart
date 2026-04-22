@@ -19,7 +19,7 @@ class ResolvedSupabaseConfig {
     required this.source,
   });
 
-  bool get isConfigured => url.isNotEmpty && anonKey.isNotEmpty;
+  bool get isConfigured => SupabaseConfig.isResolvedConfigUsable(this);
 }
 
 class SupabaseConfig {
@@ -57,6 +57,61 @@ class SupabaseConfig {
   static const String restartHint =
       'Dart-define changes require stopping all existing flutter run sessions and launching again.';
 
+  // Tokens that indicate a placeholder/template value rather than real credentials.
+  // If any of these appear in a SUPABASE_URL we treat the URL as not configured
+  // so the app surfaces a clear error instead of launching OAuth against a
+  // non-existent project (e.g. https://example.supabase.co/auth/v1/authorize...).
+  static const List<String> _placeholderUrlFragments = <String>[
+    'example.supabase.co',
+    'your-project.supabase.co',
+    'your_project.supabase.co',
+    'project-ref.supabase.co',
+    'projectref.supabase.co',
+    'xxxx.supabase.co',
+    'xxxxx.supabase.co',
+    'changeme.supabase.co',
+    'supabase_url',
+    'supabase_project_url',
+  ];
+
+  // Tokens that indicate a placeholder/template anon key.
+  static const List<String> _placeholderAnonFragments = <String>[
+    'supabase_anon_key',
+    'supabase_publishable_key',
+    'asdfghjkl1234567890',
+    'your-anon-key',
+    'your_anon_key',
+    'changeme',
+  ];
+
+  static bool _isValidSupabaseUrl(String value) {
+    if (value.isEmpty) return false;
+    final lower = value.toLowerCase();
+    for (final frag in _placeholderUrlFragments) {
+      if (lower.contains(frag)) return false;
+    }
+    final uri = Uri.tryParse(value);
+    if (uri == null || !uri.hasScheme || uri.host.isEmpty) return false;
+    if (uri.scheme != 'http' && uri.scheme != 'https') return false;
+    return true;
+  }
+
+  static bool _isValidAnonKey(String value) {
+    if (value.isEmpty) return false;
+    final lower = value.toLowerCase();
+    for (final frag in _placeholderAnonFragments) {
+      if (lower.contains(frag)) return false;
+    }
+    // Real Supabase anon keys are JWTs (>= 100 chars typically) with two dots.
+    if (value.length < 40) return false;
+    return true;
+  }
+
+  @visibleForTesting
+  static bool isResolvedConfigUsable(ResolvedSupabaseConfig config) {
+    return _isValidSupabaseUrl(config.url) && _isValidAnonKey(config.anonKey);
+  }
+
   static String _sanitize(String value) {
     final trimmed =
         value.replaceAll(RegExp(r'[\u200B-\u200D\uFEFF]'), '').trim();
@@ -76,6 +131,18 @@ class SupabaseConfig {
     return sanitized;
   }
 
+  static String _normalizeRuntimeUrl(String raw) {
+    final sanitized = _sanitize(raw);
+    if (!_isValidSupabaseUrl(sanitized)) return '';
+    return sanitized;
+  }
+
+  static String _normalizeRuntimeAnonKey(String raw) {
+    final sanitized = _sanitize(raw);
+    if (!_isValidAnonKey(sanitized)) return '';
+    return sanitized;
+  }
+
   static String _firstNonEmpty(List<String> candidates) {
     for (final value in candidates) {
       if (value.isNotEmpty) {
@@ -92,10 +159,10 @@ class SupabaseConfig {
     required String cachedUrl,
     required String cachedAnonKey,
   }) {
-    final normalizedDefineUrl = _sanitize(defineUrl);
-    final normalizedDefineAnon = _sanitize(defineAnonKey);
-    final normalizedCachedUrl = _sanitize(cachedUrl);
-    final normalizedCachedAnon = _sanitize(cachedAnonKey);
+    final normalizedDefineUrl = _normalizeRuntimeUrl(defineUrl);
+    final normalizedDefineAnon = _normalizeRuntimeAnonKey(defineAnonKey);
+    final normalizedCachedUrl = _normalizeRuntimeUrl(cachedUrl);
+    final normalizedCachedAnon = _normalizeRuntimeAnonKey(cachedAnonKey);
 
     final hasDefineUrl = normalizedDefineUrl.isNotEmpty;
     final hasDefineAnon = normalizedDefineAnon.isNotEmpty;
@@ -164,15 +231,18 @@ class SupabaseConfig {
 
   static String validationError(ResolvedSupabaseConfig config) {
     final missing = <String>[];
-    if (config.url.isEmpty) {
+    if (!_isValidSupabaseUrl(config.url)) {
       missing.add('SUPABASE_URL');
     }
-    if (config.anonKey.isEmpty) {
+    if (!_isValidAnonKey(config.anonKey)) {
       missing.add('SUPABASE_ANON_KEY');
     }
     if (missing.isEmpty) {
       return '';
     }
-    return 'Missing required runtime config: ${missing.join(', ')} (source: ${config.source.name})';
+    return 'Missing or placeholder runtime config: ${missing.join(', ')} '
+        '(source: ${config.source.name}). '
+        'Edit dart_defines.local.json with your real Supabase project URL and anon key '
+        '(values like https://example.supabase.co are rejected).';
   }
 }

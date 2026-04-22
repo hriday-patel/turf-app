@@ -4,3 +4,18 @@
   "STORAGE_BUCKET": "turf-images",
   "API_BASE_URL": "https://fieldpass-business.vercel.app/api"
 }
+
+// --- Vercel server-side env vars (NOT dart-defines) ---
+// Set these in the Vercel project dashboard, not in this file:
+//   SUPABASE_URL              = your Supabase project URL
+//   SUPABASE_SERVICE_ROLE_KEY = service-role key (server-only, NEVER ship to client)
+//   STORAGE_BUCKET            = turf-images   (must be set; no silent fallback)
+//   ALLOWED_ORIGINS           = https://your-prod-domain.com,https://staging.your-domain.com
+//                               (comma-separated; localhost is auto-allowed in dev)
+//   WHATSAPP_API_KEY              = WhatsApp Cloud API access token
+//   WHATSAPP_PHONE_ID             = WhatsApp phone-number ID
+//   WHATSAPP_GRAPH_API_VERSION    = optional, defaults to v23.0
+//   WHATSAPP_WEBHOOK_VERIFY_TOKEN = secret string Meta sends back during webhook setup
+//   WHATSAPP_APP_SECRET           = Meta app secret (used to verify webhook HMAC signatures)
+//   WHATSAPP_ALLOWED_TEMPLATES    = comma-separated allowlist of template names
+//                                   (empty = no templates may be sent)

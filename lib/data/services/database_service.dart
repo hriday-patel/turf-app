@@ -1,11 +1,117 @@
 import 'package:flutter/foundation.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:uuid/uuid.dart';
 import '../../core/constants/enums.dart';
 
 /// Database Service
 /// Handles all Supabase database operations using RPC functions
 class DatabaseService {
   SupabaseClient get _client => Supabase.instance.client;
+
+  static const _uuid = Uuid();
+
+  // ---------------------------------------------------------------------
+  // Iteration 4 — column allowlists for mass-assignment defense.
+  // Any update method that takes a free-form Map MUST run the input through
+  // the relevant guard before sending it to Supabase. The guards throw a
+  // StateError synchronously so a forbidden caller fails loudly in dev.
+  // ---------------------------------------------------------------------
+
+  /// Columns the app is allowed to write on `owners`. Phone changes MUST
+  /// go through `syncOwnerAfterOtp` (OTP-verified path) and are blocked
+  /// here on purpose.
+  static const _ownerWritableColumns = <String>{
+    'name',
+    'email',
+    'has_password',
+    'auth_methods',
+    'updated_at',
+  };
+
+  /// Columns the app is allowed to write on `players`. Same reasoning as
+  /// `_ownerWritableColumns` — phone changes are blocked here.
+  static const _playerWritableColumns = <String>{
+    'name',
+    'email',
+    'has_password',
+    'auth_methods',
+    'updated_at',
+  };
+
+  /// Columns the app must NEVER let a caller set on `turfs`. Most
+  /// importantly, owners cannot self-approve their own turf — the admin
+  /// review pipeline owns `is_approved` and `verification_status` (with
+  /// the narrow exception of resetting to PENDING/REJECTED on edit).
+  static const _turfBlockedColumns = <String>{
+    'id',
+    'owner_id',
+    'created_at',
+  };
+
+  /// Columns the app is allowed to write on `bookings` via the generic
+  /// updater. Money/identity columns (`amount`, `payment_status`, `slot_id`,
+  /// `customer_*`, etc.) require dedicated methods — most are also
+  /// enforced server-side by the immutable-columns trigger.
+  static const _bookingWritableColumns = <String>{
+    'cancel_reason',
+    'notes',
+    'cancelled_by',
+    'cancelled_at',
+    'updated_at',
+  };
+
+  /// Explicit safe column list for player-facing turf reads. Future
+  /// owner-only/admin-only columns added to `turfs` will NOT be auto-leaked
+  /// to the player browse path.
+  static const _publicTurfColumns =
+      'id, owner_id, turf_name, turf_type, number_of_nets, city, address, '
+      'location, description, open_time, close_time, slot_duration_minutes, '
+      'days_open, pricing_rules, public_holidays, images, is_approved, '
+      'verification_status, status, renovation_net_numbers, created_at, updated_at';
+
+  void _assertOwnerWritable(Map<String, dynamic> data) {
+    final bad = data.keys.where((k) => !_ownerWritableColumns.contains(k));
+    if (bad.isNotEmpty) {
+      throw StateError(
+          'updateOwner: forbidden column(s) ${bad.toList()}. Phone changes must use syncOwnerAfterOtp.');
+    }
+  }
+
+  void _assertPlayerWritable(Map<String, dynamic> data) {
+    final bad = data.keys.where((k) => !_playerWritableColumns.contains(k));
+    if (bad.isNotEmpty) {
+      throw StateError('updatePlayer: forbidden column(s) ${bad.toList()}.');
+    }
+  }
+
+  void _assertTurfWritable(Map<String, dynamic> data) {
+    final blocked =
+        data.keys.where((k) => _turfBlockedColumns.contains(k)).toList();
+    if (blocked.isNotEmpty) {
+      throw StateError(
+          'updateTurf: blocked column(s) $blocked cannot be modified by app code.');
+    }
+    if (data.containsKey('is_approved') && data['is_approved'] == true) {
+      throw StateError(
+          'updateTurf: cannot set is_approved=true. Approval is admin-only.');
+    }
+    if (data.containsKey('verification_status')) {
+      final v = data['verification_status']?.toString();
+      const allowed = {'PENDING', 'REJECTED'};
+      if (v == null || !allowed.contains(v)) {
+        throw StateError(
+            'updateTurf: verification_status can only be set to PENDING or REJECTED by app code (got $v).');
+      }
+    }
+  }
+
+  void _assertBookingWritable(Map<String, dynamic> data) {
+    final bad = data.keys.where((k) => !_bookingWritableColumns.contains(k));
+    if (bad.isNotEmpty) {
+      throw StateError(
+          'updateBooking: forbidden column(s) ${bad.toList()}. Use a dedicated method (e.g. markBookingPaymentReceived) for payment/identity changes.');
+    }
+  }
 
   // =====================================================
   // OWNER OPERATIONS
@@ -45,9 +151,9 @@ class DatabaseService {
       });
     } on PostgrestException catch (e) {
       if (e.message.contains('unique') || e.message.contains('duplicate')) {
-        throw 'Email or phone already registered.';
+        throw AuthException('Email or phone already registered.');
       }
-      throw 'Failed to create profile: ${e.message}';
+      throw AuthException('Failed to create profile: ${e.message}');
     }
   }
 
@@ -60,9 +166,11 @@ class DatabaseService {
         .maybeSingle();
   }
 
-  /// Update owner
+  /// Update owner. Caller may only set columns in `_ownerWritableColumns`.
+  /// Phone changes go through `syncOwnerAfterOtp` and are rejected here.
   Future<void> updateOwner(String ownerId, Map<String, dynamic> data) async {
     data['updated_at'] = DateTime.now().toIso8601String();
+    _assertOwnerWritable(data);
     await _client.from('owners').update(data).eq('id', ownerId);
   }
 
@@ -88,15 +196,18 @@ class DatabaseService {
         .maybeSingle();
   }
 
-  /// Check if phone is already registered to another owner
-  /// Returns the owner's email if phone exists, null otherwise
-  Future<String?> checkPhoneAlreadyRegistered(String phone) async {
+  /// Check if phone is already registered to another owner.
+  /// F6 (account-enumeration hardening): we deliberately return only a
+  /// boolean. Returning the conflicting account's email here would let
+  /// any caller probe whether a given phone is in use AND get back the
+  /// owning email.
+  Future<bool> checkPhoneAlreadyRegistered(String phone) async {
     final result = await _client
         .from('owners')
-        .select('email')
+        .select('id')
         .eq('phone', phone)
         .maybeSingle();
-    return result?['email'] as String?;
+    return result != null;
   }
 
   /// Get owner by email
@@ -132,15 +243,16 @@ class DatabaseService {
       });
     } on PostgrestException catch (e) {
       if (e.message.contains('unique') || e.message.contains('duplicate')) {
-        throw 'Email or phone already registered.';
+        throw AuthException('Email or phone already registered.');
       }
-      throw 'Failed to create profile: ${e.message}';
+      throw AuthException('Failed to create profile: ${e.message}');
     }
   }
 
-  /// Update player profile metadata.
+  /// Update player profile metadata. Allowlisted to non-sensitive columns.
   Future<void> updatePlayer(String playerId, Map<String, dynamic> data) async {
     data['updated_at'] = DateTime.now().toIso8601String();
+    _assertPlayerWritable(data);
     await _client.from('players').update(data).eq('id', playerId);
   }
 
@@ -221,6 +333,14 @@ class DatabaseService {
     return Map<String, dynamic>.from(rows.first as Map);
   }
 
+  /// Delete the caller's own pending signup row (best-effort).
+  /// Used when the user cancels deferred signup so we don't leave behind
+  /// orphaned PII (name/email/phone) in pending_auth_signups.
+  /// Relies on the `pending_auth_signups_delete_own` RLS policy.
+  Future<void> deletePendingSignup(String userId) async {
+    await _client.from('pending_auth_signups').delete().eq('user_id', userId);
+  }
+
   /// Finalize pending signup atomically after OTP verification.
   Future<Map<String, dynamic>> finalizePendingSignup({
     required String userId,
@@ -264,25 +384,33 @@ class DatabaseService {
         .order('created_at', ascending: false);
   }
 
-  /// Get approved turfs (for players)
+  /// Get approved turfs (for players). F8: explicit column list so any
+  /// future sensitive column added to `turfs` does not auto-leak.
   Future<List<Map<String, dynamic>>> getApprovedTurfs({String? city}) async {
-    var query = _client.from('turfs').select('*').eq('is_approved', true);
+    var query = _client
+        .from('turfs')
+        .select(_publicTurfColumns)
+        .eq('is_approved', true);
     if (city != null && city.isNotEmpty) {
       query = query.eq('city', city);
     }
     return await query.order('created_at', ascending: false);
   }
 
-  /// Get turf by ID
+  /// Get turf by ID. F8: explicit column list (player-facing path).
   Future<Map<String, dynamic>?> getTurf(String turfId) async {
     return await _client
         .from('turfs')
-        .select('*')
+        .select(_publicTurfColumns)
         .eq('id', turfId)
         .maybeSingle();
   }
 
-  /// Create turf with retry logic for network issues
+  /// Create turf with retry logic for network issues.
+  /// F4 (idempotency): we always pre-generate a UUID before the first
+  /// attempt. If a retry runs after the server actually accepted the
+  /// insert (network died on the response), the duplicate-PK error is
+  /// caught and treated as success — no double-create.
   Future<String> createTurf(Map<String, dynamic> data,
       {String? turfId, int retryCount = 5}) async {
     data['created_at'] = DateTime.now().toIso8601String();
@@ -292,23 +420,28 @@ class DatabaseService {
     // Sanitize data to prevent issues
     data = _sanitizeTurfData(data);
 
+    // F4: always have a stable id so retries are idempotent.
+    final stableId = turfId ?? _uuid.v4();
+
     Exception? lastError;
 
     for (int attempt = 1; attempt <= retryCount; attempt++) {
       try {
-        if (turfId != null) {
-          final insertData = Map<String, dynamic>.from(data)..['id'] = turfId;
-          await _client.from('turfs').insert(insertData);
-          return turfId;
-        }
-
-        final result =
-            await _client.from('turfs').insert(data).select('id').single();
-        return result['id'] as String;
+        final insertData = Map<String, dynamic>.from(data)..['id'] = stableId;
+        await _client.from('turfs').insert(insertData);
+        return stableId;
       } catch (e) {
+        // F4: if duplicate PK, the previous attempt actually succeeded.
+        final lower = e.toString().toLowerCase();
+        if (lower.contains('duplicate key') ||
+            lower.contains('already exists') ||
+            lower.contains('23505')) {
+          return stableId;
+        }
         if (_isMissingRenovationColumnError(e)) {
           final fallbackData = Map<String, dynamic>.from(data)
-            ..remove('renovation_net_numbers');
+            ..remove('renovation_net_numbers')
+            ..['id'] = stableId;
 
           if (data.containsKey('renovation_net_numbers')) {
             final pricingRules = Map<String, dynamic>.from(
@@ -321,32 +454,20 @@ class DatabaseService {
             fallbackData['pricing_rules'] = pricingRules;
           }
 
-          if (turfId != null) {
-            fallbackData['id'] = turfId;
-            await _client.from('turfs').insert(fallbackData);
-            return turfId;
-          }
-
-          final fallbackResult = await _client
-              .from('turfs')
-              .insert(fallbackData)
-              .select('id')
-              .single();
-          return fallbackResult['id'] as String;
+          await _client.from('turfs').insert(fallbackData);
+          return stableId;
         }
 
         lastError = e is Exception ? e : Exception(e.toString());
 
-        // Check if it's a retryable error
+        // F5: only retry on TRUE network markers. Postgres/URI errors are
+        // real bugs and must surface immediately rather than be retried.
         final errorStr = e.toString().toLowerCase();
         final isRetryableError = errorStr.contains('failed to fetch') ||
-            errorStr.contains('network') ||
+            errorStr.contains('socketexception') ||
             errorStr.contains('timeout') ||
             errorStr.contains('connection') ||
-            errorStr.contains('socket') ||
-            errorStr.contains('clientexception') ||
-            errorStr.contains('postgres') ||
-            errorStr.contains('uri');
+            errorStr.contains('clientexception');
 
         if (isRetryableError && attempt < retryCount) {
           // Wait before retrying (exponential backoff with jitter)
@@ -417,13 +538,19 @@ class DatabaseService {
             errorStr.contains('42703'));
   }
 
-  /// Update turf with retry logic for network issues
+  /// Update turf with retry logic for network issues.
+  /// F1 (mass-assignment defense): owner cannot self-approve their own
+  /// turf, cannot reassign ownership, cannot rewrite immutable id /
+  /// created_at. See `_assertTurfWritable`.
   Future<void> updateTurf(String turfId, Map<String, dynamic> data,
       {int retryCount = 5}) async {
     data['updated_at'] = DateTime.now().toIso8601String();
 
     // Sanitize data to prevent issues
     data = _sanitizeTurfData(data);
+
+    // F1: enforce blocked-column policy.
+    _assertTurfWritable(data);
 
     Exception? lastError;
 
@@ -455,16 +582,13 @@ class DatabaseService {
 
         lastError = e is Exception ? e : Exception(e.toString());
 
-        // Check if it's a retryable error
+        // F5: only retry on TRUE network markers.
         final errorStr = e.toString().toLowerCase();
         final isRetryableError = errorStr.contains('failed to fetch') ||
-            errorStr.contains('network') ||
+            errorStr.contains('socketexception') ||
             errorStr.contains('timeout') ||
             errorStr.contains('connection') ||
-            errorStr.contains('socket') ||
-            errorStr.contains('clientexception') ||
-            errorStr.contains('postgres') ||
-            errorStr.contains('uri');
+            errorStr.contains('clientexception');
 
         if (isRetryableError && attempt < retryCount) {
           // Wait before retrying (exponential backoff with jitter)
@@ -910,11 +1034,25 @@ class DatabaseService {
         .limit(limit);
   }
 
-  /// Update booking
+  /// Update booking. F3 (mass-assignment defense): only soft fields
+  /// (`cancel_reason`, `notes`, `cancelled_*`, `updated_at`) are allowed.
+  /// Money/identity columns must use a dedicated method like
+  /// [markBookingPaymentReceived]. The DB-side immutable-columns trigger
+  /// (Iteration 1) is the second line of defense.
   Future<void> updateBooking(
       String bookingId, Map<String, dynamic> data) async {
     data['updated_at'] = DateTime.now().toIso8601String();
+    _assertBookingWritable(data);
     await _client.from('bookings').update(data).eq('id', bookingId);
+  }
+
+  /// F3: dedicated method for marking an offline booking as paid. This is
+  /// the ONLY app code path allowed to flip `payment_status` to 'PAID'.
+  Future<void> markBookingPaymentReceived(String bookingId) async {
+    await _client.from('bookings').update({
+      'payment_status': 'PAID',
+      'updated_at': DateTime.now().toIso8601String(),
+    }).eq('id', bookingId);
   }
 
   /// Get booking by slot ID

@@ -25,6 +25,8 @@ class _MyTurfsScreenState extends State<MyTurfsScreen>
   late TabController _tabController;
   final Set<String> _pendingStatusUpdates = {};
   String? _lastLoadedOwnerId;
+  bool _isRefreshingTurfs =
+      false; // small-stuff: guard against overlapping refreshes
 
   @override
   void initState() {
@@ -60,15 +62,24 @@ class _MyTurfsScreenState extends State<MyTurfsScreen>
   }
 
   Future<void> _refreshTurfs() async {
+    if (_isRefreshingTurfs)
+      return; // small-stuff: skip if a load is already running
     final authProvider = Provider.of<AuthProvider>(context, listen: false);
     final turfProvider = Provider.of<TurfProvider>(context, listen: false);
     if (authProvider.currentUserId != null) {
-      // Force refresh from database to get latest data
-      await turfProvider.refreshTurfs(authProvider.currentUserId!);
+      _isRefreshingTurfs = true;
+      try {
+        // Force refresh from database to get latest data
+        await turfProvider.refreshTurfs(authProvider.currentUserId!);
+      } finally {
+        _isRefreshingTurfs = false;
+      }
     }
   }
 
   Future<void> _ensureTurfsLoaded() async {
+    if (_isRefreshingTurfs)
+      return; // small-stuff: don't stomp on an in-flight refresh
     final authProvider = Provider.of<AuthProvider>(context, listen: false);
     final ownerId = authProvider.currentUserId;
     if (ownerId == null || ownerId.isEmpty) return;
@@ -76,8 +87,13 @@ class _MyTurfsScreenState extends State<MyTurfsScreen>
 
     final turfProvider = Provider.of<TurfProvider>(context, listen: false);
     _lastLoadedOwnerId = ownerId;
-    turfProvider.loadOwnerTurfs(ownerId);
-    await turfProvider.refreshTurfs(ownerId);
+    _isRefreshingTurfs = true;
+    try {
+      turfProvider.loadOwnerTurfs(ownerId);
+      await turfProvider.refreshTurfs(ownerId);
+    } finally {
+      _isRefreshingTurfs = false;
+    }
   }
 
   @override
@@ -544,6 +560,32 @@ class _MyTurfsScreenState extends State<MyTurfsScreen>
 
     if (status == turf.status && status != TurfStatus.renovation) {
       return;
+    }
+
+    // U6: Confirm before flipping turf visibility status.
+    if (status != TurfStatus.renovation) {
+      final visibilityNote = status == TurfStatus.open
+          ? 'Customers will be able to see and book this turf again.'
+          : "Customers won't see or book this turf while it's ${status.displayName.toLowerCase()}.";
+      final confirmed = await showDialog<bool>(
+        context: this.context,
+        builder: (dialogContext) => AlertDialog(
+          title: Text('Change status to ${status.displayName}?'),
+          content: Text('${turf.turfName}\n\n$visibilityNote'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext, false),
+              child: const Text('Cancel'),
+            ),
+            ElevatedButton(
+              onPressed: () => Navigator.pop(dialogContext, true),
+              child: const Text('Confirm'),
+            ),
+          ],
+        ),
+      );
+      if (confirmed != true) return;
+      if (!mounted) return;
     }
 
     List<int> renovationNets = <int>[];

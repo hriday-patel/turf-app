@@ -63,6 +63,18 @@ android {
             } else {
                 signingConfigs.getByName("debug")
             }
+
+            // R8 / resource shrinking is ON. proguard-rules.pro contains
+            // -keep rules for Flutter, plugins, Firebase, Play Core, etc.
+            // If a release crash points to a missing class, add a -keep
+            // rule there and rebuild. Smoke-test every release AAB on a
+            // real device via Internal Testing before promoting.
+            isMinifyEnabled = true
+            isShrinkResources = true
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro"
+            )
         }
     }
 }
