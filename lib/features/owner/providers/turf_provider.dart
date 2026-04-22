@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import '../../../data/models/turf_model.dart';
 import '../../../data/services/database_service.dart';
@@ -43,7 +44,10 @@ class TurfProvider extends ChangeNotifier {
         notifyListeners();
       },
       onError: (error) {
-        _errorMessage = 'Failed to load turfs: $error';
+        _errorMessage = _friendlyError(
+          error,
+          fallback: 'Could not load turfs. Please try again.',
+        );
         notifyListeners();
       },
     );
@@ -103,7 +107,10 @@ class TurfProvider extends ChangeNotifier {
       return resultTurfId;
     } catch (e) {
       _isLoading = false;
-      _errorMessage = 'Failed to add turf: $e';
+      _errorMessage = _friendlyError(
+        e,
+        fallback: 'Could not add turf. Please try again.',
+      );
       notifyListeners();
       return null;
     }
@@ -186,36 +193,11 @@ class TurfProvider extends ChangeNotifier {
         final currentTurf = _turfs[index];
         final updatedMap = currentTurf.toMap();
 
-        // Merge data carefully - handle special fields
-        for (final entry in data.entries) {
-          final key = entry.key;
-          final value = entry.value;
-
-          // Convert snake_case to the format used in toMap if needed
-          if (key == 'turf_name') {
-            updatedMap['turf_name'] = value;
-          } else if (key == 'turf_type') {
-            updatedMap['turf_type'] = value;
-          } else if (key == 'open_time') {
-            updatedMap['open_time'] = value;
-          } else if (key == 'close_time') {
-            updatedMap['close_time'] = value;
-          } else if (key == 'slot_duration_minutes') {
-            updatedMap['slot_duration_minutes'] = value;
-          } else if (key == 'days_open') {
-            updatedMap['days_open'] = value;
-          } else if (key == 'pricing_rules') {
-            updatedMap['pricing_rules'] = value;
-          } else if (key == 'number_of_nets') {
-            updatedMap['number_of_nets'] = value;
-          } else if (key == 'verification_status') {
-            updatedMap['verification_status'] = value;
-          } else if (key == 'is_approved') {
-            updatedMap['is_approved'] = value;
-          } else {
-            updatedMap[key] = value;
-          }
-        }
+        // Phase 3 Iter6 CLEAN-05: collapsed a 35-line if/else ladder that
+        // mapped each known key to itself — every branch was identical to
+        // the default `updatedMap[key] = value` path, so it added zero
+        // behavior and lots of maintenance burden.
+        updatedMap.addAll(data);
 
         updatedMap['updated_at'] = DateTime.now().toIso8601String();
 
@@ -237,7 +219,10 @@ class TurfProvider extends ChangeNotifier {
       return true;
     } catch (e) {
       _isLoading = false;
-      _errorMessage = 'Failed to update turf: $e';
+      _errorMessage = _friendlyError(
+        e,
+        fallback: 'Could not update turf. Please try again.',
+      );
       notifyListeners();
       return false;
     }
@@ -250,7 +235,10 @@ class TurfProvider extends ChangeNotifier {
       _turfs = rows.map((row) => TurfModel.fromMap(row)).toList();
       notifyListeners();
     } catch (e) {
-      _errorMessage = 'Failed to refresh turfs: $e';
+      _errorMessage = _friendlyError(
+        e,
+        fallback: 'Could not refresh turfs. Please try again.',
+      );
       notifyListeners();
     }
   }
@@ -262,14 +250,30 @@ class TurfProvider extends ChangeNotifier {
 
   /// Add public holiday
   Future<bool> addPublicHoliday(String turfId, String date) async {
-    final turf = _turfs.firstWhere((t) => t.turfId == turfId);
+    // Phase 3 Iter6 BUG-13 fix: don't crash with StateError when the turf
+    // isn't in the local cache (e.g. deep link before stream loaded).
+    final turf = getTurfById(turfId);
+    if (turf == null) {
+      _errorMessage = 'Turf not found. Please refresh and try again.';
+      notifyListeners();
+      return false;
+    }
+    // Phase 3 Iter6 BUG-14 fix: skip if already present so double-taps don't
+    // create duplicate entries that bloat the list.
+    if (turf.publicHolidays.contains(date)) return true;
     final holidays = [...turf.publicHolidays, date];
     return await updateTurf(turfId, {'public_holidays': holidays});
   }
 
   /// Remove public holiday
   Future<bool> removePublicHoliday(String turfId, String date) async {
-    final turf = _turfs.firstWhere((t) => t.turfId == turfId);
+    // Phase 3 Iter6 BUG-13 fix: safe lookup, no StateError on missing turf.
+    final turf = getTurfById(turfId);
+    if (turf == null) {
+      _errorMessage = 'Turf not found. Please refresh and try again.';
+      notifyListeners();
+      return false;
+    }
     final holidays = turf.publicHolidays.where((h) => h != date).toList();
     return await updateTurf(turfId, {'public_holidays': holidays});
   }
@@ -299,6 +303,16 @@ class TurfProvider extends ChangeNotifier {
   void clearError() {
     _errorMessage = null;
     notifyListeners();
+  }
+
+  /// Phase 3 Iter6 ERR-04 fix: never leak raw backend exception text to
+  /// production users (OWASP A09). In debug builds we still surface the
+  /// real error so developers can diagnose.
+  String _friendlyError(Object error, {required String fallback}) {
+    if (kDebugMode) {
+      return '$fallback (debug: $error)';
+    }
+    return fallback;
   }
 
   @override

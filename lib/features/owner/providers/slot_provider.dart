@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import '../../../data/models/slot_model.dart';
 import '../../../data/models/turf_model.dart';
@@ -62,7 +63,10 @@ class SlotProvider extends ChangeNotifier {
       notifyListeners();
     } catch (error) {
       if (requestToken != _loadRequestToken) return;
-      _errorMessage = 'Failed to load slots: $error';
+      _errorMessage = _friendlyError(
+        error,
+        fallback: 'Could not load slots. Please try again.',
+      );
       _isLoading = false;
       notifyListeners();
     }
@@ -77,9 +81,18 @@ class SlotProvider extends ChangeNotifier {
     required String date,
     bool forceRegenerate = false,
   }) async {
-    // Prevent concurrent generation for the same turf+date
+    // Prevent concurrent generation for the same turf+date.
+    // Phase 3 Iter5 BUG-11 fix: previously returned `true` when a duplicate
+    // call came in, falsely telling the caller the work was done. Now we
+    // return `false` and surface a friendly message so the caller can wait
+    // / retry instead of advancing the UI prematurely.
     final genKey = '${turf.turfId}_$date';
-    if (_pendingGenerateOps.contains(genKey)) return true;
+    if (_pendingGenerateOps.contains(genKey)) {
+      _errorMessage =
+          'Slot generation is already in progress. Please wait\u2026';
+      notifyListeners();
+      return false;
+    }
     _pendingGenerateOps.add(genKey);
     try {
       _isLoading = true;
@@ -244,7 +257,10 @@ class SlotProvider extends ChangeNotifier {
             debugPrint('Retry succeeded for $date');
           } catch (retryError) {
             _isLoading = false;
-            _errorMessage = 'Failed to create slots: $retryError';
+            _errorMessage = _friendlyError(
+              retryError,
+              fallback: 'Could not create slots. Please try again.',
+            );
             notifyListeners();
             return false;
           }
@@ -258,7 +274,10 @@ class SlotProvider extends ChangeNotifier {
       return true;
     } catch (e) {
       _isLoading = false;
-      _errorMessage = 'Failed to generate slots: $e';
+      _errorMessage = _friendlyError(
+        e,
+        fallback: 'Could not generate slots. Please try again.',
+      );
       debugPrint('Error generating slots: $e');
       notifyListeners();
       return false;
@@ -382,8 +401,18 @@ class SlotProvider extends ChangeNotifier {
         }
       }
     } catch (e) {
+      // Phase 3 Iter5 BUG-12 fix: previously this swallowed the failure
+      // silently, so generateSlots could report success while owners were
+      // shown stale open/closed status. Surface a friendly error and rethrow
+      // so the parent generateSlots catch can mark the run as failed.
       debugPrint(
           'Failed to sync operating hours for Net $netNumber on $date: $e');
+      _errorMessage = _friendlyError(
+        e,
+        fallback:
+            'Could not refresh open/closed hours for some slots. Please try again.',
+      );
+      rethrow;
     }
   }
 
@@ -425,7 +454,14 @@ class SlotProvider extends ChangeNotifier {
         }
       }
     } catch (e) {
+      // Phase 3 Iter5 BUG-12 fix: surface price-sync failures instead of
+      // silently leaving stale prices on the schedule.
       debugPrint('Failed to sync slot prices for Net $netNumber on $date: $e');
+      _errorMessage = _friendlyError(
+        e,
+        fallback: 'Could not refresh prices for some slots. Please try again.',
+      );
+      rethrow;
     }
   }
 
@@ -434,6 +470,11 @@ class SlotProvider extends ChangeNotifier {
     // Prevent concurrent operations on the same slot
     if (_pendingSlotOps.contains(slotId)) return false;
     _pendingSlotOps.add(slotId);
+    // Phase 3 Iter5 EDGE-07 fix: capture the turf+date for revert before any
+    // await, so a date change mid-flight can't cause us to reload the wrong
+    // turf's slots into the wrong selectedDate.
+    final revertTurfId = _slots.isNotEmpty ? _slots.first.turfId : null;
+    final revertDate = _selectedDate;
     try {
       // Optimistically update local state for instant feedback
       final index = _slots.indexWhere((s) => s.slotId == slotId);
@@ -459,10 +500,13 @@ class SlotProvider extends ChangeNotifier {
       await _dbService.blockSlot(slotId, ownerId, reason);
       return true;
     } catch (e) {
-      _errorMessage = 'Failed to block slot: $e';
-      // Revert optimistic update by reloading
-      if (_selectedDate != null && _slots.isNotEmpty) {
-        loadSlots(_slots.first.turfId, _selectedDate!);
+      _errorMessage = _friendlyError(
+        e,
+        fallback: 'Could not block slot. Please try again.',
+      );
+      // Revert optimistic update by reloading (using captured locals)
+      if (revertTurfId != null && revertDate != null) {
+        loadSlots(revertTurfId, revertDate);
       }
       notifyListeners();
       return false;
@@ -478,6 +522,9 @@ class SlotProvider extends ChangeNotifier {
     // Prevent concurrent operations on the same slot
     if (_pendingSlotOps.contains(slotId)) return false;
     _pendingSlotOps.add(slotId);
+    // Phase 3 Iter5 EDGE-07 fix: capture revert context before await.
+    final revertTurfId = _slots.isNotEmpty ? _slots.first.turfId : null;
+    final revertDate = _selectedDate;
     try {
       // Optimistically update local state for instant feedback
       final index = _slots.indexWhere((s) => s.slotId == slotId);
@@ -503,10 +550,13 @@ class SlotProvider extends ChangeNotifier {
       await _dbService.unblockSlot(slotId, overrideMarker: overrideMarker);
       return true;
     } catch (e) {
-      _errorMessage = 'Failed to unblock slot: $e';
-      // Revert optimistic update by reloading
-      if (_selectedDate != null && _slots.isNotEmpty) {
-        loadSlots(_slots.first.turfId, _selectedDate!);
+      _errorMessage = _friendlyError(
+        e,
+        fallback: 'Could not unblock slot. Please try again.',
+      );
+      // Revert optimistic update by reloading (using captured locals)
+      if (revertTurfId != null && revertDate != null) {
+        loadSlots(revertTurfId, revertDate);
       }
       notifyListeners();
       return false;
@@ -524,23 +574,17 @@ class SlotProvider extends ChangeNotifier {
         reservationMinutes: 10,
       );
     } catch (e) {
-      _errorMessage = 'Failed to reserve slot: $e';
+      _errorMessage = _friendlyError(
+        e,
+        fallback: 'Could not reserve slot. Please try again.',
+      );
       notifyListeners();
       return false;
     }
   }
 
-  /// Confirm booking (mark as booked)
-  Future<bool> confirmBooking(String slotId) async {
-    try {
-      await _dbService.bookSlot(slotId);
-      return true;
-    } catch (e) {
-      _errorMessage = 'Failed to confirm booking: $e';
-      notifyListeners();
-      return false;
-    }
-  }
+  // Phase 3 Iter5 CLEAN-04: removed unused `confirmBooking` — it duplicated
+  // `markSlotAsBooked` exactly and had no callers in the codebase.
 
   /// Mark slot as booked (used when payment is received)
   Future<bool> markSlotAsBooked(String slotId) async {
@@ -548,7 +592,10 @@ class SlotProvider extends ChangeNotifier {
       await _dbService.bookSlot(slotId);
       return true;
     } catch (e) {
-      _errorMessage = 'Failed to mark slot as booked: $e';
+      _errorMessage = _friendlyError(
+        e,
+        fallback: 'Could not mark slot as booked. Please try again.',
+      );
       notifyListeners();
       return false;
     }
@@ -560,7 +607,10 @@ class SlotProvider extends ChangeNotifier {
       await _dbService.releaseSlot(slotId);
       return true;
     } catch (e) {
-      _errorMessage = 'Failed to release slot: $e';
+      _errorMessage = _friendlyError(
+        e,
+        fallback: 'Could not release slot. Please try again.',
+      );
       notifyListeners();
       return false;
     }
@@ -577,5 +627,15 @@ class SlotProvider extends ChangeNotifier {
     _slots = [];
     _selectedDate = null;
     notifyListeners();
+  }
+
+  /// Phase 3 Iter5 ERR-03 fix: never leak raw backend exception text to
+  /// production users (OWASP A09). In debug builds we still surface the
+  /// real error so developers can diagnose.
+  String _friendlyError(Object error, {required String fallback}) {
+    if (kDebugMode) {
+      return '$fallback (debug: $error)';
+    }
+    return fallback;
   }
 }

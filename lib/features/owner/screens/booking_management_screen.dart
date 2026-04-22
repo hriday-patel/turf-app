@@ -48,8 +48,7 @@ class _BookingManagementScreenState extends State<BookingManagementScreen>
     final approvedTurfIds =
         turfProvider.approvedTurfs.map((t) => t.turfId).toList();
     if (approvedTurfIds.isNotEmpty && authProvider.currentUserId != null) {
-      bookingProvider.loadOwnerBookings(
-          authProvider.currentUserId!, approvedTurfIds);
+      bookingProvider.loadOwnerBookings(approvedTurfIds);
     }
   }
 
@@ -75,7 +74,7 @@ class _BookingManagementScreenState extends State<BookingManagementScreen>
     final loadKey = '$ownerId:${approvedTurfIds.join(',')}';
     if (loadKey == _lastBookingLoadKey) return;
     _lastBookingLoadKey = loadKey;
-    bookingProvider.loadOwnerBookings(ownerId, approvedTurfIds);
+    bookingProvider.loadOwnerBookings(approvedTurfIds);
   }
 
   Future<void> _forceRefreshData() async {
@@ -93,8 +92,7 @@ class _BookingManagementScreenState extends State<BookingManagementScreen>
       final approvedTurfIds =
           turfProvider.approvedTurfs.map((t) => t.turfId).toList();
       if (approvedTurfIds.isNotEmpty) {
-        bookingProvider.loadOwnerBookings(
-            authProvider.currentUserId!, approvedTurfIds);
+        bookingProvider.loadOwnerBookings(approvedTurfIds);
       }
     }
   }

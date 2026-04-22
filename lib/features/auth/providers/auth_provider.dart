@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math';
 import 'package:flutter/foundation.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../../data/services/auth_service.dart';
@@ -20,7 +21,9 @@ enum AuthStatus {
 enum _OtpFlow {
   none,
   ownerLogin,
-  playerLogin,
+  // Phase 3 Iter2 CLEAN-01: removed unused `playerLogin` value. Player phone
+  // OTP login was never wired up (no caller assigned this value), so the
+  // enum case, _sendOtpForFlow handler, and verifyOTP branch were dead code.
   ownerPhoneVerification,
   deferredSignup,
   forgotPassword,
@@ -166,6 +169,12 @@ class AuthProvider extends ChangeNotifier {
   /// deferred-signup state we are about to construct.
   bool _oauthHandlerInProgress = false;
 
+  /// Phase 3 Iter1 BUG-01 fix: monotonically increasing token used to
+  /// invalidate in-flight [_loadUserProfile] calls. When the user signs out
+  /// (or we force-sign-out) we bump this token so any older load that
+  /// completes afterward cannot resurrect stale owner/player state.
+  int _profileLoadToken = 0;
+
   AuthProvider() {
     _init();
   }
@@ -190,6 +199,10 @@ class AuthProvider extends ChangeNotifier {
       if (user != null) {
         await _loadUserProfile(user.id);
       } else {
+        // Phase 3 Iter1 BUG-01 fix: bump the load token here too so any
+        // in-flight _loadUserProfile from a previous session is invalidated
+        // the moment the auth listener observes a sign-out.
+        _profileLoadToken++;
         _authState = AuthStatus.unauthenticated;
         _currentOwner = null;
         _currentPlayer = null;
@@ -200,18 +213,29 @@ class AuthProvider extends ChangeNotifier {
     });
   }
 
-  DateTime _parsePendingCreatedAt(Map<String, dynamic> pending) {
+  /// Phase 3 Iter1 ERR-01 + EDGE-02 fix: never crash on a malformed
+  /// `created_at` and never silently treat a missing/unparseable value as
+  /// "brand new". Returning null causes the caller to treat the pending
+  /// record as already expired and clean it up.
+  DateTime? _parsePendingCreatedAt(Map<String, dynamic> pending) {
     final raw = pending['created_at'];
     if (raw is DateTime) {
       return raw;
     }
     if (raw is String && raw.trim().isNotEmpty) {
-      return DateTime.parse(raw);
+      try {
+        return DateTime.parse(raw);
+      } catch (_) {
+        return null;
+      }
     }
-    return DateTime.now();
+    return null;
   }
 
   Future<void> _forceSignOutWithMessage(String message) async {
+    // Phase 3 Iter1 BUG-01 fix: invalidate any in-flight profile load so a
+    // late-arriving response cannot flip us back to authenticated.
+    _profileLoadToken++;
     _errorMessage = message;
     _setBlockingDialogMessage(message);
     _clearOtpContext();
@@ -233,12 +257,38 @@ class AuthProvider extends ChangeNotifier {
 
   /// Load user profile (Owner or Player)
   Future<void> _loadUserProfile(String uid) async {
+    // Phase 3 Iter1 BUG-01 fix: capture the current load token. If a sign-out
+    // (or another load) bumps it before we finish, we discard our results so
+    // a late response can't flip the app back to authenticated.
+    final token = ++_profileLoadToken;
+    bool tokenStillValid() => token == _profileLoadToken;
+
     try {
       _authState = AuthStatus.loading;
       notifyListeners();
 
-      // Try to load owner profile
+      // Phase 3 Iter1 EDGE-03 fix: detect the impossible state where the same
+      // uid exists as BOTH an owner and a player. We refuse to load either and
+      // force-sign-out the session so the user is not silently shown the wrong
+      // role's data.
       final ownerData = await _dbService.getOwner(uid);
+      if (!tokenStillValid()) return;
+      final playerData = await _dbService.getPlayer(uid);
+      if (!tokenStillValid()) return;
+
+      if (ownerData != null && playerData != null) {
+        if (kDebugMode) {
+          debugPrint(
+            'AuthProvider: uid $uid exists in BOTH owners and players tables. '
+            'Refusing to load. Contact support / data fix required.',
+          );
+        }
+        await _forceSignOutWithMessage(
+          'We found a problem with your account. Please contact support.',
+        );
+        return;
+      }
+
       if (ownerData != null) {
         _currentOwner = OwnerModel.fromMap(ownerData);
         _currentPlayer = null;
@@ -249,8 +299,6 @@ class AuthProvider extends ChangeNotifier {
         return;
       }
 
-      // Try to load player profile
-      final playerData = await _dbService.getPlayer(uid);
       if (playerData != null) {
         _currentPlayer = PlayerModel.fromMap(playerData);
         _currentOwner = null;
@@ -271,9 +319,14 @@ class AuthProvider extends ChangeNotifier {
       }
 
       final pending = await _dbService.getPendingSignup(uid);
+      if (!tokenStillValid()) return;
       if (pending != null) {
+        // Phase 3 Iter1 ERR-01 + EDGE-02 fix: a missing or unparseable
+        // created_at now returns null and is treated as already expired,
+        // instead of crashing or extending the record's life forever.
         final pendingCreatedAt = _parsePendingCreatedAt(pending);
-        if (AuthFlowRules.isDeferredSignupExpired(pendingCreatedAt)) {
+        if (pendingCreatedAt == null ||
+            AuthFlowRules.isDeferredSignupExpired(pendingCreatedAt)) {
           await _handleExpiredPendingSignupSession();
           return;
         }
@@ -306,9 +359,17 @@ class AuthProvider extends ChangeNotifier {
       _isResumingPendingSignup = false;
       notifyListeners();
     } catch (e) {
-      _authState = AuthStatus.error;
-      _errorMessage = 'Failed to load profile: ${e.toString()}';
-      notifyListeners();
+      // Phase 3 Iter1 BUG-02 fix: previously we set _authState = error and
+      // left the user stranded on a frozen loading screen with raw debug
+      // text. Now we force-sign-out with a friendly message so they land
+      // back on the login screen and can retry cleanly.
+      if (!tokenStillValid()) return;
+      if (kDebugMode) {
+        debugPrint('AuthProvider: profile load failed: $e');
+      }
+      await _forceSignOutWithMessage(
+        "Couldn't load your profile. Please check your connection and sign in again.",
+      );
     }
   }
 
@@ -363,16 +424,27 @@ class AuthProvider extends ChangeNotifier {
     if (error is PostgrestException) {
       final code = error.code?.trim() ?? '';
       final msg = error.message.trim();
+      // Phase 3 Iter1 EDGE-01 fix: in release builds we never leak raw
+      // backend / RLS / RPC text to the user. We log the full detail for
+      // debug builds and show a generic, friendly fallback in release.
+      if (kDebugMode) {
+        debugPrint('AuthProvider Postgrest error code=$code msg=$msg');
+      }
       if (code == '42883' || msg.toLowerCase().contains('does not exist')) {
-        return 'Backend not ready: ${msg.length > 140 ? '${msg.substring(0, 140)}…' : msg}';
+        return kDebugMode
+            ? 'Backend not ready: ${msg.length > 140 ? '${msg.substring(0, 140)}…' : msg}'
+            : "Something went wrong on our end. Please try again in a moment.";
       }
       if (code == '42501' ||
           msg.toLowerCase().contains('permission denied') ||
           msg.toLowerCase().contains('rls') ||
           msg.toLowerCase().contains('policy')) {
-        return 'Backend permission denied: ${msg.length > 140 ? '${msg.substring(0, 140)}…' : msg}';
+        return kDebugMode
+            ? 'Backend permission denied: ${msg.length > 140 ? '${msg.substring(0, 140)}…' : msg}'
+            : "Something went wrong on our end. Please try again in a moment.";
       }
-      return _mapAuthMessage(msg, fallback: '$fallback ($msg)');
+      return _mapAuthMessage(msg,
+          fallback: kDebugMode ? '$fallback ($msg)' : fallback);
     }
 
     if (error is String) {
@@ -483,10 +555,12 @@ class AuthProvider extends ChangeNotifier {
       debugPrint('Auth error: $message');
     }
 
-    // No mapping matched. Surface the real error so we can diagnose backend
-    // issues in production builds (RPC missing, RLS denied, schema drift,
-    // etc.). Cap the length so the toast doesn't overflow.
+    // Phase 3 Iter1 EDGE-01 fix: in release builds, never surface raw
+    // unmapped backend text to end users — it leaks internals and confuses
+    // non-technical users. Debug builds still see the truncated raw text
+    // so engineers can diagnose.
     if (message.isEmpty) return fallback;
+    if (!kDebugMode) return fallback;
     final truncated =
         message.length > 160 ? '${message.substring(0, 160)}…' : message;
     return '$fallback ($truncated)';
@@ -528,6 +602,23 @@ class AuthProvider extends ChangeNotifier {
         }
       }
 
+      // Phase 3 Iter2 BUG-04 fix: mirror the cross-role check for player
+      // signup so the user gets a clear, actionable message instead of a
+      // generic Supabase "user already exists" error.
+      if (role == UserRole.player) {
+        final playerByEmail =
+            await _dbService.getPlayerByEmail(normalizedEmail);
+        if (playerByEmail != null) {
+          throw AuthException('Account already exists. Please log in instead.');
+        }
+
+        final ownerByEmail = await _dbService.getOwnerByEmail(normalizedEmail);
+        if (ownerByEmail != null) {
+          throw AuthException(
+              'This email is registered as an owner account. Please use Owner login.');
+        }
+      }
+
       final normalizedPhone = AuthFormUtils.normalizeIndianPhone(phone);
       final availability = await _dbService.checkPhoneAvailabilityGlobal(
         phone: normalizedPhone,
@@ -553,6 +644,17 @@ class AuthProvider extends ChangeNotifier {
       // (auth.uid() is null) and the RLS-protected `upsert_pending_signup`
       // RPC will fail. Surface a clear message instead of crashing.
       if (signUpResult.needsEmailConfirmation) {
+        // Phase 3 Iter2 BUG-03 fix: with email confirmation required there is
+        // no session, so we cannot call `delete_my_account()` (it relies on
+        // auth.uid()). The auth row will sit unconfirmed; Supabase auto-purges
+        // unconfirmed users after the project's configured TTL. We log it for
+        // visibility but do not attempt cleanup here.
+        if (kDebugMode) {
+          debugPrint(
+            'AuthProvider signUp: email confirmation required for uid=$uid. '
+            'Auth row left unconfirmed; will be purged by Supabase.',
+          );
+        }
         _setBlockingDialogMessage(
           'Please check your inbox and confirm your email to finish creating '
           'your account, then sign in to continue.',
@@ -590,10 +692,31 @@ class AuthProvider extends ChangeNotifier {
         _currentOwner = null;
         _currentPlayer = null;
       } catch (profileError) {
-        // Pending state save failed — sign out the orphaned auth user
+        // Phase 3 Iter2 BUG-03 fix: pending-signup save failed. Previously we
+        // only signed out, leaving an orphan auth row that blocked future
+        // signups with the same email forever. Now we call the SECURITY
+        // DEFINER `delete_my_account()` RPC to fully wipe the half-made
+        // login. We have a session at this point (no email confirmation
+        // required), so the RPC will succeed.
+        if (kDebugMode) {
+          debugPrint(
+            'AuthProvider signUp: pending save failed for uid=$uid: $profileError. '
+            'Attempting to delete orphan auth row.',
+          );
+        }
         try {
-          await _authService.signOut();
-        } catch (_) {}
+          await _authService.deleteAccount();
+        } catch (deleteError) {
+          if (kDebugMode) {
+            debugPrint(
+              'AuthProvider signUp: orphan cleanup failed: $deleteError. '
+              'Falling back to signOut.',
+            );
+          }
+          try {
+            await _authService.signOut();
+          } catch (_) {}
+        }
         rethrow;
       }
 
@@ -722,9 +845,7 @@ class AuthProvider extends ChangeNotifier {
       case _OtpFlow.ownerLogin:
         await _authService.sendPhoneOtp(phone: phone, shouldCreateUser: false);
         return;
-      case _OtpFlow.playerLogin:
-        await _authService.sendPhoneOtp(phone: phone, shouldCreateUser: true);
-        return;
+      // Phase 3 Iter2 CLEAN-01: removed dead `playerLogin` case.
       case _OtpFlow.forgotPassword:
         await _authService.sendPhoneOtp(phone: phone, shouldCreateUser: false);
         return;
@@ -997,7 +1118,7 @@ class AuthProvider extends ChangeNotifier {
           .toLowerCase();
       final pendingHasPassword = existingPending?['has_password'] == true;
       final createdAt = existingPending != null
-          ? _parsePendingCreatedAt(existingPending)
+          ? (_parsePendingCreatedAt(existingPending) ?? DateTime.now())
           : DateTime.now();
 
       await _dbService.upsertPendingSignup(
@@ -1136,7 +1257,16 @@ class AuthProvider extends ChangeNotifier {
 
       if (_currentOwner == null) {
         final loggedInAsPlayer = _currentPlayer != null;
-        await signOut();
+        // Phase 3 Iter2 EDGE-04 fix: cleanup signOut must never mask the real
+        // reason we're rejecting the login.
+        try {
+          await signOut();
+        } catch (signOutError) {
+          if (kDebugMode) {
+            debugPrint(
+                'AuthProvider signIn cleanup signOut failed: $signOutError');
+          }
+        }
         if (loggedInAsPlayer) {
           throw AuthException(
               'This email is registered as a player account. Please use Player login.');
@@ -1196,7 +1326,16 @@ class AuthProvider extends ChangeNotifier {
 
       if (_currentPlayer == null) {
         final loggedInAsOwner = _currentOwner != null;
-        await signOut();
+        // Phase 3 Iter2 EDGE-04 fix: cleanup signOut must never mask the real
+        // reason we're rejecting the login.
+        try {
+          await signOut();
+        } catch (signOutError) {
+          if (kDebugMode) {
+            debugPrint(
+                'AuthProvider signInPlayer cleanup signOut failed: $signOutError');
+          }
+        }
         if (loggedInAsOwner) {
           throw AuthException(
               'This email is registered as an owner account. Please use Owner login.');
@@ -1445,38 +1584,9 @@ class AuthProvider extends ChangeNotifier {
         return true;
       }
 
-      if (_otpFlow == _OtpFlow.playerLogin) {
-        final response = await _authService.verifyPhoneOtp(
-          phone: _phoneNumber!,
-          token: smsCode,
-        );
-
-        final uid = response.user?.id;
-        if (uid == null || uid.isEmpty) {
-          throw AuthException('Authentication failed.');
-        }
-
-        await _loadUserProfile(uid);
-
-        if (_currentOwner != null) {
-          throw AuthException(
-              'This account is registered as an owner. Use owner login.');
-        }
-
-        // Q1 fix: phone OTP can succeed and create an auth user even when
-        // there is no player profile yet. Without this guard the user would
-        // be "authenticated" with no profile row attached.
-        if (_currentPlayer == null) {
-          await signOut();
-          throw AuthException(
-              'Player account not found. Please complete signup first.');
-        }
-
-        _otpFlow = _OtpFlow.none;
-        _isLoading = false;
-        notifyListeners();
-        return true;
-      }
+      // Phase 3 Iter2 CLEAN-01: removed dead `_OtpFlow.playerLogin` branch.
+      // No code path ever assigned this flow value, so this ~30-line block
+      // was unreachable.
 
       if (_otpFlow != _OtpFlow.ownerLogin) {
         throw AuthException('OTP flow is invalid. Please request OTP again.');
@@ -1588,6 +1698,9 @@ class AuthProvider extends ChangeNotifier {
   /// Sign out
   Future<void> signOut() async {
     try {
+      // Phase 3 Iter3 CLEAN-02: bump token so any in-flight _loadUserProfile
+      // is invalidated regardless of auth-state-stream timing.
+      _profileLoadToken++;
       await _authService.signOut();
       _currentOwner = null;
       _currentPlayer = null;
@@ -1597,7 +1710,13 @@ class AuthProvider extends ChangeNotifier {
       _authState = AuthStatus.unauthenticated;
       notifyListeners();
     } catch (e) {
-      _errorMessage = 'Failed to sign out: ${e.toString()}';
+      // Phase 3 Iter3 BUG-06 fix: route through _friendlyAuthError so
+      // production users see a clean message; debug builds still get the
+      // raw error via the helper's kDebugMode branch.
+      _errorMessage = _friendlyAuthError(
+        e,
+        fallback: 'Could not sign out. Please try again.',
+      );
       notifyListeners();
     }
   }
@@ -1609,6 +1728,9 @@ class AuthProvider extends ChangeNotifier {
   Future<bool> deleteAccount() async {
     try {
       _errorMessage = null;
+      // Phase 3 Iter3 CLEAN-02: bump token so any in-flight _loadUserProfile
+      // is invalidated regardless of auth-state-stream timing.
+      _profileLoadToken++;
       await _authService.deleteAccount();
       _currentOwner = null;
       _currentPlayer = null;
@@ -1654,9 +1776,27 @@ class AuthProvider extends ChangeNotifier {
       _clearDeferredOwnerSignup();
       _clearOtpContext();
 
-      // Sign out the Supabase auth user
-      await _authService.signOut();
+      // Phase 3 Iter3 BUG-05 fix: previously we only signed out the auth
+      // user when they cancelled signup, leaving an orphan auth.users row.
+      // That blocked re-signup with the same email forever. Now we call
+      // the SECURITY DEFINER `delete_my_account()` RPC to fully wipe the
+      // half-made login. We DO have a session here (signup succeeded; only
+      // the OTP step was cancelled), so the RPC will succeed.
+      try {
+        await _authService.deleteAccount();
+      } catch (deleteError) {
+        if (kDebugMode) {
+          debugPrint(
+            'AuthProvider cancelDeferredSignup: orphan delete failed: '
+            '$deleteError. Falling back to signOut.',
+          );
+        }
+        try {
+          await _authService.signOut();
+        } catch (_) {}
+      }
 
+      _profileLoadToken++;
       _currentOwner = null;
       _currentPlayer = null;
       _authState = AuthStatus.unauthenticated;
@@ -1720,12 +1860,21 @@ class AuthProvider extends ChangeNotifier {
       final normalizedEmail = AuthFormUtils.normalizeEmail(email);
       final ownerData = await _dbService.getOwnerByEmail(normalizedEmail);
 
+      // Phase 3 Iter3 BUG-07 fix: also check the players table so a player
+      // who forgot their password can recover via the same flow. Without
+      // this lookup, every player would be silently dropped into the
+      // enumeration-protection branch and could never reset.
+      Map<String, dynamic>? profileData = ownerData;
+      if (profileData == null) {
+        profileData = await _dbService.getPlayerByEmail(normalizedEmail);
+      }
+
       String? phone;
       bool silent = false;
-      if (ownerData == null) {
+      if (profileData == null) {
         silent = true;
       } else {
-        final candidatePhone = ownerData['phone'] as String?;
+        final candidatePhone = profileData['phone'] as String?;
         if (candidatePhone == null ||
             candidatePhone.isEmpty ||
             candidatePhone.startsWith('pending_')) {
@@ -1763,9 +1912,13 @@ class AuthProvider extends ChangeNotifier {
       if (_forgotPasswordSilentlyFailed) {
         _isLoading = true;
         notifyListeners();
-        // Mimic real send-OTP timing very loosely so timing-based probing
-        // is less reliable. Keep small to not block UX.
-        await Future<void>.delayed(const Duration(milliseconds: 250));
+        // Phase 3 Iter3 EDGE-05 fix: real OTP send takes ~1.5–3s through
+        // Supabase + WhatsApp/Twilio. A fixed 250ms fake delay let attackers
+        // time the response and tell which emails were real. Now we sleep a
+        // randomized 1500–2500ms so real and fake calls are
+        // indistinguishable from outside.
+        final fakeDelayMs = 1500 + Random().nextInt(1001);
+        await Future<void>.delayed(Duration(milliseconds: fakeDelayMs));
         _isForgotPasswordOtpSent = true;
         _isLoading = false;
         _errorMessage = null;
@@ -1808,7 +1961,10 @@ class AuthProvider extends ChangeNotifier {
   /// wrong OTP would produce.
   Future<bool> verifyForgotPasswordOtp(String otp) async {
     if (_forgotPasswordSilentlyFailed) {
-      await Future<void>.delayed(const Duration(milliseconds: 250));
+      // Phase 3 Iter3 EDGE-05 fix: see sendForgotPasswordOtp — randomized
+      // delay so verify timing also doesn't leak account existence.
+      final fakeDelayMs = 1500 + Random().nextInt(1001);
+      await Future<void>.delayed(Duration(milliseconds: fakeDelayMs));
       _errorMessage = 'Invalid OTP. Please try again.';
       notifyListeners();
       return false;
@@ -2070,6 +2226,18 @@ class AuthProvider extends ChangeNotifier {
           'auth_methods': updatedMethods,
         });
         await _loadUserProfile(_currentOwner!.uid);
+      } else if (_currentPlayer != null) {
+        // Phase 3 Iter3 BUG-08 fix: mirror the owner branch for player so
+        // their profile flags stay consistent with the auth-server password.
+        final updatedMethods = _mergeAuthMethods(
+          existing: _currentPlayer!.authMethods,
+          add: 'email',
+        );
+        await _dbService.updatePlayer(_currentPlayer!.uid, {
+          'has_password': true,
+          'auth_methods': updatedMethods,
+        });
+        await _loadUserProfile(_currentPlayer!.uid);
       }
 
       _isLoading = false;

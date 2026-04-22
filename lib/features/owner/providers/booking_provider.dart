@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import '../../../data/models/booking_model.dart';
 import '../../../data/services/database_service.dart';
@@ -31,7 +32,13 @@ class BookingProvider extends ChangeNotifier {
   int get pendingPaymentsCount => _pendingPayments.length;
 
   /// Load all bookings for owner's turfs
-  void loadOwnerBookings(String ownerId, List<String> turfIds) {
+  // Phase 3 Iter4 CLEAN-03: removed unused `ownerId` parameter — it was
+  // never referenced; only `turfIds` is needed.
+  void loadOwnerBookings(List<String> turfIds) {
+    // Phase 3 Iter4 BUG-10 fix: clear any stale stream error from a prior
+    // run so a healed connection doesn't keep showing an outdated banner.
+    _errorMessage = null;
+
     if (turfIds.isEmpty) {
       _bookingsSubscription?.cancel();
       _bookings = [];
@@ -50,7 +57,10 @@ class BookingProvider extends ChangeNotifier {
         notifyListeners();
       },
       onError: (error) {
-        _errorMessage = 'Failed to load bookings: $error';
+        _errorMessage = _friendlyError(
+          error,
+          fallback: 'Could not load bookings. Please try again.',
+        );
         notifyListeners();
       },
     );
@@ -68,7 +78,10 @@ class BookingProvider extends ChangeNotifier {
           snapshot.map((row) => BookingModel.fromMap(row)).toList();
       notifyListeners();
     } catch (e) {
-      _errorMessage = 'Failed to load today\'s bookings: $e';
+      _errorMessage = _friendlyError(
+        e,
+        fallback: 'Could not load today\u0027s bookings. Please try again.',
+      );
       notifyListeners();
     }
   }
@@ -81,7 +94,10 @@ class BookingProvider extends ChangeNotifier {
           snapshot.map((row) => BookingModel.fromMap(row)).toList();
       notifyListeners();
     } catch (e) {
-      _errorMessage = 'Failed to load pending payments: $e';
+      _errorMessage = _friendlyError(
+        e,
+        fallback: 'Could not load pending payments. Please try again.',
+      );
       notifyListeners();
     }
   }
@@ -94,7 +110,10 @@ class BookingProvider extends ChangeNotifier {
           snapshot.map((row) => BookingModel.fromMap(row)).toList();
       notifyListeners();
     } catch (e) {
-      _errorMessage = 'Failed to load recent bookings: $e';
+      _errorMessage = _friendlyError(
+        e,
+        fallback: 'Could not load recent bookings. Please try again.',
+      );
       notifyListeners();
     }
   }
@@ -159,7 +178,10 @@ class BookingProvider extends ChangeNotifier {
 
       return bookingId;
     } catch (e) {
-      _errorMessage = 'Failed to create booking: $e';
+      _errorMessage = _friendlyError(
+        e,
+        fallback: 'Could not create booking. Please try again.',
+      );
       return null;
     } finally {
       _isLoading = false;
@@ -215,7 +237,10 @@ class BookingProvider extends ChangeNotifier {
 
       return bookingId;
     } catch (e) {
-      _errorMessage = 'Failed to create booking: $e';
+      _errorMessage = _friendlyError(
+        e,
+        fallback: 'Could not create booking. Please try again.',
+      );
       return null;
     } finally {
       _isLoading = false;
@@ -252,7 +277,10 @@ class BookingProvider extends ChangeNotifier {
 
       return success;
     } catch (e) {
-      _errorMessage = 'Failed to cancel booking: $e';
+      _errorMessage = _friendlyError(
+        e,
+        fallback: 'Could not cancel booking. Please try again.',
+      );
       notifyListeners();
       return false;
     }
@@ -263,11 +291,17 @@ class BookingProvider extends ChangeNotifier {
     try {
       await _dbService.markBookingPaymentReceived(bookingId);
 
-      _bookings = _bookings
-          .map((booking) => booking.bookingId == bookingId
-              ? booking.copyWith(paymentStatus: PaymentStatus.paid)
-              : booking)
-          .toList(growable: false);
+      // Phase 3 Iter4 BUG-09 fix: previously only _bookings and
+      // _pendingPayments were patched, so the same booking could show PAID
+      // in one dashboard card and UNPAID in another. Now all four lists
+      // stay consistent.
+      BookingModel markPaid(BookingModel b) => b.bookingId == bookingId
+          ? b.copyWith(paymentStatus: PaymentStatus.paid)
+          : b;
+
+      _bookings = _bookings.map(markPaid).toList(growable: false);
+      _todaysBookings = _todaysBookings.map(markPaid).toList(growable: false);
+      _recentBookings = _recentBookings.map(markPaid).toList(growable: false);
       _pendingPayments = _pendingPayments
           .where((booking) => booking.bookingId != bookingId)
           .toList(growable: false);
@@ -275,7 +309,10 @@ class BookingProvider extends ChangeNotifier {
 
       return true;
     } catch (e) {
-      _errorMessage = 'Failed to update payment status: $e';
+      _errorMessage = _friendlyError(
+        e,
+        fallback: 'Could not update payment status. Please try again.',
+      );
       notifyListeners();
       return false;
     }
@@ -290,10 +327,23 @@ class BookingProvider extends ChangeNotifier {
       }
       return null;
     } catch (e) {
-      _errorMessage = 'Failed to get booking: $e';
+      _errorMessage = _friendlyError(
+        e,
+        fallback: 'Could not get booking. Please try again.',
+      );
       notifyListeners();
       return null;
     }
+  }
+
+  /// Phase 3 Iter4 ERR-02 fix: never leak raw backend exception text to
+  /// production users (OWASP A09). In debug builds we still surface the
+  /// real error so developers can diagnose.
+  String _friendlyError(Object error, {required String fallback}) {
+    if (kDebugMode) {
+      return '$fallback (debug: $error)';
+    }
+    return fallback;
   }
 
   /// Clear error
