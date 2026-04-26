@@ -5,6 +5,42 @@ import '../constants/enums.dart';
 /// Calculates slot prices based on pricing rules, date, and time
 /// Uses the new pricing structure with nets and 4 time slots
 class PriceCalculator {
+  /// Phase 8 Iter 4 PRICE-05: single source of truth for the currency
+  /// symbol so a future localization pass only edits this constant.
+  static const String _currencySymbol = '₹';
+
+  /// Phase 8 Iter 4 PRICE-06: shared day-type → DayTypePricing resolver
+  /// used by both [calculateSlotPrice] and [getPriceForSlot].
+  static DayTypePricing _dayTypePricingFor(
+      NetPricing netPricing, DayType dayType) {
+    switch (dayType) {
+      case DayType.holiday:
+        return netPricing.holiday;
+      case DayType.weekend:
+        return netPricing.weekend;
+      case DayType.weekday:
+        return netPricing.weekday;
+    }
+  }
+
+  /// Phase 8 Iter 4 PRICE-06: flatten one [NetPricing] into all 12
+  /// time-slot prices (3 day types × 4 time slots). Used by min/max
+  /// price helpers.
+  static List<double> _allPricesFor(NetPricing netPricing) => [
+        netPricing.weekday.morning.price,
+        netPricing.weekday.afternoon.price,
+        netPricing.weekday.evening.price,
+        netPricing.weekday.night.price,
+        netPricing.weekend.morning.price,
+        netPricing.weekend.afternoon.price,
+        netPricing.weekend.evening.price,
+        netPricing.weekend.night.price,
+        netPricing.holiday.morning.price,
+        netPricing.holiday.afternoon.price,
+        netPricing.holiday.evening.price,
+        netPricing.holiday.night.price,
+      ];
+
   /// Calculate price for a slot (uses first net by default)
   static Map<String, dynamic> calculateSlotPrice({
     required PricingRules pricingRules,
@@ -13,50 +49,55 @@ class PriceCalculator {
     required List<String> publicHolidays,
     int netNumber = 1,
   }) {
-    // Parse date to determine day type
-    final dateTime = DateTime.parse(date);
+    // Phase 8 Iter 4 PRICE-01: parse defensively so a malformed string
+    // surfaces as a clear ArgumentError instead of an opaque
+    // FormatException at deep call-site.
+    final dateTime = DateTime.tryParse(date);
+    if (dateTime == null) {
+      throw ArgumentError.value(date, 'date', 'Expected ISO date (yyyy-MM-dd)');
+    }
+    final hourPart =
+        startTime.split(':').isNotEmpty ? startTime.split(':')[0] : '';
+    final hour = int.tryParse(hourPart);
+    if (hour == null || hour < 0 || hour > 23) {
+      throw ArgumentError.value(startTime, 'startTime', 'Expected HH:MM (24h)');
+    }
+
+    // Phase 8 Iter 4 PRICE-02: empty pricing list is unrecoverable here
+    // (we cannot guess a price), so fail loudly so the caller can show a
+    // proper error toast instead of a `Bad state: No element` crash.
+    if (pricingRules.netPricing.isEmpty) {
+      throw StateError('Turf has no pricing rules configured');
+    }
+
     final dayOfWeek = dateTime.weekday; // 1 = Monday, 7 = Sunday
-    
+
     // Check if it's a holiday
     final isHoliday = publicHolidays.contains(date);
-    
+
     // Determine day type
     DayType dayType;
     if (isHoliday) {
       dayType = DayType.holiday;
-    } else if (dayOfWeek == 6 || dayOfWeek == 7) { // Saturday or Sunday
+    } else if (dayOfWeek == 6 || dayOfWeek == 7) {
+      // Saturday or Sunday
       dayType = DayType.weekend;
     } else {
       dayType = DayType.weekday;
     }
-    
+
     // Get the net pricing (default to first net if not found)
-    final netPricing = pricingRules.getNetPricing(netNumber) ?? 
-                       pricingRules.netPricing.first;
-    
-    // Get pricing for the day type
-    DayTypePricing dayTypePricing;
-    switch (dayType) {
-      case DayType.holiday:
-        dayTypePricing = netPricing.holiday;
-        break;
-      case DayType.weekend:
-        dayTypePricing = netPricing.weekend;
-        break;
-      case DayType.weekday:
-        dayTypePricing = netPricing.weekday;
-        break;
-    }
-    
-    // Parse start time
-    final hour = int.parse(startTime.split(':')[0]);
-    
+    final netPricing =
+        pricingRules.getNetPricing(netNumber) ?? pricingRules.netPricing.first;
+
+    final dayTypePricing = _dayTypePricingFor(netPricing, dayType);
+
     // Determine time slot based on START hour.
     // For slots spanning two periods (e.g., 11:30-13:00),
     // the price is determined by the period at slot start time.
     String timeSlot;
     double price;
-    
+
     if (hour >= 6 && hour < 12) {
       timeSlot = 'MORNING';
       price = dayTypePricing.morning.price;
@@ -71,10 +112,10 @@ class PriceCalculator {
       timeSlot = 'NIGHT';
       price = dayTypePricing.night.price;
     }
-    
+
     // Generate price type string
     final priceType = '${dayType.value}_$timeSlot';
-    
+
     return {
       'price': price,
       'priceType': priceType,
@@ -83,7 +124,7 @@ class PriceCalculator {
       'netNumber': netNumber,
     };
   }
-  
+
   /// Get price for a specific time slot and day type
   static double getPriceForSlot({
     required PricingRules pricingRules,
@@ -91,22 +132,16 @@ class PriceCalculator {
     required String timeSlot,
     int netNumber = 1,
   }) {
-    final netPricing = pricingRules.getNetPricing(netNumber) ?? 
-                       pricingRules.netPricing.first;
-    
-    DayTypePricing dayTypePricing;
-    switch (dayType) {
-      case DayType.holiday:
-        dayTypePricing = netPricing.holiday;
-        break;
-      case DayType.weekend:
-        dayTypePricing = netPricing.weekend;
-        break;
-      case DayType.weekday:
-        dayTypePricing = netPricing.weekday;
-        break;
+    // Phase 8 Iter 4 PRICE-02: same loud failure as calculateSlotPrice.
+    if (pricingRules.netPricing.isEmpty) {
+      throw StateError('Turf has no pricing rules configured');
     }
-    
+
+    final netPricing =
+        pricingRules.getNetPricing(netNumber) ?? pricingRules.netPricing.first;
+
+    final dayTypePricing = _dayTypePricingFor(netPricing, dayType);
+
     switch (timeSlot.toUpperCase()) {
       case 'MORNING':
         return dayTypePricing.morning.price;
@@ -120,82 +155,62 @@ class PriceCalculator {
         return dayTypePricing.morning.price;
     }
   }
-  
-  /// Get the minimum price across all slots for a turf (for display)
+
+  /// Get the minimum price across all slots for a turf (for display).
+  /// Phase 8 Iter 4 PRICE-03: returns `0` only when there are zero
+  /// configured nets — UI should hide the price chip in that case
+  /// rather than render "₹0".
   static double getMinPrice(PricingRules pricingRules) {
+    if (pricingRules.netPricing.isEmpty) return 0;
     double minPrice = double.infinity;
-    
+
     for (final netPricing in pricingRules.netPricing) {
-      final prices = [
-        netPricing.weekday.morning.price,
-        netPricing.weekday.afternoon.price,
-        netPricing.weekday.evening.price,
-        netPricing.weekday.night.price,
-        netPricing.weekend.morning.price,
-        netPricing.weekend.afternoon.price,
-        netPricing.weekend.evening.price,
-        netPricing.weekend.night.price,
-        netPricing.holiday.morning.price,
-        netPricing.holiday.afternoon.price,
-        netPricing.holiday.evening.price,
-        netPricing.holiday.night.price,
-      ];
-      
-      for (final price in prices) {
+      for (final price in _allPricesFor(netPricing)) {
         if (price < minPrice) minPrice = price;
       }
     }
-    
+
     return minPrice == double.infinity ? 0 : minPrice;
   }
-  
+
   /// Get the maximum price across all slots for a turf (for display)
   static double getMaxPrice(PricingRules pricingRules) {
+    if (pricingRules.netPricing.isEmpty) return 0;
     double maxPrice = 0;
-    
+
     for (final netPricing in pricingRules.netPricing) {
-      final prices = [
-        netPricing.weekday.morning.price,
-        netPricing.weekday.afternoon.price,
-        netPricing.weekday.evening.price,
-        netPricing.weekday.night.price,
-        netPricing.weekend.morning.price,
-        netPricing.weekend.afternoon.price,
-        netPricing.weekend.evening.price,
-        netPricing.weekend.night.price,
-        netPricing.holiday.morning.price,
-        netPricing.holiday.afternoon.price,
-        netPricing.holiday.evening.price,
-        netPricing.holiday.night.price,
-      ];
-      
-      for (final price in prices) {
+      for (final price in _allPricesFor(netPricing)) {
         if (price > maxPrice) maxPrice = price;
       }
     }
-    
+
     return maxPrice;
   }
-  
-  /// Format price for display
+
+  /// Format price for display.
+  /// Phase 8 Iter 4 PRICE-04: NaN/Infinity/negative values are coerced
+  /// to `0` so the UI never shows "₹NaN" / "₹Infinity" / "₹-100".
   static String formatPrice(double price) {
-    if (price == price.roundToDouble()) {
-      return '₹${price.toInt()}';
+    if (price.isNaN || price.isInfinite || price < 0) {
+      return '${_currencySymbol}0';
     }
-    return '₹${price.toStringAsFixed(2)}';
+    if (price == price.roundToDouble()) {
+      return '$_currencySymbol${price.toInt()}';
+    }
+    return '$_currencySymbol${price.toStringAsFixed(2)}';
   }
-  
+
   /// Get price range string for display
   static String getPriceRange(PricingRules pricingRules) {
     final minPrice = getMinPrice(pricingRules);
     final maxPrice = getMaxPrice(pricingRules);
-    
+
     if (minPrice == maxPrice) {
       return formatPrice(minPrice);
     }
     return '${formatPrice(minPrice)} - ${formatPrice(maxPrice)}';
   }
-  
+
   /// Get price label
   static String getPriceLabel(String priceType) {
     switch (priceType) {
@@ -228,4 +243,3 @@ class PriceCalculator {
     }
   }
 }
-

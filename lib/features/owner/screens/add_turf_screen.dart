@@ -16,8 +16,27 @@ import '../../auth/providers/auth_provider.dart';
 import '../providers/turf_provider.dart';
 import '../../../core/utils/app_toast.dart';
 
-/// Add Turf Screen
-/// Multi-step form to add a new turf with pricing rules
+/// Multi-step form to create or edit a turf.
+///
+/// Steps (driven by [PageController]):
+///   0. Basic info (name, city, address, type, nets, description)
+///   1. Schedule (open/close time, slot duration, days open)
+///   2. Pricing (per-net x per-day-type x per-time-slot)
+///   3. Images (upload + manage existing)
+///
+/// Edit mode: when [editTurf] is provided, fields are pre-populated from the
+/// existing turf, originals are tracked for change detection, and changes to
+/// basic info trigger `verification_status='PENDING'` re-approval. Pricing,
+/// schedule, and image edits do NOT trigger re-approval.
+///
+/// Renovation guard: if any net is under renovation, structural changes
+/// (turf type, net count) are blocked with a dialog.
+///
+/// RouteAware: subscribes to `AppRoutes.routeObserver` so that returning
+/// from a child screen can refresh provider state.
+///
+/// Image uploads happen inline in [_submitTurf] but turf creation does not
+/// fail if image uploads fail — the user is informed via toast.
 class AddTurfScreen extends StatefulWidget {
   final TurfModel? editTurf; // If provided, we're editing
 
@@ -28,7 +47,14 @@ class AddTurfScreen extends StatefulWidget {
 }
 
 class _AddTurfScreenState extends State<AddTurfScreen> with RouteAware {
-  final Uuid _uuid = const Uuid();
+  static const Uuid _uuid = Uuid();
+  // Default per-slot pricing (Indian market baseline). Used when creating a
+  // new turf or when an existing turf has no per-slot price set.
+  static const int _basePriceWeekday = 1000;
+  static const int _basePriceWeekend = 1300;
+  static const int _basePriceHoliday = 1500;
+  static const double _eveningSurcharge = 1.2;
+  static const double _nightSurcharge = 1.1;
   final PageController _pageController = PageController();
   int _currentStep = 0;
   bool _isLoading = false;
@@ -120,7 +146,6 @@ class _AddTurfScreenState extends State<AddTurfScreen> with RouteAware {
 
   @override
   void didPopNext() {
-    debugPrint('AddTurf: didPopNext - refreshing data if editing');
     if (isEditing && widget.editTurf != null) {
       final turfProvider = Provider.of<TurfProvider>(context, listen: false);
       final authProvider = Provider.of<AuthProvider>(context, listen: false);
@@ -154,11 +179,12 @@ class _AddTurfScreenState extends State<AddTurfScreen> with RouteAware {
   }
 
   int _getDefaultPrice(String dayType, String slotLabel) {
-    int basePrice = 1000;
-    if (dayType == 'weekend') basePrice = 1300;
-    if (dayType == 'holiday') basePrice = 1500;
-    if (slotLabel == 'Evening') basePrice = (basePrice * 1.2).round();
-    if (slotLabel == 'Night') basePrice = (basePrice * 1.1).round();
+    int basePrice = _basePriceWeekday;
+    if (dayType == 'weekend') basePrice = _basePriceWeekend;
+    if (dayType == 'holiday') basePrice = _basePriceHoliday;
+    if (slotLabel == 'Evening')
+      basePrice = (basePrice * _eveningSurcharge).round();
+    if (slotLabel == 'Night') basePrice = (basePrice * _nightSurcharge).round();
     return basePrice;
   }
 
@@ -314,7 +340,13 @@ class _AddTurfScreenState extends State<AddTurfScreen> with RouteAware {
 
   void _nextStep() {
     if (_currentStep == 0 && !_basicFormKey.currentState!.validate()) return;
-    if (_currentStep == 1 && !_scheduleFormKey.currentState!.validate()) return;
+    if (_currentStep == 1) {
+      if (!_scheduleFormKey.currentState!.validate()) return;
+      if (_selectedDays.isEmpty) {
+        _showError(AppStrings.addTurfDaysOpenRequired);
+        return;
+      }
+    }
 
     if (_currentStep < 3) {
       _pageController.nextPage(
@@ -343,9 +375,9 @@ class _AddTurfScreenState extends State<AddTurfScreen> with RouteAware {
     try {
       final int currentTotal = _existingImages.length + _selectedImages.length;
       final int remainingSlots = _maxImagesPerTurf - currentTotal;
-      if (remainingSlots <= 0) {
+      if (currentTotal >= _maxImagesPerTurf) {
         _showError(
-            'You already have $_maxImagesPerTurf images. Remove some to add new ones.');
+            '${AppStrings.addTurfImagesMaxReachedPrefix}$_maxImagesPerTurf${AppStrings.addTurfImagesMaxReachedSuffix}');
         return;
       }
 
@@ -382,13 +414,13 @@ class _AddTurfScreenState extends State<AddTurfScreen> with RouteAware {
 
       if (images.length > remainingSlots) {
         _showError(
-            'Only $remainingSlots more image(s) allowed (max $_maxImagesPerTurf per turf).');
+            '${AppStrings.addTurfImagesOnlyAllowedPrefix}$remainingSlots${AppStrings.addTurfImagesOnlyAllowedMid}$_maxImagesPerTurf${AppStrings.addTurfImagesOnlyAllowedSuffix}');
       } else if (rejectedTooLarge > 0) {
         _showError(
-            '$rejectedTooLarge image(s) skipped — each must be 5 MB or smaller.');
+            '$rejectedTooLarge${AppStrings.addTurfImagesTooLargeSuffix}');
       }
     } catch (e) {
-      _showError('Failed to pick images: $e');
+      _showError('${AppStrings.addTurfImagesPickFailedPrefix}$e');
     }
   }
 
@@ -487,15 +519,12 @@ class _AddTurfScreenState extends State<AddTurfScreen> with RouteAware {
           if (uploadResult.allFailed) {
             imageUploadFailed = true;
             imageUploadMessage = kIsWeb
-                ? 'Image upload failed (network/CORS issue on web). Images not saved.'
-                : 'All images failed to upload';
-            debugPrint('All image uploads failed');
+                ? AppStrings.addTurfUploadAllFailedWeb
+                : AppStrings.addTurfUploadAllFailedNative;
           } else if (uploadResult.failedCount > 0) {
             imageUploadFailed = true;
             imageUploadMessage =
-                '${uploadResult.successCount}/${uploadResult.totalAttempted} images uploaded';
-            debugPrint(
-                'Some images failed: ${uploadResult.successCount}/${uploadResult.totalAttempted}');
+                '${uploadResult.successCount}${AppStrings.addTurfUploadPartialMid}${uploadResult.totalAttempted}${AppStrings.addTurfUploadPartialSuffix}';
           }
 
           turfImages = uploadResult.urls
@@ -511,8 +540,7 @@ class _AddTurfScreenState extends State<AddTurfScreen> with RouteAware {
         } catch (e) {
           // Image upload failed, but continue with turf creation
           imageUploadFailed = true;
-          imageUploadMessage = 'Image upload error';
-          debugPrint('Image upload error: $e');
+          imageUploadMessage = AppStrings.addTurfUploadGenericError;
         }
       }
 
@@ -531,14 +559,12 @@ class _AddTurfScreenState extends State<AddTurfScreen> with RouteAware {
           await showDialog<void>(
             context: context,
             builder: (dialogContext) => AlertDialog(
-              title: const Text('Update Not Allowed'),
-              content: const Text(
-                'Some nets under this turf are under renovation. You can\'t change turf type or number of nets right now.',
-              ),
+              title: const Text(AppStrings.addTurfStructuralBlockTitle),
+              content: const Text(AppStrings.addTurfStructuralBlockMessage),
               actions: [
                 TextButton(
                   onPressed: () => Navigator.pop(dialogContext),
-                  child: const Text('OK'),
+                  child: const Text(AppStrings.addTurfDialogOk),
                 ),
               ],
             ),
@@ -618,8 +644,7 @@ class _AddTurfScreenState extends State<AddTurfScreen> with RouteAware {
 
           if (basicInfoChanged) {
             // If basic info changed, navigate to verification pending screen
-            _showSuccess(
-                'Turf updated. Changes to basic info require re-approval.');
+            _showSuccess(AppStrings.addTurfUpdateSuccessReapproval);
             // Navigate to verification pending and clear navigation stack
             Navigator.pushNamedAndRemoveUntil(
               context,
@@ -628,9 +653,10 @@ class _AddTurfScreenState extends State<AddTurfScreen> with RouteAware {
             );
             return; // Don't continue to other navigation
           } else if (imageUploadFailed && _selectedImages.isNotEmpty) {
-            _showSuccess('Turf updated! $imageUploadMessage');
+            _showSuccess(
+                '${AppStrings.addTurfUpdateSuccessWithImagesPrefix}$imageUploadMessage');
           } else {
-            _showSuccess('Turf updated successfully');
+            _showSuccess(AppStrings.addTurfUpdateSuccess);
           }
 
           // Use Navigator.of with proper error handling
@@ -640,7 +666,8 @@ class _AddTurfScreenState extends State<AddTurfScreen> with RouteAware {
             Navigator.pushReplacementNamed(context, AppRoutes.myTurfs);
           }
         } else {
-          _showError(turfProvider.errorMessage ?? 'Failed to update turf');
+          _showError(
+              turfProvider.errorMessage ?? AppStrings.addTurfUpdateFailed);
         }
       } else {
         // Create new turf - filter invalid images
@@ -678,13 +705,15 @@ class _AddTurfScreenState extends State<AddTurfScreen> with RouteAware {
           Navigator.pushReplacementNamed(
               context, AppRoutes.verificationPending);
         } else {
-          _showError(turfProvider.errorMessage ?? 'Failed to add turf');
+          _showError(turfProvider.errorMessage ?? AppStrings.addTurfAddFailed);
         }
       }
     } catch (e) {
       if (!mounted) return;
       setState(() => _isLoading = false);
-      _showError('Failed to ${isEditing ? 'update' : 'add'} turf: $e');
+      _showError(isEditing
+          ? '${AppStrings.addTurfSubmitFailedUpdatePrefix}$e'
+          : '${AppStrings.addTurfSubmitFailedAddPrefix}$e');
     }
   }
 
@@ -725,9 +754,12 @@ class _AddTurfScreenState extends State<AddTurfScreen> with RouteAware {
             child: Column(
               children: [
                 GlassAppBar(
-                  title: isEditing ? 'Edit Turf' : 'Add New Turf',
+                  title: isEditing
+                      ? AppStrings.addTurfEditTitle
+                      : AppStrings.addTurfNewTitle,
                   leading: IconButton(
                     icon: Icon(Icons.arrow_back, color: c.textPrimary),
+                    tooltip: AppStrings.addTurfBackTooltip,
                     onPressed: () {
                       _refreshTurfData();
                       Navigator.pop(context);
@@ -758,7 +790,12 @@ class _AddTurfScreenState extends State<AddTurfScreen> with RouteAware {
 
   Widget _buildStepIndicator() {
     final c = AppColors.of(context);
-    final steps = ['Basic Info', 'Schedule', 'Pricing', 'Images'];
+    const steps = [
+      AppStrings.addTurfStepBasicInfo,
+      AppStrings.addTurfStepSchedule,
+      AppStrings.addTurfStepPricing,
+      AppStrings.addTurfStepImages,
+    ];
 
     return Container(
       padding: const EdgeInsets.symmetric(vertical: 20, horizontal: 16),
@@ -834,7 +871,7 @@ class _AddTurfScreenState extends State<AddTurfScreen> with RouteAware {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              'Basic Information',
+              AppStrings.addTurfBasicInfoHeading,
               style: TextStyle(
                 fontSize: 20,
                 fontWeight: FontWeight.bold,
@@ -843,7 +880,7 @@ class _AddTurfScreenState extends State<AddTurfScreen> with RouteAware {
             ),
             const SizedBox(height: 8),
             Text(
-              'Enter the basic details of your turf',
+              AppStrings.addTurfBasicInfoSubtitle,
               style: TextStyle(color: c.textSecondary),
             ),
 
@@ -863,7 +900,7 @@ class _AddTurfScreenState extends State<AddTurfScreen> with RouteAware {
                     const SizedBox(width: 8),
                     Expanded(
                       child: Text(
-                        'Note: Changes to basic info will require re-approval. Pricing, schedule, and images can be changed freely.',
+                        AppStrings.addTurfReapprovalNote,
                         style: TextStyle(
                           fontSize: 12,
                           color: c.warning.withValues(alpha: 0.8),
@@ -879,14 +916,16 @@ class _AddTurfScreenState extends State<AddTurfScreen> with RouteAware {
 
             _buildTextField(
               controller: _turfNameController,
-              label: 'Turf Name',
-              hint: 'Champions Arena',
+              label: AppStrings.addTurfTurfNameLabel,
+              hint: AppStrings.addTurfTurfNameHint,
               prefixIcon: Icons.stadium,
               maxLength: 60,
               validator: (v) {
                 final t = v?.trim() ?? '';
-                if (t.isEmpty) return 'Required';
-                if (t.length > 60) return 'Max 60 characters';
+                if (t.isEmpty) return AppStrings.addTurfFieldRequired;
+                if (t.length > 60) {
+                  return '${AppStrings.addTurfMaxCharsPrefix}60${AppStrings.addTurfMaxCharsSuffix}';
+                }
                 return null;
               },
             ),
@@ -897,15 +936,17 @@ class _AddTurfScreenState extends State<AddTurfScreen> with RouteAware {
 
             _buildTextField(
               controller: _addressController,
-              label: 'Full Address',
-              hint: '123, Sports Complex, Andheri West',
+              label: AppStrings.addTurfAddressLabel,
+              hint: AppStrings.addTurfAddressHint,
               prefixIcon: Icons.location_on,
               maxLines: 2,
               maxLength: 200,
               validator: (v) {
                 final t = v?.trim() ?? '';
-                if (t.isEmpty) return 'Required';
-                if (t.length > 200) return 'Max 200 characters';
+                if (t.isEmpty) return AppStrings.addTurfFieldRequired;
+                if (t.length > 200) {
+                  return '${AppStrings.addTurfMaxCharsPrefix}200${AppStrings.addTurfMaxCharsSuffix}';
+                }
                 return null;
               },
             ),
@@ -921,14 +962,16 @@ class _AddTurfScreenState extends State<AddTurfScreen> with RouteAware {
 
             _buildTextField(
               controller: _descriptionController,
-              label: 'Description (Optional)',
-              hint: 'Premium turf with floodlights and covered seating...',
+              label: AppStrings.addTurfDescriptionLabel,
+              hint: AppStrings.addTurfDescriptionHint,
               prefixIcon: Icons.description,
               maxLines: 3,
               maxLength: 1000,
               validator: (v) {
                 final t = v?.trim() ?? '';
-                if (t.length > 1000) return 'Max 1000 characters';
+                if (t.length > 1000) {
+                  return '${AppStrings.addTurfMaxCharsPrefix}1000${AppStrings.addTurfMaxCharsSuffix}';
+                }
                 return null;
               },
             ),
@@ -944,7 +987,7 @@ class _AddTurfScreenState extends State<AddTurfScreen> with RouteAware {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(
-          'Number of Nets/Boxes',
+          AppStrings.addTurfNetsLabel,
           style: TextStyle(
             fontSize: 14,
             fontWeight: FontWeight.w500,
@@ -973,7 +1016,7 @@ class _AddTurfScreenState extends State<AddTurfScreen> with RouteAware {
         ),
         const SizedBox(height: 8),
         Text(
-          'Select how many nets or boxes are available at this turf',
+          AppStrings.addTurfNetsHelp,
           style: TextStyle(fontSize: 12, color: c.textSecondary),
         ),
       ],
@@ -986,7 +1029,7 @@ class _AddTurfScreenState extends State<AddTurfScreen> with RouteAware {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(
-          'Turf Type',
+          AppStrings.addTurfTypeLabel,
           style: TextStyle(
             fontSize: 14,
             fontWeight: FontWeight.w500,
@@ -1035,7 +1078,7 @@ class _AddTurfScreenState extends State<AddTurfScreen> with RouteAware {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(
-          'City',
+          AppStrings.addTurfCityLabel,
           style: TextStyle(
             fontSize: 14,
             fontWeight: FontWeight.w500,
@@ -1045,10 +1088,11 @@ class _AddTurfScreenState extends State<AddTurfScreen> with RouteAware {
         const SizedBox(height: 8),
         DropdownButtonFormField<String>(
           value: selectedCity,
-          validator: (value) =>
-              value == null || value.isEmpty ? 'Required' : null,
+          validator: (value) => value == null || value.isEmpty
+              ? AppStrings.addTurfFieldRequired
+              : null,
           decoration: InputDecoration(
-            hintText: 'Select city',
+            hintText: AppStrings.addTurfCityHint,
             prefixIcon: Icon(Icons.location_city, color: c.primary),
             filled: true,
             fillColor: c.glassFill,
@@ -1094,7 +1138,7 @@ class _AddTurfScreenState extends State<AddTurfScreen> with RouteAware {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              'Schedule & Timing',
+              AppStrings.addTurfScheduleHeading,
               style: TextStyle(
                 fontSize: 20,
                 fontWeight: FontWeight.bold,
@@ -1103,7 +1147,7 @@ class _AddTurfScreenState extends State<AddTurfScreen> with RouteAware {
             ),
             const SizedBox(height: 8),
             Text(
-              'Set your operating hours and slot duration',
+              AppStrings.addTurfScheduleSubtitle,
               style: TextStyle(color: c.textSecondary),
             ),
             const SizedBox(height: 24),
@@ -1111,7 +1155,7 @@ class _AddTurfScreenState extends State<AddTurfScreen> with RouteAware {
               children: [
                 Expanded(
                   child: _buildTimePicker(
-                    label: 'Opening Time',
+                    label: AppStrings.addTurfOpeningTime,
                     time: _openTime,
                     onChanged: (time) => setState(() => _openTime = time),
                   ),
@@ -1119,7 +1163,7 @@ class _AddTurfScreenState extends State<AddTurfScreen> with RouteAware {
                 const SizedBox(width: 16),
                 Expanded(
                   child: _buildTimePicker(
-                    label: 'Closing Time',
+                    label: AppStrings.addTurfClosingTime,
                     time: _closeTime,
                     onChanged: (time) => setState(() => _closeTime = time),
                   ),
@@ -1128,7 +1172,7 @@ class _AddTurfScreenState extends State<AddTurfScreen> with RouteAware {
             ),
             const SizedBox(height: 24),
             Text(
-              'Slot Duration',
+              AppStrings.addTurfSlotDuration,
               style: TextStyle(
                 fontSize: 14,
                 fontWeight: FontWeight.w500,
@@ -1155,7 +1199,7 @@ class _AddTurfScreenState extends State<AddTurfScreen> with RouteAware {
             ),
             const SizedBox(height: 24),
             Text(
-              'Days Open',
+              AppStrings.addTurfDaysOpen,
               style: TextStyle(
                 fontSize: 14,
                 fontWeight: FontWeight.w500,
@@ -1208,7 +1252,7 @@ class _AddTurfScreenState extends State<AddTurfScreen> with RouteAware {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  'Pricing Rules',
+                  AppStrings.addTurfPricingHeading,
                   style: TextStyle(
                     fontSize: 20,
                     fontWeight: FontWeight.bold,
@@ -1217,7 +1261,7 @@ class _AddTurfScreenState extends State<AddTurfScreen> with RouteAware {
                 ),
                 const SizedBox(height: 8),
                 Text(
-                  'Set prices for each net across different time slots',
+                  AppStrings.addTurfPricingSubtitle,
                   style: TextStyle(color: c.textSecondary),
                 ),
               ],
@@ -1231,7 +1275,9 @@ class _AddTurfScreenState extends State<AddTurfScreen> with RouteAware {
                 unselectedLabelColor: c.textSecondary,
                 indicatorColor: c.primary,
                 tabs: List.generate(
-                    _numberOfNets, (i) => Tab(text: 'Net ${i + 1}')),
+                    _numberOfNets,
+                    (i) => Tab(
+                        text: '${AppStrings.addTurfPricingNetPrefix}${i + 1}')),
               ),
             ),
           Expanded(
@@ -1253,13 +1299,13 @@ class _AddTurfScreenState extends State<AddTurfScreen> with RouteAware {
       child: Column(
         children: [
           _buildDayTypePricing(
-              netIndex, 'weekday', 'Weekdays (Mon-Fri)', c.primary),
+              netIndex, 'weekday', AppStrings.addTurfWeekdaysTitle, c.primary),
+          const SizedBox(height: 20),
+          _buildDayTypePricing(netIndex, 'weekend',
+              AppStrings.addTurfWeekendsTitle, c.secondary),
           const SizedBox(height: 20),
           _buildDayTypePricing(
-              netIndex, 'weekend', 'Weekends (Sat-Sun)', c.secondary),
-          const SizedBox(height: 20),
-          _buildDayTypePricing(
-              netIndex, 'holiday', 'Public Holidays', c.warning),
+              netIndex, 'holiday', AppStrings.addTurfHolidaysTitle, c.warning),
         ],
       ),
     );
@@ -1342,11 +1388,11 @@ class _AddTurfScreenState extends State<AddTurfScreen> with RouteAware {
                       // U2: Hard price bounds — ₹50 min, ₹50,000 max per slot
                       validator: (v) {
                         final raw = v?.trim() ?? '';
-                        if (raw.isEmpty) return 'Required';
+                        if (raw.isEmpty) return AppStrings.addTurfFieldRequired;
                         final n = int.tryParse(raw);
-                        if (n == null) return 'Invalid';
-                        if (n < 50) return 'Min ₹50';
-                        if (n > 50000) return 'Max ₹50,000';
+                        if (n == null) return AppStrings.addTurfPriceInvalid;
+                        if (n < 50) return AppStrings.addTurfPriceMin;
+                        if (n > 50000) return AppStrings.addTurfPriceMax;
                         return null;
                       },
                       decoration: InputDecoration(
@@ -1370,7 +1416,6 @@ class _AddTurfScreenState extends State<AddTurfScreen> with RouteAware {
 
   Widget _buildImagesStep() {
     final c = AppColors.of(context);
-    final int totalImages = _existingImages.length + _selectedImages.length;
     final bool hasExistingImages = _existingImages.isNotEmpty;
     final bool hasNewImages = _selectedImages.isNotEmpty;
 
@@ -1380,7 +1425,7 @@ class _AddTurfScreenState extends State<AddTurfScreen> with RouteAware {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
-            'Turf Images',
+            AppStrings.addTurfImagesHeading,
             style: TextStyle(
               fontSize: 20,
               fontWeight: FontWeight.bold,
@@ -1389,7 +1434,7 @@ class _AddTurfScreenState extends State<AddTurfScreen> with RouteAware {
           ),
           const SizedBox(height: 8),
           Text(
-            'Add photos of your turf (optional for now)',
+            AppStrings.addTurfImagesSubtitle,
             style: TextStyle(color: c.textSecondary),
           ),
           const SizedBox(height: 24),
@@ -1397,34 +1442,37 @@ class _AddTurfScreenState extends State<AddTurfScreen> with RouteAware {
           InkWell(
             onTap: _pickImages,
             borderRadius: BorderRadius.circular(16),
-            child: Container(
-              width: double.infinity,
-              height: 150,
-              decoration: BoxDecoration(
-                color: c.primary.withValues(alpha: 0.05),
-                borderRadius: BorderRadius.circular(16),
-                border: Border.all(
-                  color: c.primary.withValues(alpha: 0.3),
-                  width: 2,
+            child: Tooltip(
+              message: AppStrings.addTurfImagesAddTooltip,
+              child: Container(
+                width: double.infinity,
+                height: 150,
+                decoration: BoxDecoration(
+                  color: c.primary.withValues(alpha: 0.05),
+                  borderRadius: BorderRadius.circular(16),
+                  border: Border.all(
+                    color: c.primary.withValues(alpha: 0.3),
+                    width: 2,
+                  ),
                 ),
-              ),
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Icon(
-                    Icons.add_photo_alternate_outlined,
-                    size: 48,
-                    color: c.primary.withValues(alpha: 0.7),
-                  ),
-                  const SizedBox(height: 8),
-                  Text(
-                    'Tap to add images',
-                    style: TextStyle(
-                      color: c.primary,
-                      fontWeight: FontWeight.w500,
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Icon(
+                      Icons.add_photo_alternate_outlined,
+                      size: 48,
+                      color: c.primary.withValues(alpha: 0.7),
                     ),
-                  ),
-                ],
+                    const SizedBox(height: 8),
+                    Text(
+                      AppStrings.addTurfImagesAddTap,
+                      style: TextStyle(
+                        color: c.primary,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                  ],
+                ),
               ),
             ),
           ),
@@ -1433,7 +1481,7 @@ class _AddTurfScreenState extends State<AddTurfScreen> with RouteAware {
           // Show existing images from server (edit mode)
           if (hasExistingImages) ...[
             Text(
-              'Current Images (${_existingImages.length})',
+              '${AppStrings.addTurfImagesCurrentPrefix}${_existingImages.length}${AppStrings.addTurfImagesCountSuffix}',
               style: TextStyle(
                 fontSize: 14,
                 fontWeight: FontWeight.w600,
@@ -1466,6 +1514,10 @@ class _AddTurfScreenState extends State<AddTurfScreen> with RouteAware {
                           fit: BoxFit.cover,
                           width: double.infinity,
                           height: double.infinity,
+                          cacheWidth:
+                              (MediaQuery.of(context).devicePixelRatio * 200)
+                                  .round(),
+                          gaplessPlayback: true,
                           loadingBuilder: (context, child, loadingProgress) {
                             if (loadingProgress == null) return child;
                             return Center(
@@ -1496,20 +1548,23 @@ class _AddTurfScreenState extends State<AddTurfScreen> with RouteAware {
                     Positioned(
                       top: 4,
                       right: 4,
-                      child: GestureDetector(
-                        onTap: () {
-                          setState(() => _existingImages.removeAt(index));
-                        },
-                        child: Container(
-                          padding: const EdgeInsets.all(4),
-                          decoration: BoxDecoration(
-                            color: Colors.black.withValues(alpha: 0.6),
-                            shape: BoxShape.circle,
-                          ),
-                          child: const Icon(
-                            Icons.close,
-                            size: 16,
-                            color: Colors.white,
+                      child: Tooltip(
+                        message: AppStrings.addTurfImagesRemoveTooltip,
+                        child: GestureDetector(
+                          onTap: () {
+                            setState(() => _existingImages.removeAt(index));
+                          },
+                          child: Container(
+                            padding: const EdgeInsets.all(4),
+                            decoration: BoxDecoration(
+                              color: Colors.black.withValues(alpha: 0.6),
+                              shape: BoxShape.circle,
+                            ),
+                            child: const Icon(
+                              Icons.close,
+                              size: 16,
+                              color: Colors.white,
+                            ),
                           ),
                         ),
                       ),
@@ -1528,7 +1583,7 @@ class _AddTurfScreenState extends State<AddTurfScreen> with RouteAware {
                             borderRadius: BorderRadius.circular(4),
                           ),
                           child: Text(
-                            'Primary',
+                            AppStrings.addTurfImagesPrimaryBadge,
                             style: TextStyle(
                               color: c.onPrimary,
                               fontSize: 10,
@@ -1547,7 +1602,7 @@ class _AddTurfScreenState extends State<AddTurfScreen> with RouteAware {
           // Show newly selected images
           if (hasNewImages) ...[
             Text(
-              'New Images (${_selectedImages.length})',
+              '${AppStrings.addTurfImagesNewPrefix}${_selectedImages.length}${AppStrings.addTurfImagesCountSuffix}',
               style: TextStyle(
                 fontSize: 14,
                 fontWeight: FontWeight.w600,
@@ -1595,20 +1650,23 @@ class _AddTurfScreenState extends State<AddTurfScreen> with RouteAware {
                     Positioned(
                       top: 4,
                       right: 4,
-                      child: GestureDetector(
-                        onTap: () {
-                          setState(() => _selectedImages.removeAt(index));
-                        },
-                        child: Container(
-                          padding: const EdgeInsets.all(4),
-                          decoration: BoxDecoration(
-                            color: Colors.black.withValues(alpha: 0.6),
-                            shape: BoxShape.circle,
-                          ),
-                          child: const Icon(
-                            Icons.close,
-                            size: 16,
-                            color: Colors.white,
+                      child: Tooltip(
+                        message: AppStrings.addTurfImagesRemoveTooltip,
+                        child: GestureDetector(
+                          onTap: () {
+                            setState(() => _selectedImages.removeAt(index));
+                          },
+                          child: Container(
+                            padding: const EdgeInsets.all(4),
+                            decoration: BoxDecoration(
+                              color: Colors.black.withValues(alpha: 0.6),
+                              shape: BoxShape.circle,
+                            ),
+                            child: const Icon(
+                              Icons.close,
+                              size: 16,
+                              color: Colors.white,
+                            ),
                           ),
                         ),
                       ),
@@ -1626,7 +1684,7 @@ class _AddTurfScreenState extends State<AddTurfScreen> with RouteAware {
                             borderRadius: BorderRadius.circular(4),
                           ),
                           child: Text(
-                            'Primary',
+                            AppStrings.addTurfImagesPrimaryBadge,
                             style: TextStyle(
                               color: c.onPrimary,
                               fontSize: 10,
@@ -1656,7 +1714,7 @@ class _AddTurfScreenState extends State<AddTurfScreen> with RouteAware {
                 const SizedBox(width: 12),
                 Expanded(
                   child: Text(
-                    'You can add images later from turf settings. The first image will be used as the primary display image.',
+                    AppStrings.addTurfImagesTip,
                     style: TextStyle(
                       fontSize: 13,
                       color: c.info.withValues(alpha: 0.9),
@@ -1691,7 +1749,7 @@ class _AddTurfScreenState extends State<AddTurfScreen> with RouteAware {
                     borderRadius: BorderRadius.circular(12),
                   ),
                 ),
-                child: const Text('Previous'),
+                child: const Text(AppStrings.addTurfNavPrevious),
               ),
             ),
           if (_currentStep > 0) const SizedBox(width: 12),
@@ -1718,8 +1776,10 @@ class _AddTurfScreenState extends State<AddTurfScreen> with RouteAware {
                     )
                   : Text(
                       _currentStep < 3
-                          ? 'Next'
-                          : (isEditing ? 'Update Turf' : 'Submit for Review'),
+                          ? AppStrings.addTurfNavNext
+                          : (isEditing
+                              ? AppStrings.addTurfNavUpdate
+                              : AppStrings.addTurfNavSubmit),
                       style: TextStyle(color: c.onPrimary),
                     ),
             ),

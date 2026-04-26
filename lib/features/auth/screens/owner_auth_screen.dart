@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import '../../../config/colors.dart';
 import '../../../config/glass_widgets.dart';
@@ -6,9 +7,25 @@ import '../../../config/abstract_bg.dart';
 import '../providers/auth_provider.dart';
 import '../../../app/routes.dart';
 import '../../../core/constants/enums.dart';
+import '../../../core/constants/strings.dart';
 import '../../../core/utils/app_toast.dart';
 import '../utils/auth_form_utils.dart';
 
+/// Phase 5 Iter 19 OA-17: Owner authentication screen.
+///
+/// Hosts three sub-flows behind a tabbed UI + modal overlays:
+///   * Login (email+password  OR  phone+OTP) → [AppRoutes.ownerDashboard]
+///   * Signup (manual form  OR  Google path) → dashboard when owner profile
+///     is ready, or stays on [_buildGooglePhoneCollectionScreen] until phone
+///     is captured and staged via `AuthProvider.stageOwnerGoogleSignupPhone`.
+///   * Forgot password (3-step: email → phone OTP → new password) → back to
+///     login tab on success.
+///
+/// Nav safety: a single-shot `_isNavigating` guard prevents double pushes
+/// from rapid taps on back/cancel buttons; submit buttons are additionally
+/// gated by `AuthProvider.isLoading`. The `_autoNavScheduled` flag guards
+/// the post-frame auto-redirect driven by provider notifications after
+/// OAuth deep-link returns, and is reset on any non-push exit path.
 class OwnerAuthScreen extends StatefulWidget {
   const OwnerAuthScreen({super.key});
 
@@ -58,6 +75,10 @@ class _OwnerAuthScreenState extends State<OwnerAuthScreen>
   // Defensive auto-nav for OAuth deep-link returns.
   AuthProvider? _authProviderRef;
   bool _autoNavScheduled = false;
+
+  // Phase 5 Iter 19 OA-03: single-shot guard for ad-hoc pops/pushes
+  // (back-button, cancel-signup, etc.) outside the submit-button path.
+  bool _isNavigating = false;
 
   @override
   void initState() {
@@ -116,8 +137,26 @@ class _OwnerAuthScreenState extends State<OwnerAuthScreen>
         _autoNavScheduled = false;
         return;
       }
-      Navigator.pushReplacementNamed(context, AppRoutes.ownerDashboard);
+      // Phase 5 Iter 19 OA-02: keep the guard latched only while the push
+      // is actually in flight; reset synchronously after scheduling so a
+      // subsequent failed/guarded push can be retried by the next notify.
+      try {
+        Navigator.pushReplacementNamed(context, AppRoutes.ownerDashboard);
+      } finally {
+        _autoNavScheduled = false;
+      }
     });
+  }
+
+  // Phase 5 Iter 19 OA-03: generic nav guard for pop/push from chrome.
+  Future<void> _guardedNavigate(Future<void> Function() action) async {
+    if (_isNavigating) return;
+    _isNavigating = true;
+    try {
+      await action();
+    } finally {
+      if (mounted) _isNavigating = false;
+    }
   }
 
   @override
@@ -160,6 +199,9 @@ class _OwnerAuthScreenState extends State<OwnerAuthScreen>
 
     final ready = await authProvider.ensureOwnerReadyForDashboard();
     if (!mounted || !ready) return;
+    // Phase 5 Iter 19 OA-09: avoid racing with _handleAuthProviderChanged.
+    if (_autoNavScheduled) return;
+    _autoNavScheduled = true;
     Navigator.pushReplacementNamed(context, AppRoutes.ownerDashboard);
   }
 
@@ -167,9 +209,12 @@ class _OwnerAuthScreenState extends State<OwnerAuthScreen>
     if (!_loginEmailFormKey.currentState!.validate()) return;
 
     final authProvider = Provider.of<AuthProvider>(context, listen: false);
+    // Phase 5 Iter 19 OA-01: do NOT trim passwords — a valid password may
+    // legitimately contain leading/trailing whitespace and trimming it
+    // silently corrupts the credential.
     final success = await authProvider.signIn(
       email: _loginEmailController.text.trim(),
-      password: _loginPasswordController.text.trim(),
+      password: _loginPasswordController.text,
     );
 
     if (success && mounted) {
@@ -192,8 +237,8 @@ class _OwnerAuthScreenState extends State<OwnerAuthScreen>
       final isPhoneVerificationGate = authProvider.currentOwner != null;
       _showSuccess(
         isPhoneVerificationGate
-            ? 'OTP sent for phone verification'
-            : 'OTP sent to $phone',
+            ? AppStrings.ownerAuthOtpVerificationSent
+            : '${AppStrings.ownerAuthOtpSentPrefix}$phone',
       );
     } else if (mounted && authProvider.errorMessage != null) {
       await _showProviderError(authProvider);
@@ -202,7 +247,7 @@ class _OwnerAuthScreenState extends State<OwnerAuthScreen>
 
   Future<void> _handlePhoneLoginVerifyOtp() async {
     if (!AuthFormUtils.isValidOtp(_loginOtpController.text)) {
-      _showError('Please enter a valid 6-digit OTP');
+      _showError(AppStrings.ownerAuthInvalidOtp);
       return;
     }
 
@@ -224,11 +269,12 @@ class _OwnerAuthScreenState extends State<OwnerAuthScreen>
     final phone =
         AuthFormUtils.normalizeIndianPhone(_signupPhoneController.text);
 
+    // Phase 5 Iter 19 OA-01: preserve password as typed.
     final success = await authProvider.signUp(
       name: _signupNameController.text.trim(),
       email: _signupEmailController.text.trim(),
       phone: phone,
-      password: _signupPasswordController.text.trim(),
+      password: _signupPasswordController.text,
       role: UserRole.owner,
     );
 
@@ -240,16 +286,17 @@ class _OwnerAuthScreenState extends State<OwnerAuthScreen>
   }
 
   Future<void> _handleGoogleLogin() async {
-    await _handleGoogleContinue();
+    await _handleGoogleContinue(allowSignup: false);
   }
 
   Future<void> _handleGoogleSignup() async {
-    await _handleGoogleContinue();
+    await _handleGoogleContinue(allowSignup: true);
   }
 
-  Future<void> _handleGoogleContinue() async {
+  Future<void> _handleGoogleContinue({required bool allowSignup}) async {
     final authProvider = Provider.of<AuthProvider>(context, listen: false);
-    final success = await authProvider.signInOwnerWithGoogle();
+    final success =
+        await authProvider.signInOwnerWithGoogle(allowSignup: allowSignup);
 
     if (success && mounted) {
       if (authProvider.requiresOwnerGooglePhoneCollection) {
@@ -332,7 +379,7 @@ class _OwnerAuthScreenState extends State<OwnerAuthScreen>
 
   Future<void> _handleForgotPasswordOtpVerify() async {
     if (!AuthFormUtils.isValidOtp(_forgotOtpController.text)) {
-      _showError('Please enter a valid 6-digit OTP');
+      _showError(AppStrings.ownerAuthInvalidOtp);
       return;
     }
 
@@ -348,13 +395,9 @@ class _OwnerAuthScreenState extends State<OwnerAuthScreen>
   }
 
   Future<void> _handleForgotPasswordSetNew() async {
+    // Phase 5 Iter 19 OA-15: form validator on the confirm field already
+    // enforces password match — no manual recheck needed here.
     if (!_forgotPasswordFormKey.currentState!.validate()) return;
-
-    if (_forgotNewPasswordController.text !=
-        _forgotConfirmPasswordController.text) {
-      _showError('Passwords do not match');
-      return;
-    }
 
     final authProvider = Provider.of<AuthProvider>(context, listen: false);
     final success = await authProvider
@@ -368,9 +411,11 @@ class _OwnerAuthScreenState extends State<OwnerAuthScreen>
     }
   }
 
+  // Phase 5 Iter 19 OA-05: defensive mask — never leak the phone when the
+  // input is degenerate (empty / < 4 digits after normalization).
   String _maskPhone(String phone) {
-    final compact = phone.replaceAll(RegExp(r'\s+'), '');
-    if (compact.length <= 4) return compact;
+    final compact = phone.replaceAll(RegExp(r'\D+'), '');
+    if (compact.length < 4) return '****';
     final last4 = compact.substring(compact.length - 4);
     return 'xxxxxx$last4';
   }
@@ -455,7 +500,8 @@ class _OwnerAuthScreenState extends State<OwnerAuthScreen>
       body: GlassScaffoldBackground(
         child: Stack(
           children: [
-            const AbstractBgShapes(),
+            // Phase 5 Iter 19 OA-10: isolate background repaints.
+            const RepaintBoundary(child: AbstractBgShapes()),
             SafeArea(
               child: Column(
                 children: [
@@ -468,11 +514,14 @@ class _OwnerAuthScreenState extends State<OwnerAuthScreen>
                         IconButton(
                           icon: Icon(Icons.arrow_back_ios,
                               color: c.textPrimary, size: 20),
-                          onPressed: () => Navigator.pop(context),
+                          tooltip: AppStrings.ownerAuthBackTooltip,
+                          onPressed: () => _guardedNavigate(() async {
+                            Navigator.pop(context);
+                          }),
                         ),
                         Expanded(
                           child: Text(
-                            'Owner Portal',
+                            AppStrings.ownerAuthAppBarTitle,
                             textAlign: TextAlign.center,
                             style: TextStyle(
                               color: c.textPrimary,
@@ -488,7 +537,7 @@ class _OwnerAuthScreenState extends State<OwnerAuthScreen>
                   // Branding
                   const SizedBox(height: 8),
                   Text(
-                    'FieldPass Business',
+                    AppStrings.ownerAuthBrandTitle,
                     style: TextStyle(
                       fontSize: 24,
                       fontWeight: FontWeight.bold,
@@ -498,7 +547,7 @@ class _OwnerAuthScreenState extends State<OwnerAuthScreen>
                   ),
                   const SizedBox(height: 4),
                   Text(
-                    'Pitch Perfect Management',
+                    AppStrings.ownerAuthBrandTagline,
                     style: TextStyle(
                       fontSize: 14,
                       color: c.textSecondary,
@@ -521,8 +570,8 @@ class _OwnerAuthScreenState extends State<OwnerAuthScreen>
                       indicatorSize: TabBarIndicatorSize.label,
                       dividerColor: Colors.transparent,
                       tabs: const [
-                        Tab(text: 'LOGIN'),
-                        Tab(text: 'SIGN UP'),
+                        Tab(text: AppStrings.ownerAuthTabLogin),
+                        Tab(text: AppStrings.ownerAuthTabSignup),
                       ],
                     ),
                   ),
@@ -556,7 +605,7 @@ class _OwnerAuthScreenState extends State<OwnerAuthScreen>
               Expanded(
                 child: _buildMethodToggle(
                   context: context,
-                  title: 'Email',
+                  title: AppStrings.ownerAuthMethodEmail,
                   isSelected: _isLoginWithEmail,
                   onTap: () => setState(() {
                     _isLoginWithEmail = true;
@@ -569,7 +618,7 @@ class _OwnerAuthScreenState extends State<OwnerAuthScreen>
               Expanded(
                 child: _buildMethodToggle(
                   context: context,
-                  title: 'Phone',
+                  title: AppStrings.ownerAuthMethodPhone,
                   isSelected: !_isLoginWithEmail,
                   onTap: () => setState(() => _isLoginWithEmail = false),
                 ),
@@ -594,7 +643,8 @@ class _OwnerAuthScreenState extends State<OwnerAuthScreen>
       body: GlassScaffoldBackground(
         child: Stack(
           children: [
-            const AbstractBgShapes(),
+            // Phase 5 Iter 19 OA-10: isolate background repaints.
+            const RepaintBoundary(child: AbstractBgShapes()),
             SafeArea(
               child: SingleChildScrollView(
                 padding: const EdgeInsets.all(24),
@@ -606,7 +656,8 @@ class _OwnerAuthScreenState extends State<OwnerAuthScreen>
                         IconButton(
                           icon: Icon(Icons.arrow_back_ios,
                               color: c.textPrimary, size: 20),
-                          onPressed: () async {
+                          tooltip: AppStrings.ownerAuthBackTooltip,
+                          onPressed: () => _guardedNavigate(() async {
                             final authProvider = Provider.of<AuthProvider>(
                                 context,
                                 listen: false);
@@ -616,11 +667,11 @@ class _OwnerAuthScreenState extends State<OwnerAuthScreen>
                               context,
                               AppRoutes.loginSelection,
                             );
-                          },
+                          }),
                         ),
                         Expanded(
                           child: Text(
-                            'Complete Sign Up',
+                            AppStrings.ownerAuthCompleteSignup,
                             textAlign: TextAlign.center,
                             style: TextStyle(
                               color: c.textPrimary,
@@ -634,7 +685,7 @@ class _OwnerAuthScreenState extends State<OwnerAuthScreen>
                     ),
                     const SizedBox(height: 30),
                     Text(
-                      'Add Phone Number',
+                      AppStrings.ownerAuthAddPhoneTitle,
                       style: TextStyle(
                         color: c.textPrimary,
                         fontSize: 24,
@@ -643,7 +694,7 @@ class _OwnerAuthScreenState extends State<OwnerAuthScreen>
                     ),
                     const SizedBox(height: 10),
                     Text(
-                      'Google sign-in completed. Add your phone number to continue to dashboard. OTP verification will be required next.',
+                      AppStrings.ownerAuthAddPhoneBlurb,
                       style: TextStyle(
                         color: c.textSecondary,
                         fontSize: 14,
@@ -660,9 +711,18 @@ class _OwnerAuthScreenState extends State<OwnerAuthScreen>
                           prefixText: '+91 ',
                           prefixStyle:
                               const TextStyle(fontWeight: FontWeight.bold),
+                          counterText: '',
                         ),
                         keyboardType: TextInputType.phone,
                         maxLength: 10,
+                        autofillHints: const [
+                          AutofillHints.telephoneNumberNational
+                        ],
+                        textInputAction: TextInputAction.done,
+                        inputFormatters: [
+                          FilteringTextInputFormatter.digitsOnly,
+                          LengthLimitingTextInputFormatter(10),
+                        ],
                         validator: (val) {
                           if (val == null || val.trim().isEmpty) {
                             return 'Phone number is required';
@@ -675,13 +735,13 @@ class _OwnerAuthScreenState extends State<OwnerAuthScreen>
                     ),
                     const SizedBox(height: 18),
                     _buildSubmitButton(
-                      'Continue to Dashboard',
+                      AppStrings.ownerAuthContinueToDashboard,
                       _handleGooglePhoneCollectionContinue,
                     ),
                     const SizedBox(height: 12),
                     Center(
                       child: TextButton(
-                        onPressed: () async {
+                        onPressed: () => _guardedNavigate(() async {
                           final authProvider =
                               Provider.of<AuthProvider>(context, listen: false);
                           await authProvider.cancelDeferredSignup();
@@ -690,9 +750,9 @@ class _OwnerAuthScreenState extends State<OwnerAuthScreen>
                             context,
                             AppRoutes.loginSelection,
                           );
-                        },
+                        }),
                         child: Text(
-                          'Cancel Sign Up',
+                          AppStrings.ownerAuthCancelSignup,
                           style: TextStyle(color: c.textSecondary),
                         ),
                       ),
@@ -750,6 +810,8 @@ class _OwnerAuthScreenState extends State<OwnerAuthScreen>
             decoration: _inputDecoration(
                 context, 'Email Address', Icons.email_outlined),
             keyboardType: TextInputType.emailAddress,
+            autofillHints: const [AutofillHints.email],
+            textInputAction: TextInputAction.next,
             validator: (val) {
               if (val == null || val.trim().isEmpty) {
                 return 'Email is required';
@@ -774,6 +836,9 @@ class _OwnerAuthScreenState extends State<OwnerAuthScreen>
               ),
             ),
             obscureText: _obscureLoginPassword,
+            autofillHints: const [AutofillHints.password],
+            textInputAction: TextInputAction.done,
+            onFieldSubmitted: (_) => _handleEmailLogin(),
             validator: (val) {
               if (val == null || val.isEmpty) {
                 return 'Password is required';
@@ -784,15 +849,16 @@ class _OwnerAuthScreenState extends State<OwnerAuthScreen>
             },
           ),
           const SizedBox(height: 24),
-          _buildSubmitButton('Login with Email', _handleEmailLogin),
+          _buildSubmitButton(
+              AppStrings.ownerAuthLoginWithEmail, _handleEmailLogin),
           const SizedBox(height: 12),
           _buildGoogleButton(
-            text: 'Continue with Google',
+            text: AppStrings.ownerAuthContinueWithGoogle,
             onPressed: _handleGoogleLogin,
           ),
           TextButton(
             onPressed: _startForgotPassword,
-            child: Text('Forgot Password?',
+            child: Text(AppStrings.forgotPassword,
                 style: TextStyle(color: c.textSecondary)),
           ),
         ],
@@ -812,10 +878,17 @@ class _OwnerAuthScreenState extends State<OwnerAuthScreen>
                 _inputDecoration(context, 'Phone Number', Icons.phone).copyWith(
               prefixText: '+91 ',
               prefixStyle: const TextStyle(fontWeight: FontWeight.bold),
+              counterText: '',
             ),
             keyboardType: TextInputType.phone,
             maxLength: 10,
             enabled: !_otpSent,
+            autofillHints: const [AutofillHints.telephoneNumberNational],
+            textInputAction: TextInputAction.done,
+            inputFormatters: [
+              FilteringTextInputFormatter.digitsOnly,
+              LengthLimitingTextInputFormatter(10),
+            ],
             validator: (val) {
               if (val == null || val.trim().isEmpty) {
                 return 'Phone number is required';
@@ -830,26 +903,36 @@ class _OwnerAuthScreenState extends State<OwnerAuthScreen>
             TextFormField(
               controller: _loginOtpController,
               decoration: _inputDecoration(
-                  context, 'Enter 6-digit OTP', Icons.security),
+                      context, AppStrings.ownerAuthOtpLabel, Icons.security)
+                  .copyWith(counterText: ''),
               keyboardType: TextInputType.number,
               maxLength: 6,
               textAlign: TextAlign.center,
+              autofillHints: const [AutofillHints.oneTimeCode],
+              textInputAction: TextInputAction.done,
+              inputFormatters: [
+                FilteringTextInputFormatter.digitsOnly,
+                LengthLimitingTextInputFormatter(6),
+              ],
+              onFieldSubmitted: (_) => _handlePhoneLoginVerifyOtp(),
               style: TextStyle(
                   letterSpacing: 8,
                   fontWeight: FontWeight.bold,
                   color: c.textPrimary),
             ),
             const SizedBox(height: 24),
-            _buildSubmitButton('Verify & Continue', _handlePhoneLoginVerifyOtp),
+            _buildSubmitButton(AppStrings.ownerAuthVerifyAndContinue,
+                _handlePhoneLoginVerifyOtp),
             const SizedBox(height: 16),
             TextButton(
               onPressed: () => setState(() => _otpSent = false),
-              child:
-                  Text('Change Number', style: TextStyle(color: c.secondary)),
+              child: Text(AppStrings.ownerAuthChangeNumber,
+                  style: TextStyle(color: c.secondary)),
             ),
           ] else ...[
             const SizedBox(height: 24),
-            _buildSubmitButton('Send OTP', _handlePhoneLoginSendOtp),
+            _buildSubmitButton(
+                AppStrings.ownerAuthSendOtp, _handlePhoneLoginSendOtp),
           ],
         ],
       ),
@@ -865,7 +948,7 @@ class _OwnerAuthScreenState extends State<OwnerAuthScreen>
           _buildGoogleSignupPathCard(),
           const SizedBox(height: 18),
           Text(
-            'OR SIGN UP MANUALLY',
+            AppStrings.ownerAuthOrSignupManually,
             style: TextStyle(
               color: c.textSecondary,
               fontSize: 12,
@@ -882,6 +965,8 @@ class _OwnerAuthScreenState extends State<OwnerAuthScreen>
                   controller: _signupNameController,
                   decoration: _inputDecoration(
                       context, 'Full Name', Icons.person_outline),
+                  autofillHints: const [AutofillHints.name],
+                  textInputAction: TextInputAction.next,
                   validator: (val) {
                     if (val == null || val.trim().isEmpty) {
                       return 'Full name is required';
@@ -897,6 +982,8 @@ class _OwnerAuthScreenState extends State<OwnerAuthScreen>
                   decoration: _inputDecoration(
                       context, 'Email Address', Icons.email_outlined),
                   keyboardType: TextInputType.emailAddress,
+                  autofillHints: const [AutofillHints.email],
+                  textInputAction: TextInputAction.next,
                   validator: (val) {
                     if (val == null || val.trim().isEmpty) {
                       return 'Email is required';
@@ -914,9 +1001,16 @@ class _OwnerAuthScreenState extends State<OwnerAuthScreen>
                           .copyWith(
                     prefixText: '+91 ',
                     prefixStyle: const TextStyle(fontWeight: FontWeight.bold),
+                    counterText: '',
                   ),
                   keyboardType: TextInputType.phone,
                   maxLength: 10,
+                  autofillHints: const [AutofillHints.telephoneNumberNational],
+                  textInputAction: TextInputAction.next,
+                  inputFormatters: [
+                    FilteringTextInputFormatter.digitsOnly,
+                    LengthLimitingTextInputFormatter(10),
+                  ],
                   validator: (val) {
                     if (val == null || val.trim().isEmpty) {
                       return 'Phone number is required';
@@ -941,6 +1035,8 @@ class _OwnerAuthScreenState extends State<OwnerAuthScreen>
                     ),
                   ),
                   obscureText: _obscureSignupPassword,
+                  autofillHints: const [AutofillHints.newPassword],
+                  textInputAction: TextInputAction.next,
                   validator: (val) {
                     if (val == null || val.isEmpty) {
                       return 'Password is required';
@@ -967,6 +1063,9 @@ class _OwnerAuthScreenState extends State<OwnerAuthScreen>
                     ),
                   ),
                   obscureText: _obscureSignupConfirmPassword,
+                  autofillHints: const [AutofillHints.newPassword],
+                  textInputAction: TextInputAction.done,
+                  onFieldSubmitted: (_) => _handleSignup(),
                   validator: (val) {
                     if (val == null || val.isEmpty) {
                       return 'Confirm password is required';
@@ -978,10 +1077,10 @@ class _OwnerAuthScreenState extends State<OwnerAuthScreen>
                   },
                 ),
                 const SizedBox(height: 32),
-                _buildSubmitButton('Sign Up', _handleSignup),
+                _buildSubmitButton(AppStrings.signup, _handleSignup),
                 const SizedBox(height: 24),
                 Text(
-                  'By signing up, you agree to our Terms & Conditions',
+                  AppStrings.ownerAuthTermsBlurb,
                   style: TextStyle(color: c.textSecondary, fontSize: 12),
                   textAlign: TextAlign.center,
                 ),
@@ -1007,7 +1106,7 @@ class _OwnerAuthScreenState extends State<OwnerAuthScreen>
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
-            'Quick Sign Up',
+            AppStrings.ownerAuthQuickSignup,
             style: TextStyle(
               color: c.textPrimary,
               fontSize: 16,
@@ -1016,7 +1115,7 @@ class _OwnerAuthScreenState extends State<OwnerAuthScreen>
           ),
           const SizedBox(height: 6),
           Text(
-            'Name and email will be pulled from Google. Phone OTP verification is required.',
+            AppStrings.ownerAuthQuickSignupBlurb,
             style: TextStyle(
               color: c.textSecondary,
               fontSize: 12,
@@ -1024,7 +1123,7 @@ class _OwnerAuthScreenState extends State<OwnerAuthScreen>
           ),
           const SizedBox(height: 12),
           _buildGoogleButton(
-            text: 'Sign up with Google',
+            text: AppStrings.ownerAuthSignupWithGoogle,
             onPressed: _handleGoogleSignup,
           ),
         ],
@@ -1132,7 +1231,8 @@ class _OwnerAuthScreenState extends State<OwnerAuthScreen>
       body: GlassScaffoldBackground(
         child: Stack(
           children: [
-            const AbstractBgShapes(),
+            // Phase 5 Iter 19 OA-10: isolate background repaints.
+            const RepaintBoundary(child: AbstractBgShapes()),
             SafeArea(
               child: Column(
                 children: [
@@ -1145,11 +1245,12 @@ class _OwnerAuthScreenState extends State<OwnerAuthScreen>
                         IconButton(
                           icon: Icon(Icons.arrow_back_ios,
                               color: c.textPrimary, size: 20),
+                          tooltip: AppStrings.ownerAuthBackTooltip,
                           onPressed: _cancelForgotPassword,
                         ),
                         Expanded(
                           child: Text(
-                            'Reset Password',
+                            AppStrings.ownerAuthResetPassword,
                             textAlign: TextAlign.center,
                             style: TextStyle(
                               color: c.textPrimary,
@@ -1288,6 +1389,9 @@ class _OwnerAuthScreenState extends State<OwnerAuthScreen>
             decoration: _inputDecoration(
                 context, 'Email Address', Icons.email_outlined),
             keyboardType: TextInputType.emailAddress,
+            autofillHints: const [AutofillHints.email],
+            textInputAction: TextInputAction.done,
+            onFieldSubmitted: (_) => _handleForgotPasswordEmailSubmit(),
             validator: (val) {
               if (val == null || val.trim().isEmpty) {
                 return 'Email is required';
@@ -1298,12 +1402,12 @@ class _OwnerAuthScreenState extends State<OwnerAuthScreen>
             },
           ),
           const SizedBox(height: 24),
-          _buildSubmitButton('Continue', _handleForgotPasswordEmailSubmit),
+          _buildSubmitButton(AppStrings.next, _handleForgotPasswordEmailSubmit),
           const SizedBox(height: 16),
           Center(
             child: TextButton(
               onPressed: _cancelForgotPassword,
-              child: Text('Back to Login',
+              child: Text(AppStrings.ownerAuthBackToLogin,
                   style: TextStyle(color: c.textSecondary)),
             ),
           ),
@@ -1323,7 +1427,7 @@ class _OwnerAuthScreenState extends State<OwnerAuthScreen>
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
-            'Verify OTP',
+            AppStrings.ownerAuthVerifyOtpTitle,
             style: TextStyle(
               fontSize: 20,
               fontWeight: FontWeight.bold,
@@ -1338,11 +1442,19 @@ class _OwnerAuthScreenState extends State<OwnerAuthScreen>
           const SizedBox(height: 24),
           TextFormField(
             controller: _forgotOtpController,
-            decoration:
-                _inputDecoration(context, 'Enter 6-digit OTP', Icons.security),
+            decoration: _inputDecoration(
+                    context, AppStrings.ownerAuthOtpLabel, Icons.security)
+                .copyWith(counterText: ''),
             keyboardType: TextInputType.number,
             maxLength: 6,
             textAlign: TextAlign.center,
+            autofillHints: const [AutofillHints.oneTimeCode],
+            textInputAction: TextInputAction.done,
+            inputFormatters: [
+              FilteringTextInputFormatter.digitsOnly,
+              LengthLimitingTextInputFormatter(6),
+            ],
+            onFieldSubmitted: (_) => _handleForgotPasswordOtpVerify(),
             style: TextStyle(
               letterSpacing: 8,
               fontWeight: FontWeight.bold,
@@ -1350,7 +1462,8 @@ class _OwnerAuthScreenState extends State<OwnerAuthScreen>
             ),
           ),
           const SizedBox(height: 24),
-          _buildSubmitButton('Verify OTP', _handleForgotPasswordOtpVerify),
+          _buildSubmitButton(AppStrings.ownerAuthVerifyOtpTitle,
+              _handleForgotPasswordOtpVerify),
           const SizedBox(height: 16),
           Center(
             child: TextButton(
@@ -1359,12 +1472,14 @@ class _OwnerAuthScreenState extends State<OwnerAuthScreen>
                     Provider.of<AuthProvider>(context, listen: false);
                 final success = await authProvider.sendForgotPasswordOtp();
                 if (success && mounted) {
-                  _showSuccess('OTP resent to $maskedPhone');
+                  _showSuccess(
+                      '${AppStrings.ownerAuthOtpSentPrefix}$maskedPhone');
                 } else if (mounted && authProvider.errorMessage != null) {
                   _showError(authProvider.errorMessage!);
                 }
               },
-              child: Text('Resend OTP', style: TextStyle(color: c.secondary)),
+              child: Text(AppStrings.ownerAuthResendOtp,
+                  style: TextStyle(color: c.secondary)),
             ),
           ),
         ],
@@ -1380,7 +1495,7 @@ class _OwnerAuthScreenState extends State<OwnerAuthScreen>
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
-            'Set New Password',
+            AppStrings.ownerAuthSetNewPasswordTitle,
             style: TextStyle(
               fontSize: 20,
               fontWeight: FontWeight.bold,
@@ -1407,6 +1522,8 @@ class _OwnerAuthScreenState extends State<OwnerAuthScreen>
               ),
             ),
             obscureText: _obscureForgotNewPassword,
+            autofillHints: const [AutofillHints.newPassword],
+            textInputAction: TextInputAction.next,
             validator: (val) {
               if (val == null || val.isEmpty) return 'Password is required';
               if (!AuthFormUtils.isStrongPassword(val)) {
@@ -1431,6 +1548,9 @@ class _OwnerAuthScreenState extends State<OwnerAuthScreen>
               ),
             ),
             obscureText: _obscureForgotConfirmPassword,
+            autofillHints: const [AutofillHints.newPassword],
+            textInputAction: TextInputAction.done,
+            onFieldSubmitted: (_) => _handleForgotPasswordSetNew(),
             validator: (val) {
               if (val == null || val.isEmpty) {
                 return 'Confirm password is required';
@@ -1442,7 +1562,8 @@ class _OwnerAuthScreenState extends State<OwnerAuthScreen>
             },
           ),
           const SizedBox(height: 24),
-          _buildSubmitButton('Set Password', _handleForgotPasswordSetNew),
+          _buildSubmitButton(
+              AppStrings.ownerAuthSetPassword, _handleForgotPasswordSetNew),
         ],
       ),
     );

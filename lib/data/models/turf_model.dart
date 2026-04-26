@@ -1,4 +1,23 @@
+/// Phase 4 Iter 12 TM-11: data model for turfs / grounds. All parsing
+/// entry points are defensive: malformed DB rows should degrade
+/// gracefully rather than crash list/detail screens.
 import '../../core/constants/enums.dart';
+
+/// Canonical week order used for default days-open and sorting.
+/// Phase 4 Iter 12 TM-08: single source of truth instead of 3 inline
+/// duplicates.
+const List<String> _defaultDaysOpen = <String>[
+  'MON',
+  'TUE',
+  'WED',
+  'THU',
+  'FRI',
+  'SAT',
+  'SUN'
+];
+
+/// Matches 24h HH:MM (00:00..23:59). Phase 4 Iter 12 TM-06/TM-07.
+final RegExp _timeHHMM = RegExp(r'^([01]\d|2[0-3]):[0-5]\d$');
 
 class TurfLocation {
   final double lat;
@@ -6,11 +25,29 @@ class TurfLocation {
 
   TurfLocation({required this.lat, required this.lng});
 
+  /// Phase 4 Iter 12 TM-01: strict parser. Missing or non-numeric
+  /// lat/lng returns null rather than silently producing `(0, 0)`
+  /// (Null Island), which was previously indistinguishable from a
+  /// legitimately dropped location.
+  static TurfLocation? tryFromMap(Map<String, dynamic> map) {
+    final rawLat = map['lat'];
+    final rawLng = map['lng'];
+    final lat = rawLat is num
+        ? rawLat.toDouble()
+        : double.tryParse(rawLat?.toString() ?? '');
+    final lng = rawLng is num
+        ? rawLng.toDouble()
+        : double.tryParse(rawLng?.toString() ?? '');
+    if (lat == null || lng == null) return null;
+    if (lat.isNaN || lng.isNaN) return null;
+    if (lat < -90 || lat > 90 || lng < -180 || lng > 180) return null;
+    return TurfLocation(lat: lat, lng: lng);
+  }
+
+  /// Legacy non-null API retained for callers that already validated
+  /// input. Prefer [tryFromMap].
   factory TurfLocation.fromMap(Map<String, dynamic> map) {
-    return TurfLocation(
-      lat: (map['lat'] ?? 0).toDouble(),
-      lng: (map['lng'] ?? 0).toDouble(),
-    );
+    return tryFromMap(map) ?? TurfLocation(lat: 0, lng: 0);
   }
 
   Map<String, dynamic> toMap() => {
@@ -111,9 +148,14 @@ class DayTypePricing {
     };
   }
 
-  /// Get price for a specific time
+  /// Get price for a specific time.
+  /// Phase 4 Iter 12 TM-06: validates `HH:MM`. Malformed input falls
+  /// back to the morning price (a safer neutral default than night,
+  /// which is typically the cheapest slot and was masking data bugs
+  /// as "free night pricing").
   double getPriceForTime(String time) {
-    final hour = int.tryParse(time.split(':')[0]) ?? 0;
+    if (!_timeHHMM.hasMatch(time)) return morning.price;
+    final hour = int.parse(time.split(':')[0]);
     if (hour >= 6 && hour < 12) return morning.price;
     if (hour >= 12 && hour < 18) return afternoon.price;
     if (hour >= 18 && hour < 24) return evening.price;
@@ -254,9 +296,13 @@ class PricingRules {
     );
   }
 
-  /// Get pricing for a specific net, day type, and time
+  /// Get pricing for a specific net, day type, and time.
+  /// Phase 4 Iter 12 TM-02: returns `0` instead of throwing
+  /// `StateError` when [netPricing] is empty. Callers should treat
+  /// zero as "pricing unavailable" and fall back to UI error state.
   double getPrice(
       {required int netNumber, required String dayType, required String time}) {
+    if (netPricing.isEmpty) return 0;
     final net = netPricing.firstWhere(
       (n) => n.netNumber == netNumber,
       orElse: () => netPricing.first,
@@ -281,6 +327,7 @@ class PricingRules {
 }
 
 // Legacy support classes
+@Deprecated('Use PricingRules / DayTypePricing / TimeSlotPricing instead')
 class PricingRule {
   final String start;
   final String end;
@@ -299,6 +346,7 @@ class PricingRule {
   Map<String, dynamic> toMap() => {'start': start, 'end': end, 'price': price};
 }
 
+@Deprecated('Use DayTypePricing instead')
 class DayPricing {
   final PricingRule day;
   final PricingRule night;
@@ -367,8 +415,11 @@ class TurfImage {
     );
   }
 
+  /// Phase 4 Iter 12 TM-05: case-insensitive so legacy rows stored as
+  /// `'ground'` / `'night_lights'` keep their type metadata instead of
+  /// silently degrading to `other`.
   static TurfImageType _parseImageType(String? type) {
-    switch (type) {
+    switch (type?.toUpperCase()) {
       case 'GROUND':
         return TurfImageType.ground;
       case 'NIGHT_LIGHTS':
@@ -447,10 +498,22 @@ class TurfModel {
 
   /// Create from Supabase map
   factory TurfModel.fromMap(Map<String, dynamic> data) {
+    // Phase 4 Iter 12 TM-03: tolerate malformed date strings from
+    // legacy rows instead of letting them crash list fetches.
     DateTime parseDate(dynamic value) {
       if (value is DateTime) return value;
-      if (value is String) return DateTime.parse(value);
+      if (value is String) {
+        return DateTime.tryParse(value) ?? DateTime.now();
+      }
       return DateTime.now();
+    }
+
+    // Phase 4 Iter 12 TM-07: fall back to a safe default for invalid
+    // open/close times rather than propagating `"25:99"` into slot
+    // generators.
+    String parseTime(dynamic value, String fallback) {
+      final s = value?.toString() ?? '';
+      return _timeHHMM.hasMatch(s) ? s : fallback;
     }
 
     List<int> parseRenovationNets(dynamic value) {
@@ -510,18 +573,26 @@ class TurfModel {
     }
 
     List<String> parseDaysOpen(dynamic value) {
-      final source = value is List
-          ? value
-          : const ['MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT', 'SUN'];
+      // Phase 4 Iter 12 TM-08: use shared _defaultDaysOpen.
+      final source = value is List ? value : _defaultDaysOpen;
 
       final normalized =
           source.map(normalizeDayCode).whereType<String>().toSet().toList();
 
-      const order = ['MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT', 'SUN'];
-      normalized.sort((a, b) => order.indexOf(a).compareTo(order.indexOf(b)));
+      normalized.sort((a, b) =>
+          _defaultDaysOpen.indexOf(a).compareTo(_defaultDaysOpen.indexOf(b)));
 
-      return normalized.isEmpty ? List<String>.from(order) : normalized;
+      return normalized.isEmpty
+          ? List<String>.from(_defaultDaysOpen)
+          : normalized;
     }
+
+    // Phase 4 Iter 12 TM-04: guard against 0/negative net counts from
+    // legacy or partially-migrated rows.
+    final rawNets = data['number_of_nets'] ?? data['numberOfNets'] ?? 1;
+    final nets =
+        rawNets is int ? rawNets : int.tryParse(rawNets.toString()) ?? 1;
+    final safeNets = nets < 1 ? 1 : nets;
 
     return TurfModel(
       turfId: data['id'] ?? data['turfId'] ?? '',
@@ -529,15 +600,17 @@ class TurfModel {
       turfName: data['turf_name'] ?? data['turfName'] ?? '',
       city: data['city'] ?? '',
       address: data['address'] ?? '',
-      location: data['location'] != null
-          ? TurfLocation.fromMap(Map<String, dynamic>.from(data['location']))
+      // Phase 4 Iter 12 TM-01: invalid location maps become null
+      // instead of the Null-Island stand-in.
+      location: data['location'] is Map
+          ? TurfLocation.tryFromMap(Map<String, dynamic>.from(data['location']))
           : null,
       turfType: TurfTypeExtension.fromString(
           data['turf_type'] ?? data['turfType'] ?? 'BOX_CRICKET'),
       description: data['description'],
-      numberOfNets: data['number_of_nets'] ?? data['numberOfNets'] ?? 1,
-      openTime: data['open_time'] ?? data['openTime'] ?? '06:00',
-      closeTime: data['close_time'] ?? data['closeTime'] ?? '23:00',
+      numberOfNets: safeNets,
+      openTime: parseTime(data['open_time'] ?? data['openTime'], '06:00'),
+      closeTime: parseTime(data['close_time'] ?? data['closeTime'], '23:00'),
       slotDurationMinutes:
           data['slot_duration_minutes'] ?? data['slotDurationMinutes'] ?? 60,
       daysOpen: parseDaysOpen(data['days_open'] ?? data['daysOpen']),
@@ -607,22 +680,24 @@ class TurfModel {
     };
   }
 
+  /// Phase 4 Iter 12 TM-09: single filtered pass over [images];
+  /// [primaryImageUrl] and [validImageUrls] share this list instead of
+  /// each re-scanning the full collection on every rebuild.
+  List<TurfImage> get validImages =>
+      images.where((img) => img.isValid).toList(growable: false);
+
   /// Get primary image URL (only returns valid URLs)
   String? get primaryImageUrl {
-    // First try to find a primary image with a valid URL
-    final primary =
-        images.where((img) => img.isPrimary && img.isValid).firstOrNull;
-    if (primary != null) return primary.url;
-
-    // Fallback to first valid image
-    final firstValid = images.where((img) => img.isValid).firstOrNull;
-    return firstValid?.url;
+    final valid = validImages;
+    for (final img in valid) {
+      if (img.isPrimary) return img.url;
+    }
+    return valid.isEmpty ? null : valid.first.url;
   }
 
   /// Get all valid image URLs
-  List<String> get validImageUrls {
-    return images.where((img) => img.isValid).map((img) => img.url).toList();
-  }
+  List<String> get validImageUrls =>
+      validImages.map((img) => img.url).toList(growable: false);
 
   /// Copy with modified fields
   TurfModel copyWith({
@@ -676,6 +751,7 @@ class TurfModel {
 
   @override
   String toString() {
-    return 'TurfModel(turfId: $turfId, turfName: $turfName, city: $city, nets: $numberOfNets)';
+    // Phase 4 Iter 12 TM-11: include ownerId for owner-scoped debug logs.
+    return 'TurfModel(turfId: $turfId, ownerId: $ownerId, turfName: $turfName, city: $city, nets: $numberOfNets)';
   }
 }

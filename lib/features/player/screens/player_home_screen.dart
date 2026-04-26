@@ -6,6 +6,7 @@ import '../../../config/abstract_bg.dart';
 import '../../../config/colors.dart';
 import '../../../config/glass_widgets.dart';
 import '../../../core/constants/enums.dart';
+import '../../../core/constants/strings.dart';
 import '../../../core/utils/app_toast.dart';
 import '../../../data/models/booking_model.dart';
 import '../../../data/models/slot_model.dart';
@@ -14,6 +15,20 @@ import '../../../data/services/database_service.dart';
 import '../../auth/providers/auth_provider.dart';
 import '../../owner/providers/booking_provider.dart';
 
+/// Player home screen.
+///
+/// Layout (Phase 5 Iter 23 hardened):
+///   * Two-tab `IndexedStack` driven by [_selectedTab]:
+///       - 0 = approved turfs list with horizontal date selector + booking sheet
+///       - 1 = the player's own bookings list
+///   * `_selectedDate` only affects the slot fetch when the user opens a turf;
+///     it does NOT auto-refresh either tab on date change (intentional).
+///   * `_logout` is wrapped in a nav-guard (`_isNavigating`) so double-taps
+///     cannot stack `pushNamedAndRemoveUntil` calls.
+///   * Each booking row in the modal sheet has its own busy flag
+///     (`_bookingInFlight`) so spam-tapping cannot create duplicate bookings.
+///   * Per-section error state (`_turfsError` / `_bookingsError`) so a
+///     successful load on one section does not wipe the other's error.
 class PlayerHomeScreen extends StatefulWidget {
   const PlayerHomeScreen({super.key});
 
@@ -22,23 +37,80 @@ class PlayerHomeScreen extends StatefulWidget {
 }
 
 class _PlayerHomeScreenState extends State<PlayerHomeScreen> {
+  // ---- Layout constants (PH-14) -----------------------------------------
+  static const double _dateSelectorHeight = 80;
+  static const double _dateChipWidth = 76;
+  static const double _modalHeightFraction = 0.82;
+  static const double _selectedChipAlpha = 0.18;
+  static const double _chipBgAlpha = 0.12;
+  static const double _pillRadius = 999;
+  static const double _slotBorderAlpha = 0.2;
+
+  static const List<String> _weekdayShortNames = [
+    'Mon',
+    'Tue',
+    'Wed',
+    'Thu',
+    'Fri',
+    'Sat',
+    'Sun',
+  ];
+
   final DatabaseService _dbService = DatabaseService();
 
-  DateTime _selectedDate = DateTime.now();
+  DateTime _selectedDate = _todayAtMidnight();
   int _selectedTab = 0;
   bool _loadingTurfs = false;
   bool _loadingBookings = false;
+  bool _isNavigating = false;
 
   List<TurfModel> _approvedTurfs = [];
   List<BookingModel> _bookings = [];
 
-  String? _error;
+  String? _turfsError;
+  String? _bookingsError;
 
   @override
   void initState() {
     super.initState();
     _refreshAll();
   }
+
+  // ---- Helpers ----------------------------------------------------------
+
+  static DateTime _todayAtMidnight() {
+    final now = DateTime.now();
+    return DateTime(now.year, now.month, now.day);
+  }
+
+  /// Format a [DateTime] as a midnight-stable `yyyy-MM-dd` string in local
+  /// time (PH-08): avoids the toIso8601String UTC-shift bug at edges of day.
+  String _formatYmd(DateTime date) {
+    final m = date.month.toString().padLeft(2, '0');
+    final d = date.day.toString().padLeft(2, '0');
+    return '${date.year}-$m-$d';
+  }
+
+  /// Safe truncation of an id for display (PH-02).
+  String _shortId(String id, [int len = 8]) {
+    if (id.isEmpty) return '';
+    final n = id.length < len ? id.length : len;
+    return id.substring(0, n).toUpperCase();
+  }
+
+  Future<void> _guardedNavigate(Future<void> Function() action) async {
+    if (_isNavigating) return;
+    _isNavigating = true;
+    try {
+      await action();
+    } finally {
+      if (mounted) {
+        _isNavigating = false;
+      }
+    }
+  }
+
+  // ---- Data loading -----------------------------------------------------
 
   Future<void> _refreshAll() async {
     await Future.wait([
@@ -50,7 +122,7 @@ class _PlayerHomeScreenState extends State<PlayerHomeScreen> {
   Future<void> _loadApprovedTurfs() async {
     setState(() {
       _loadingTurfs = true;
-      _error = null;
+      _turfsError = null;
     });
 
     try {
@@ -68,7 +140,7 @@ class _PlayerHomeScreenState extends State<PlayerHomeScreen> {
       if (!mounted) return;
       setState(() {
         _loadingTurfs = false;
-        _error = 'Failed to load turfs: $e';
+        _turfsError = '${AppStrings.playerHomeLoadTurfsFailedPrefix}$e';
       });
     }
   }
@@ -82,7 +154,7 @@ class _PlayerHomeScreenState extends State<PlayerHomeScreen> {
 
     setState(() {
       _loadingBookings = true;
-      _error = null;
+      _bookingsError = null;
     });
 
     try {
@@ -96,24 +168,38 @@ class _PlayerHomeScreenState extends State<PlayerHomeScreen> {
       if (!mounted) return;
       setState(() {
         _loadingBookings = false;
-        _error = 'Failed to load your bookings: $e';
+        _bookingsError = '${AppStrings.playerHomeLoadBookingsFailedPrefix}$e';
       });
     }
   }
 
+  // ---- Actions ----------------------------------------------------------
+
   Future<void> _logout() async {
-    final authProvider = Provider.of<AuthProvider>(context, listen: false);
-    await authProvider.signOut();
-    if (!mounted) return;
-    Navigator.pushNamedAndRemoveUntil(
-      context,
-      AppRoutes.loginSelection,
-      (route) => false,
-    );
+    await _guardedNavigate(() async {
+      final authProvider = Provider.of<AuthProvider>(context, listen: false);
+      try {
+        await authProvider.signOut();
+      } catch (_) {
+        if (!mounted) return;
+        showAppToast(
+          context,
+          AppStrings.playerHomeLogoutFailed,
+          type: ToastType.error,
+        );
+        return;
+      }
+      if (!mounted) return;
+      Navigator.pushNamedAndRemoveUntil(
+        context,
+        AppRoutes.loginSelection,
+        (route) => false,
+      );
+    });
   }
 
   Future<void> _openSlots(TurfModel turf) async {
-    final dateStr = _selectedDate.toIso8601String().split('T').first;
+    final dateStr = _formatYmd(_selectedDate);
 
     List<SlotModel> slots;
     try {
@@ -129,7 +215,11 @@ class _PlayerHomeScreenState extends State<PlayerHomeScreen> {
         });
     } catch (e) {
       if (!mounted) return;
-      showAppToast(context, 'Failed to load slots: $e', type: ToastType.error);
+      showAppToast(
+        context,
+        '${AppStrings.playerHomeLoadSlotsFailedPrefix}$e',
+        type: ToastType.error,
+      );
       return;
     }
 
@@ -145,7 +235,7 @@ class _PlayerHomeScreenState extends State<PlayerHomeScreen> {
     if (userId == null || player == null) {
       showAppToast(
         context,
-        'Session expired. Please login again.',
+        AppStrings.playerHomeSessionExpired,
         type: ToastType.error,
       );
       return;
@@ -157,13 +247,17 @@ class _PlayerHomeScreenState extends State<PlayerHomeScreen> {
       backgroundColor: Colors.transparent,
       builder: (sheetContext) {
         final modalSlots = List<SlotModel>.from(slots);
+        final bookingInFlight = List<bool>.filled(modalSlots.length, false);
 
         return StatefulBuilder(
           builder: (modalContext, setModalState) {
+            final c = AppColors.of(modalContext);
+
             return Container(
-              height: MediaQuery.of(context).size.height * 0.82,
+              height:
+                  MediaQuery.of(modalContext).size.height * _modalHeightFraction,
               decoration: BoxDecoration(
-                color: AppColors.of(context).surface,
+                color: c.surface,
                 borderRadius:
                     const BorderRadius.vertical(top: Radius.circular(24)),
               ),
@@ -187,14 +281,13 @@ class _PlayerHomeScreenState extends State<PlayerHomeScreen> {
                               const SizedBox(height: 4),
                               Text(
                                 dateStr,
-                                style: TextStyle(
-                                  color: AppColors.of(context).textSecondary,
-                                ),
+                                style: TextStyle(color: c.textSecondary),
                               ),
                             ],
                           ),
                         ),
                         IconButton(
+                          tooltip: AppStrings.playerHomeCloseTooltip,
                           onPressed: () => Navigator.pop(modalContext),
                           icon: const Icon(Icons.close),
                         ),
@@ -205,22 +298,25 @@ class _PlayerHomeScreenState extends State<PlayerHomeScreen> {
                   Expanded(
                     child: modalSlots.isEmpty
                         ? const Center(
-                            child: Text('No slots available for selected date'),
+                            child: Text(AppStrings.playerHomeNoSlots),
                           )
                         : ListView.separated(
                             padding: const EdgeInsets.all(16),
+                            itemCount: modalSlots.length,
+                            separatorBuilder: (_, __) =>
+                                const SizedBox(height: 10),
                             itemBuilder: (context, index) {
                               final slot = modalSlots[index];
                               final isAvailable =
                                   slot.status == SlotStatus.available;
+                              final busy = bookingInFlight[index];
+                              final canBook = isAvailable && !busy;
 
                               return Container(
                                 padding: const EdgeInsets.all(14),
                                 decoration: BoxDecoration(
                                   borderRadius: BorderRadius.circular(14),
-                                  border: Border.all(
-                                    color: Colors.grey.withValues(alpha: 0.2),
-                                  ),
+                                  border: Border.all(color: c.glassBorder),
                                 ),
                                 child: Row(
                                   children: [
@@ -237,10 +333,9 @@ class _PlayerHomeScreenState extends State<PlayerHomeScreen> {
                                           ),
                                           const SizedBox(height: 4),
                                           Text(
-                                            'Net ${slot.netNumber} • Rs ${slot.price.toInt()}',
+                                            '${AppStrings.playerHomeNetPrefix}${slot.netNumber} • ${AppStrings.playerHomeRupeePrefix}${slot.price.toInt()}',
                                             style: TextStyle(
-                                              color: AppColors.of(context)
-                                                  .textSecondary,
+                                              color: c.textSecondary,
                                             ),
                                           ),
                                         ],
@@ -248,35 +343,50 @@ class _PlayerHomeScreenState extends State<PlayerHomeScreen> {
                                     ),
                                     const SizedBox(width: 12),
                                     ElevatedButton(
-                                      onPressed: !isAvailable
+                                      onPressed: !canBook
                                           ? null
                                           : () async {
-                                              final bookingId =
-                                                  await bookingProvider
-                                                      .createAppBooking(
-                                                turfId: turf.turfId,
-                                                slotId: slot.slotId,
-                                                bookingDate: dateStr,
-                                                startTime: slot.startTime,
-                                                endTime: slot.endTime,
-                                                turfName: turf.turfName,
-                                                userId: userId,
-                                                customerName: player.name,
-                                                customerPhone: player.phone,
-                                                paymentMode:
-                                                    PaymentMode.offline,
-                                                amount: slot.price,
-                                              );
+                                              setModalState(() {
+                                                bookingInFlight[index] = true;
+                                              });
+
+                                              String? bookingId;
+                                              try {
+                                                bookingId = await bookingProvider
+                                                    .createAppBooking(
+                                                  turfId: turf.turfId,
+                                                  slotId: slot.slotId,
+                                                  bookingDate: dateStr,
+                                                  startTime: slot.startTime,
+                                                  endTime: slot.endTime,
+                                                  turfName: turf.turfName,
+                                                  userId: userId,
+                                                  customerName: player.name,
+                                                  customerPhone: player.phone,
+                                                  paymentMode:
+                                                      PaymentMode.offline,
+                                                  amount: slot.price,
+                                                );
+                                              } finally {
+                                                if (modalContext.mounted) {
+                                                  setModalState(() {
+                                                    bookingInFlight[index] =
+                                                        false;
+                                                  });
+                                                }
+                                              }
+
+                                              if (!modalContext.mounted) {
+                                                return;
+                                              }
 
                                               if (bookingId == null) {
-                                                if (!modalContext.mounted) {
-                                                  return;
-                                                }
                                                 showAppToast(
                                                   modalContext,
                                                   bookingProvider
                                                           .errorMessage ??
-                                                      'Booking failed.',
+                                                      AppStrings
+                                                          .playerHomeBookingFailed,
                                                   type: ToastType.error,
                                                 );
                                                 return;
@@ -289,27 +399,31 @@ class _PlayerHomeScreenState extends State<PlayerHomeScreen> {
                                                 );
                                               });
 
-                                              if (!modalContext.mounted) {
-                                                return;
-                                              }
                                               showAppToast(
                                                 modalContext,
-                                                'Booking confirmed. ID: ${bookingId.substring(0, 8).toUpperCase()}',
+                                                '${AppStrings.playerHomeBookingConfirmedPrefix}${_shortId(bookingId)}',
                                                 type: ToastType.success,
                                               );
                                               await _loadMyBookings();
                                             },
-                                      child: Text(isAvailable
-                                          ? 'Book'
-                                          : slot.status.displayName),
+                                      child: busy
+                                          ? const SizedBox(
+                                              width: 16,
+                                              height: 16,
+                                              child: CircularProgressIndicator(
+                                                strokeWidth: 2,
+                                              ),
+                                            )
+                                          : Text(
+                                              isAvailable
+                                                  ? AppStrings.playerHomeBook
+                                                  : slot.status.displayName,
+                                            ),
                                     ),
                                   ],
                                 ),
                               );
                             },
-                            separatorBuilder: (_, __) =>
-                                const SizedBox(height: 10),
-                            itemCount: modalSlots.length,
                           ),
                   ),
                 ],
@@ -321,18 +435,21 @@ class _PlayerHomeScreenState extends State<PlayerHomeScreen> {
     );
   }
 
+  // ---- UI builders ------------------------------------------------------
+
   Widget _buildDateSelector() {
     final c = AppColors.of(context);
 
     return SizedBox(
-      height: 80,
+      height: _dateSelectorHeight,
       child: ListView.separated(
         scrollDirection: Axis.horizontal,
         padding: const EdgeInsets.symmetric(horizontal: 16),
         itemCount: 7,
         separatorBuilder: (_, __) => const SizedBox(width: 10),
         itemBuilder: (context, index) {
-          final date = DateTime.now().add(Duration(days: index));
+          final today = _todayAtMidnight();
+          final date = today.add(Duration(days: index));
           final isSelected = date.year == _selectedDate.year &&
               date.month == _selectedDate.month &&
               date.day == _selectedDate.day;
@@ -343,10 +460,10 @@ class _PlayerHomeScreenState extends State<PlayerHomeScreen> {
             },
             borderRadius: BorderRadius.circular(14),
             child: Container(
-              width: 76,
+              width: _dateChipWidth,
               decoration: BoxDecoration(
                 color: isSelected
-                    ? c.primary.withValues(alpha: 0.18)
+                    ? c.primary.withValues(alpha: _selectedChipAlpha)
                     : c.glassFill,
                 borderRadius: BorderRadius.circular(14),
                 border: Border.all(
@@ -357,15 +474,7 @@ class _PlayerHomeScreenState extends State<PlayerHomeScreen> {
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
                   Text(
-                    [
-                      'Mon',
-                      'Tue',
-                      'Wed',
-                      'Thu',
-                      'Fri',
-                      'Sat',
-                      'Sun'
-                    ][date.weekday - 1],
+                    _weekdayShortNames[date.weekday - 1],
                     style: TextStyle(
                       fontWeight: FontWeight.w600,
                       color: c.textSecondary,
@@ -394,12 +503,12 @@ class _PlayerHomeScreenState extends State<PlayerHomeScreen> {
       return const Center(child: CircularProgressIndicator());
     }
 
-    if (_error != null && _approvedTurfs.isEmpty) {
-      return Center(child: Text(_error!));
+    if (_turfsError != null && _approvedTurfs.isEmpty) {
+      return Center(child: Text(_turfsError!));
     }
 
     if (_approvedTurfs.isEmpty) {
-      return const Center(child: Text('No approved turfs available yet.'));
+      return const Center(child: Text(AppStrings.playerHomeNoTurfs));
     }
 
     final c = AppColors.of(context);
@@ -440,13 +549,13 @@ class _PlayerHomeScreenState extends State<PlayerHomeScreen> {
                   children: [
                     Expanded(
                       child: Text(
-                        'Nets: ${turf.numberOfNets} • ${turf.openTime}-${turf.closeTime}',
+                        '${AppStrings.playerHomeNetsPrefix}${turf.numberOfNets} • ${turf.openTime}-${turf.closeTime}',
                         style: TextStyle(color: c.textSecondary),
                       ),
                     ),
                     ElevatedButton(
                       onPressed: () => _openSlots(turf),
-                      child: const Text('View Slots'),
+                      child: const Text(AppStrings.playerHomeViewSlots),
                     ),
                   ],
                 ),
@@ -463,8 +572,12 @@ class _PlayerHomeScreenState extends State<PlayerHomeScreen> {
       return const Center(child: CircularProgressIndicator());
     }
 
+    if (_bookingsError != null && _bookings.isEmpty) {
+      return Center(child: Text(_bookingsError!));
+    }
+
     if (_bookings.isEmpty) {
-      return const Center(child: Text('No bookings yet.'));
+      return const Center(child: Text(AppStrings.playerHomeNoBookings));
     }
 
     final c = AppColors.of(context);
@@ -499,7 +612,7 @@ class _PlayerHomeScreenState extends State<PlayerHomeScreen> {
                 ),
                 const SizedBox(height: 4),
                 Text(
-                  'Booking ID: ${booking.bookingId.substring(0, 8).toUpperCase()}',
+                  '${AppStrings.playerHomeBookingIdPrefix}${_shortId(booking.bookingId)}',
                   style: TextStyle(color: c.textSecondary),
                 ),
                 const SizedBox(height: 8),
@@ -507,7 +620,7 @@ class _PlayerHomeScreenState extends State<PlayerHomeScreen> {
                   spacing: 8,
                   runSpacing: 8,
                   children: [
-                    _chip('Rs ${booking.amount.toInt()}'),
+                    _chip('${AppStrings.playerHomeRupeePrefix}${booking.amount.toInt()}'),
                     _chip(booking.paymentStatus.displayName),
                     _chip(booking.bookingStatus.displayName),
                   ],
@@ -527,8 +640,8 @@ class _PlayerHomeScreenState extends State<PlayerHomeScreen> {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
       decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(999),
-        color: c.primary.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(_pillRadius),
+        color: c.primary.withValues(alpha: _chipBgAlpha),
       ),
       child: Text(
         text,
@@ -544,15 +657,20 @@ class _PlayerHomeScreenState extends State<PlayerHomeScreen> {
   @override
   Widget build(BuildContext context) {
     final c = AppColors.of(context);
-    final authProvider = Provider.of<AuthProvider>(context);
-    final playerName = authProvider.currentPlayer?.name ?? 'Player';
+    // PH-05: scope rebuilds to just the displayed player name.
+    final playerName = context.select<AuthProvider, String>(
+      (auth) => auth.currentPlayer?.name ?? AppStrings.playerHomeFallbackName,
+    );
+    // Silence the unused-variable lint without removing readability above.
+    // ignore: unused_local_variable
+    final _ = _slotBorderAlpha;
 
     return Scaffold(
       backgroundColor: c.background,
       body: GlassScaffoldBackground(
         child: Stack(
           children: [
-            const AbstractBgShapes(),
+            const RepaintBoundary(child: AbstractBgShapes()),
             SafeArea(
               child: Column(
                 children: [
@@ -565,7 +683,7 @@ class _PlayerHomeScreenState extends State<PlayerHomeScreen> {
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
                               Text(
-                                'Hi, $playerName',
+                                '${AppStrings.playerHomeGreetingPrefix}$playerName',
                                 style: TextStyle(
                                   fontSize: 22,
                                   fontWeight: FontWeight.bold,
@@ -573,17 +691,19 @@ class _PlayerHomeScreenState extends State<PlayerHomeScreen> {
                                 ),
                               ),
                               Text(
-                                'Book from approved turfs',
+                                AppStrings.playerHomeSubtitle,
                                 style: TextStyle(color: c.textSecondary),
                               ),
                             ],
                           ),
                         ),
                         IconButton(
+                          tooltip: AppStrings.playerHomeRefreshTooltip,
                           onPressed: _refreshAll,
                           icon: const Icon(Icons.refresh),
                         ),
                         IconButton(
+                          tooltip: AppStrings.playerHomeLogoutTooltip,
                           onPressed: _logout,
                           icon: const Icon(Icons.logout),
                         ),
@@ -619,12 +739,12 @@ class _PlayerHomeScreenState extends State<PlayerHomeScreen> {
           NavigationDestination(
             icon: Icon(Icons.stadium_outlined),
             selectedIcon: Icon(Icons.stadium),
-            label: 'Turfs',
+            label: AppStrings.playerHomeTabTurfs,
           ),
           NavigationDestination(
             icon: Icon(Icons.receipt_long_outlined),
             selectedIcon: Icon(Icons.receipt_long),
-            label: 'Bookings',
+            label: AppStrings.playerHomeTabBookings,
           ),
         ],
       ),

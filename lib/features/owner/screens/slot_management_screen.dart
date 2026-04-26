@@ -4,6 +4,10 @@ import 'package:table_calendar/table_calendar.dart';
 import '../../../config/colors.dart';
 import '../../../config/glass_widgets.dart';
 import '../../../core/constants/enums.dart';
+import '../../../core/constants/strings.dart';
+import '../../../core/utils/app_toast.dart';
+import '../../../core/utils/price_calculator.dart';
+import '../../../core/utils/slot_business_rules.dart';
 import '../../../data/models/slot_model.dart';
 import '../../../data/models/turf_model.dart';
 import '../../../app/routes.dart';
@@ -11,8 +15,33 @@ import '../providers/turf_provider.dart';
 import '../providers/slot_provider.dart';
 import '../../auth/providers/auth_provider.dart';
 
-/// Slot Management Screen
-/// Allows owner to view and manage slots for a specific date
+/// Slot Management Screen.
+///
+/// Allows the owner of a specific turf to view and manage 24-hour slots
+/// for a chosen date.
+///
+/// Responsibilities:
+///   * Render a calendar bounded to today … today+1y, with day-level selection.
+///   * Per-net filtering when the turf has more than one net.
+///   * Period (Morning / Afternoon / Evening / Night) toggles that bulk
+///     block or unblock all available slots in the period that fall within
+///     the turf’s operating hours. Past slots and manually-blocked slots are
+///     never touched by bulk operations.
+///   * Per-slot block/unblock via a bottom sheet.
+///
+/// Lifecycle / refresh:
+///   * `initState` schedules a `_refreshAndLoadSlots()` call after the first
+///     frame; this fetches the latest turf settings and then regenerates the
+///     slot grid for the selected date.
+///   * `RouteAware.didPopNext` re-runs the same refresh when returning from
+///     a child route (e.g. the booking sheet).
+///   * Both entry points are guarded by `_isRefreshing` to prevent stacked
+///     network calls.
+///
+/// Security:
+///   * The `widget.turfId` is validated against the signed-in owner via
+///     `turf.ownerId == authProvider.currentUserId`. Mismatch renders a
+///     dedicated unauthorized scaffold.
 class SlotManagementScreen extends StatefulWidget {
   final String turfId;
 
@@ -27,6 +56,8 @@ class _SlotManagementScreenState extends State<SlotManagementScreen>
   DateTime _selectedDate = DateTime.now();
   CalendarFormat _calendarFormat = CalendarFormat.week;
   int _selectedNetNumber = 1;
+  bool _isRefreshing = false;
+  bool _isApplyingBulk = false;
 
   DateTime _dateOnly(DateTime value) {
     return DateTime(value.year, value.month, value.day);
@@ -60,8 +91,9 @@ class _SlotManagementScreenState extends State<SlotManagementScreen>
   void initState() {
     super.initState();
     _selectedDate = _minSelectableDate;
-    // Always refresh turf data first, then load slots
-    _refreshAndLoadSlots();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _refreshAndLoadSlots();
+    });
   }
 
   @override
@@ -81,45 +113,56 @@ class _SlotManagementScreenState extends State<SlotManagementScreen>
 
   @override
   void didPopNext() {
-    debugPrint('SlotManagement: didPopNext - refreshing data');
     _refreshAndLoadSlots();
   }
 
-  /// Refresh turf data from database, then load/generate slots
+  /// Refresh turf data from database, then load/regenerate slots.
+  /// SM-02/SM-14: try/catch around network call; `_isRefreshing` debounce
+  /// guards against stacked invocations from initState + didPopNext.
   Future<void> _refreshAndLoadSlots() async {
+    if (_isRefreshing) return;
+    _isRefreshing = true;
     final turfProvider = Provider.of<TurfProvider>(context, listen: false);
     final authProvider = Provider.of<AuthProvider>(context, listen: false);
-
-    // First refresh turf data to get latest settings
-    if (authProvider.currentUserId != null) {
-      await turfProvider.refreshTurfs(authProvider.currentUserId!);
+    try {
+      final ownerId = authProvider.currentUserId;
+      if (ownerId != null) {
+        await turfProvider.refreshTurfs(ownerId);
+      }
+      if (!mounted) return;
+      await _loadSlots(forceRegenerate: true);
+    } catch (_) {
+      if (mounted) {
+        showAppToast(context, AppStrings.slotMgmtRefreshFailed,
+            type: ToastType.error);
+      }
+    } finally {
+      _isRefreshing = false;
     }
-
-    if (!mounted) return;
-    // Then load slots with updated turf data
-    _loadSlots(forceRegenerate: true);
   }
 
-  void _loadSlots({bool forceRegenerate = false}) {
+  /// SM-03: load slots with awaited error handling and toast feedback.
+  Future<void> _loadSlots({bool forceRegenerate = false}) async {
     final slotProvider = Provider.of<SlotProvider>(context, listen: false);
     final turfProvider = Provider.of<TurfProvider>(context, listen: false);
     final turf = turfProvider.getTurfById(widget.turfId);
-
-    if (turf != null) {
-      final dateStr = _selectedDate.toIso8601String().split('T')[0];
-
-      // Generate slots (force regenerate deletes + recreates for a clean 24-hour set)
-      slotProvider
-          .generateSlots(
+    if (turf == null) return;
+    final dateStr = _selectedDate.toIso8601String().split('T')[0];
+    try {
+      await slotProvider.generateSlots(
         turf: turf,
         date: dateStr,
         forceRegenerate: forceRegenerate,
-      )
-          .then((_) async {
-        if (!mounted) return;
-        await slotProvider.loadSlots(widget.turfId, dateStr);
-        if (mounted) _updateToggleStatesFromSlots();
-      });
+      );
+      if (!mounted) return;
+      await slotProvider.loadSlots(widget.turfId, dateStr);
+      if (!mounted) return;
+      _updateToggleStatesFromSlots();
+    } catch (_) {
+      if (mounted) {
+        showAppToast(context, AppStrings.slotMgmtLoadFailed,
+            type: ToastType.error);
+      }
     }
   }
 
@@ -138,29 +181,19 @@ class _SlotManagementScreenState extends State<SlotManagementScreen>
     return now.isAfter(slotDateTime);
   }
 
-  /// Check if a slot falls within the turf's operational hours
-  bool _isWithinOperationalHours(SlotModel slot) {
-    final turfProvider = Provider.of<TurfProvider>(context, listen: false);
-    final turf = turfProvider.getTurfById(widget.turfId);
-    if (turf == null) return true; // fallback: treat as operational
-
+  /// Check if a slot falls within the turf's operational hours.
+  /// SM-12: caller hoists the turf reference; we do not refetch via Provider.
+  bool _isWithinOperationalHours(SlotModel slot, TurfModel turf) {
     final openHour = int.parse(turf.openTime.split(':')[0]);
     final openMinute = int.parse(turf.openTime.split(':')[1]);
     final closeHour = int.parse(turf.closeTime.split(':')[0]);
     final closeMinute = int.parse(turf.closeTime.split(':')[1]);
 
     final openMinutes = openHour * 60 + openMinute;
-    final closeMinutesRaw = closeHour * 60 + closeMinute;
-    int closeMinutes;
-    if (closeMinutesRaw == 0) {
-      closeMinutes = 1440;
-    } else if (closeMinutesRaw == openMinutes) {
-      closeMinutes = openMinutes;
-    } else if (closeMinutesRaw < openMinutes) {
-      closeMinutes = closeMinutesRaw + 1440;
-    } else {
-      closeMinutes = closeMinutesRaw;
-    }
+    final closeMinutes = SlotBusinessRules.normalizeCloseMinutes(
+      openMinutes: openMinutes,
+      closeMinutesRaw: closeHour * 60 + closeMinute,
+    );
 
     final startParts = slot.startTime.split(':');
     final endParts = slot.endTime.split(':');
@@ -169,15 +202,12 @@ class _SlotManagementScreenState extends State<SlotManagementScreen>
     final slotEndMin = int.parse(endParts[0]) * 60 + int.parse(endParts[1]);
     final slotEndAdj = slotEndMin == 0 ? 1440 : slotEndMin;
 
-    if (closeMinutes == openMinutes) return false;
-    if (closeMinutes <= 1440) {
-      return slotStartMin >= openMinutes && slotEndAdj <= closeMinutes;
-    } else {
-      final inDayPortion = slotStartMin >= openMinutes && slotEndAdj <= 1440;
-      final inNightPortion = slotStartMin < (closeMinutes - 1440) &&
-          slotEndAdj <= (closeMinutes - 1440);
-      return inDayPortion || inNightPortion;
-    }
+    return SlotBusinessRules.isWithinOperatingHours(
+      openMinutes: openMinutes,
+      closeMinutes: closeMinutes,
+      slotStartMin: slotStartMin,
+      slotEndMin: slotEndAdj,
+    );
   }
 
   /// Get slots filtered by the currently selected net number
@@ -187,6 +217,9 @@ class _SlotManagementScreenState extends State<SlotManagementScreen>
 
   void _updateToggleStatesFromSlots() {
     final slotProvider = Provider.of<SlotProvider>(context, listen: false);
+    final turfProvider = Provider.of<TurfProvider>(context, listen: false);
+    final turf = turfProvider.getTurfById(widget.turfId);
+    if (turf == null) return;
 
     if (slotProvider.slots.isEmpty) return;
 
@@ -196,38 +229,30 @@ class _SlotManagementScreenState extends State<SlotManagementScreen>
     // Count period-closed slots that are WITHIN operational hours.
     // Only these affect toggle state. Auto-blocked "Closed" slots
     // (outside operating hours) and manually-blocked slots do NOT affect toggles.
-    int morningPeriodClosed = 0;
-    int afternoonPeriodClosed = 0;
-    int eveningPeriodClosed = 0;
-    int nightPeriodClosed = 0;
+    final closedCounts = <SlotPeriod, int>{
+      SlotPeriod.morning: 0,
+      SlotPeriod.afternoon: 0,
+      SlotPeriod.evening: 0,
+      SlotPeriod.night: 0,
+    };
 
     for (final slot in netSlots) {
       final hour = int.tryParse(slot.startTime.split(':')[0]) ?? 0;
+      final period = SlotBusinessRules.periodForHour(hour);
       final isPeriodClosed = slot.status == SlotStatus.blocked &&
-          (slot.blockReason ?? '').contains('Period closed') &&
-          _isWithinOperationalHours(slot);
-
-      if (hour >= 6 && hour < 12) {
-        if (isPeriodClosed) morningPeriodClosed++;
-      } else if (hour >= 12 && hour < 18) {
-        if (isPeriodClosed) afternoonPeriodClosed++;
-      } else if (hour >= 18 && hour < 24) {
-        if (isPeriodClosed) eveningPeriodClosed++;
-      } else {
-        if (isPeriodClosed) nightPeriodClosed++;
+          SlotBusinessRules.isPeriodCloseReason(slot.blockReason) &&
+          _isWithinOperationalHours(slot, turf);
+      if (isPeriodClosed) {
+        closedCounts[period] = (closedCounts[period] ?? 0) + 1;
       }
     }
 
+    if (!mounted) return;
     setState(() {
-      // Period toggle is OPEN unless owner explicitly period-closed
-      // operational-hour slots in it. Slots outside operating hours
-      // and manually blocked slots don't affect toggles.
-      _isMorningOpen = morningPeriodClosed == 0;
-      _isAfternoonOpen = afternoonPeriodClosed == 0;
-      _isEveningOpen = eveningPeriodClosed == 0;
-      _isNightOpen = nightPeriodClosed == 0;
-
-      // Day is open if any period is open
+      _isMorningOpen = (closedCounts[SlotPeriod.morning] ?? 0) == 0;
+      _isAfternoonOpen = (closedCounts[SlotPeriod.afternoon] ?? 0) == 0;
+      _isEveningOpen = (closedCounts[SlotPeriod.evening] ?? 0) == 0;
+      _isNightOpen = (closedCounts[SlotPeriod.night] ?? 0) == 0;
       _isDayOpen =
           _isMorningOpen || _isAfternoonOpen || _isEveningOpen || _isNightOpen;
     });
@@ -250,21 +275,47 @@ class _SlotManagementScreenState extends State<SlotManagementScreen>
   @override
   Widget build(BuildContext context) {
     final c = AppColors.of(context);
-    return Consumer<TurfProvider>(
-      builder: (context, turfProvider, _) {
-        final turf = turfProvider.getTurfById(widget.turfId);
-
+    final ownerId =
+        Provider.of<AuthProvider>(context, listen: false).currentUserId;
+    return Selector<TurfProvider, TurfModel?>(
+      selector: (_, p) => p.getTurfById(widget.turfId),
+      builder: (context, turf, _) {
         if (turf == null) {
           return Scaffold(
             appBar: AppBar(
-                title: Text('Slot Management',
-                    style: TextStyle(color: c.textPrimary)),
-                backgroundColor: c.background,
-                elevation: 0),
+              title: Text(AppStrings.slotMgmtTitle,
+                  style: TextStyle(color: c.textPrimary)),
+              backgroundColor: c.background,
+              elevation: 0,
+            ),
             backgroundColor: c.background,
             body: Center(
-                child: Text('Turf not found',
-                    style: TextStyle(color: c.textPrimary))),
+              child: Text(AppStrings.slotMgmtTurfNotFound,
+                  style: TextStyle(color: c.textPrimary)),
+            ),
+          );
+        }
+
+        // SM-01 ownership guard — only the turf owner may manage slots.
+        if (ownerId == null || turf.ownerId != ownerId) {
+          return Scaffold(
+            appBar: AppBar(
+              title: Text(AppStrings.slotMgmtTitle,
+                  style: TextStyle(color: c.textPrimary)),
+              backgroundColor: c.background,
+              elevation: 0,
+            ),
+            backgroundColor: c.background,
+            body: Center(
+              child: Padding(
+                padding: const EdgeInsets.all(24),
+                child: Text(
+                  AppStrings.slotMgmtNotAuthorized,
+                  textAlign: TextAlign.center,
+                  style: TextStyle(color: c.textPrimary),
+                ),
+              ),
+            ),
           );
         }
 
@@ -293,7 +344,7 @@ class _SlotManagementScreenState extends State<SlotManagementScreen>
 
                         // Slots Grid — grouped by period, filtered by net
                         Expanded(
-                          child: _buildSlotsGrid(),
+                          child: _buildSlotsGrid(turf),
                         ),
                       ],
                     ),
@@ -350,7 +401,7 @@ class _SlotManagementScreenState extends State<SlotManagementScreen>
           Icon(Icons.grid_view, size: 16, color: c.textSecondary),
           const SizedBox(width: 8),
           Text(
-            'Net',
+            AppStrings.slotMgmtNetLabel,
             style: TextStyle(
               fontSize: 13,
               fontWeight: FontWeight.w600,
@@ -363,21 +414,24 @@ class _SlotManagementScreenState extends State<SlotManagementScreen>
             final isSelected = _selectedNetNumber == net;
             return Padding(
               padding: const EdgeInsets.only(right: 8),
-              child: ChoiceChip(
-                label: Text('Net $net'),
-                selected: isSelected,
-                onSelected: (_) {
-                  setState(() => _selectedNetNumber = net);
-                  _updateToggleStatesFromSlots();
-                },
-                selectedColor: c.primary,
-                labelStyle: TextStyle(
-                  color: isSelected ? c.onPrimary : c.textPrimary,
-                  fontSize: 12,
-                  fontWeight: FontWeight.w600,
+              child: Tooltip(
+                message: '${AppStrings.slotMgmtNetTooltipPrefix}$net',
+                child: ChoiceChip(
+                  label: Text('${AppStrings.slotMgmtNetLabel} $net'),
+                  selected: isSelected,
+                  onSelected: (_) {
+                    setState(() => _selectedNetNumber = net);
+                    _updateToggleStatesFromSlots();
+                  },
+                  selectedColor: c.primary,
+                  labelStyle: TextStyle(
+                    color: isSelected ? c.onPrimary : c.textPrimary,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                  ),
+                  padding: const EdgeInsets.symmetric(horizontal: 4),
+                  visualDensity: VisualDensity.compact,
                 ),
-                padding: const EdgeInsets.symmetric(horizontal: 4),
-                visualDensity: VisualDensity.compact,
               ),
             );
           }),
@@ -394,11 +448,11 @@ class _SlotManagementScreenState extends State<SlotManagementScreen>
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceAround,
         children: [
-          _buildLegendItem(c.success, 'Available'),
-          _buildLegendItem(c.warning, 'Reserved'),
-          _buildLegendItem(c.primary, 'Booked'),
-          _buildLegendItem(c.error, 'Blocked'),
-          _buildLegendItem(c.textDisabled, 'Closed'),
+          _buildLegendItem(c.success, AppStrings.slotMgmtLegendAvailable),
+          _buildLegendItem(c.warning, AppStrings.slotMgmtLegendReserved),
+          _buildLegendItem(c.primary, AppStrings.slotMgmtLegendBooked),
+          _buildLegendItem(c.error, AppStrings.slotMgmtLegendBlocked),
+          _buildLegendItem(c.textDisabled, AppStrings.slotMgmtLegendClosed),
         ],
       ),
     );
@@ -425,7 +479,7 @@ class _SlotManagementScreenState extends State<SlotManagementScreen>
                   ),
                   const SizedBox(width: 8),
                   Text(
-                    'Day Status',
+                    AppStrings.slotMgmtDayStatus,
                     style: TextStyle(
                       fontSize: 14,
                       fontWeight: FontWeight.bold,
@@ -446,7 +500,9 @@ class _SlotManagementScreenState extends State<SlotManagementScreen>
                       borderRadius: BorderRadius.circular(12),
                     ),
                     child: Text(
-                      _isDayOpen ? 'OPEN' : 'CLOSED',
+                      _isDayOpen
+                          ? AppStrings.slotMgmtOpen
+                          : AppStrings.slotMgmtClosed,
                       style: TextStyle(
                         fontSize: 11,
                         color: _isDayOpen ? c.success : c.error,
@@ -456,7 +512,8 @@ class _SlotManagementScreenState extends State<SlotManagementScreen>
                   ),
                   Switch(
                     value: _isDayOpen,
-                    onChanged: (value) => _toggleDay(value),
+                    onChanged:
+                        _isApplyingBulk ? null : (value) => _toggleDay(value),
                     activeColor: c.success,
                   ),
                 ],
@@ -472,7 +529,7 @@ class _SlotManagementScreenState extends State<SlotManagementScreen>
               Icon(Icons.access_time, size: 16, color: c.textSecondary),
               const SizedBox(width: 4),
               Text(
-                'Time Periods',
+                AppStrings.slotMgmtTimePeriods,
                 style: TextStyle(
                   fontSize: 12,
                   fontWeight: FontWeight.w500,
@@ -485,24 +542,36 @@ class _SlotManagementScreenState extends State<SlotManagementScreen>
           Row(
             children: [
               Expanded(
-                  child: _buildPeriodToggle('Morning', '6AM-12PM',
-                      _isMorningOpen, (v) => _togglePeriod('morning', v))),
+                  child: _buildPeriodToggle(
+                      AppStrings.slotMgmtPeriodMorning,
+                      AppStrings.slotMgmtRangeMorning,
+                      _isMorningOpen,
+                      (v) => _togglePeriod(SlotPeriod.morning, v))),
               const SizedBox(width: 8),
               Expanded(
-                  child: _buildPeriodToggle('Afternoon', '12PM-6PM',
-                      _isAfternoonOpen, (v) => _togglePeriod('afternoon', v))),
+                  child: _buildPeriodToggle(
+                      AppStrings.slotMgmtPeriodAfternoon,
+                      AppStrings.slotMgmtRangeAfternoon,
+                      _isAfternoonOpen,
+                      (v) => _togglePeriod(SlotPeriod.afternoon, v))),
             ],
           ),
           const SizedBox(height: 6),
           Row(
             children: [
               Expanded(
-                  child: _buildPeriodToggle('Evening', '6PM-12AM',
-                      _isEveningOpen, (v) => _togglePeriod('evening', v))),
+                  child: _buildPeriodToggle(
+                      AppStrings.slotMgmtPeriodEvening,
+                      AppStrings.slotMgmtRangeEvening,
+                      _isEveningOpen,
+                      (v) => _togglePeriod(SlotPeriod.evening, v))),
               const SizedBox(width: 8),
               Expanded(
-                  child: _buildPeriodToggle('Night', '12AM-6AM', _isNightOpen,
-                      (v) => _togglePeriod('night', v))),
+                  child: _buildPeriodToggle(
+                      AppStrings.slotMgmtPeriodNight,
+                      AppStrings.slotMgmtRangeNight,
+                      _isNightOpen,
+                      (v) => _togglePeriod(SlotPeriod.night, v))),
             ],
           ),
           const SizedBox(height: 4),
@@ -514,81 +583,87 @@ class _SlotManagementScreenState extends State<SlotManagementScreen>
   Widget _buildPeriodToggle(
       String label, String timeRange, bool isOpen, Function(bool) onChanged) {
     final c = AppColors.of(context);
-    return GestureDetector(
-      onTap: () => onChanged(!isOpen),
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-        decoration: BoxDecoration(
-          color: isOpen
-              ? c.success.withValues(alpha: 0.1)
-              : c.textSecondary.withValues(alpha: 0.1),
-          borderRadius: BorderRadius.circular(8),
-          border: Border.all(
+    return Semantics(
+      label:
+          '$label ${isOpen ? AppStrings.slotMgmtOpen : AppStrings.slotMgmtClosed}',
+      button: true,
+      toggled: isOpen,
+      child: GestureDetector(
+        onTap: _isApplyingBulk ? null : () => onChanged(!isOpen),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+          decoration: BoxDecoration(
             color: isOpen
-                ? c.success.withValues(alpha: 0.3)
-                : c.textSecondary.withValues(alpha: 0.3),
-          ),
-        ),
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          children: [
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    label,
-                    style: TextStyle(
-                      fontSize: 12,
-                      fontWeight: FontWeight.w600,
-                      color: isOpen ? c.textPrimary : c.textSecondary,
-                    ),
-                  ),
-                  Text(
-                    timeRange,
-                    style: TextStyle(
-                      fontSize: 10,
-                      color: isOpen
-                          ? c.textSecondary
-                          : c.textSecondary.withValues(alpha: 0.5),
-                    ),
-                  ),
-                ],
-              ),
+                ? c.success.withValues(alpha: 0.1)
+                : c.textSecondary.withValues(alpha: 0.1),
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(
+              color: isOpen
+                  ? c.success.withValues(alpha: 0.3)
+                  : c.textSecondary.withValues(alpha: 0.3),
             ),
-            Container(
-              width: 36,
-              height: 20,
-              decoration: BoxDecoration(
-                color: isOpen ? c.success : c.textSecondary,
-                borderRadius: BorderRadius.circular(10),
-              ),
-              child: Stack(
-                children: [
-                  AnimatedPositioned(
-                    duration: const Duration(milliseconds: 150),
-                    left: isOpen ? 18 : 2,
-                    top: 2,
-                    child: Container(
-                      width: 16,
-                      height: 16,
-                      decoration: BoxDecoration(
-                        color: c.surface,
-                        shape: BoxShape.circle,
+          ),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      label,
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                        color: isOpen ? c.textPrimary : c.textSecondary,
                       ),
                     ),
-                  ),
-                ],
+                    Text(
+                      timeRange,
+                      style: TextStyle(
+                        fontSize: 10,
+                        color: isOpen
+                            ? c.textSecondary
+                            : c.textSecondary.withValues(alpha: 0.5),
+                      ),
+                    ),
+                  ],
+                ),
               ),
-            ),
-          ],
+              Container(
+                width: 36,
+                height: 20,
+                decoration: BoxDecoration(
+                  color: isOpen ? c.success : c.textSecondary,
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: Stack(
+                  children: [
+                    AnimatedPositioned(
+                      duration: const Duration(milliseconds: 150),
+                      left: isOpen ? 18 : 2,
+                      top: 2,
+                      child: Container(
+                        width: 16,
+                        height: 16,
+                        decoration: BoxDecoration(
+                          color: c.surface,
+                          shape: BoxShape.circle,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );
   }
 
   // U10: Count slots in a given period that would be affected by a bulk close.
-  int _countAffectedSlots(String? period) {
+  int _countAffectedSlots(SlotPeriod? period) {
     final slotProvider = Provider.of<SlotProvider>(context, listen: false);
     final netSlots = _getSlotsForSelectedNet(slotProvider.slots);
     int count = 0;
@@ -596,16 +671,7 @@ class _SlotManagementScreenState extends State<SlotManagementScreen>
       if (_isSlotInPast(slot)) continue;
       if (slot.status != SlotStatus.available) continue;
       final hour = int.tryParse(slot.startTime.split(':')[0]) ?? 0;
-      String slotPeriod;
-      if (hour >= 6 && hour < 12) {
-        slotPeriod = 'morning';
-      } else if (hour >= 12 && hour < 18) {
-        slotPeriod = 'afternoon';
-      } else if (hour >= 18 && hour < 24) {
-        slotPeriod = 'evening';
-      } else {
-        slotPeriod = 'night';
-      }
+      final slotPeriod = SlotBusinessRules.periodForHour(hour);
       if (period == null || period == slotPeriod) count++;
     }
     return count;
@@ -615,20 +681,18 @@ class _SlotManagementScreenState extends State<SlotManagementScreen>
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (dialogContext) => AlertDialog(
-        title: Text('Close $label?'),
-        content: Text(
-          count == 0
-              ? 'No open slots will change. Continue anyway?'
-              : 'This will close $count open slot${count == 1 ? '' : 's'} for the selected day. Existing bookings are not affected.',
+        title: Text(
+          '${AppStrings.slotMgmtConfirmCloseTitlePrefix}$label${AppStrings.slotMgmtConfirmCloseTitleSuffix}',
         ),
+        content: Text(slotMgmtConfirmCloseBody(count)),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(dialogContext, false),
-            child: const Text('Cancel'),
+            child: const Text(AppStrings.slotMgmtConfirmCloseCancel),
           ),
           ElevatedButton(
             onPressed: () => Navigator.pop(dialogContext, true),
-            child: const Text('Close slots'),
+            child: const Text(AppStrings.slotMgmtConfirmCloseAction),
           ),
         ],
       ),
@@ -637,22 +701,23 @@ class _SlotManagementScreenState extends State<SlotManagementScreen>
   }
 
   void _toggleDay(bool isOpen) async {
+    if (_isApplyingBulk) return;
     // U10: Confirm before bulk-closing the entire day.
     if (!isOpen) {
       final affected = _countAffectedSlots(null);
-      final ok = await _confirmBulkClose('the whole day', affected);
+      final ok = await _confirmBulkClose(
+          AppStrings.slotMgmtConfirmCloseDayLabel, affected);
       if (!ok) return;
     }
+    if (!mounted) return;
     setState(() {
       _isDayOpen = isOpen;
       if (!isOpen) {
-        // Close all periods when day is closed
         _isMorningOpen = false;
         _isAfternoonOpen = false;
         _isEveningOpen = false;
         _isNightOpen = false;
       } else {
-        // Open all periods when day is opened
         _isMorningOpen = true;
         _isAfternoonOpen = true;
         _isEveningOpen = true;
@@ -662,89 +727,134 @@ class _SlotManagementScreenState extends State<SlotManagementScreen>
     await _applyPeriodChanges();
   }
 
-  void _togglePeriod(String period, bool isOpen) async {
+  void _togglePeriod(SlotPeriod period, bool isOpen) async {
+    if (_isApplyingBulk) return;
     // U10: Confirm before bulk-closing a period.
     if (!isOpen) {
       final affected = _countAffectedSlots(period);
-      final label = '${period[0].toUpperCase()}${period.substring(1)} slots';
+      final label =
+          '${_periodDisplayName(period)}${AppStrings.slotMgmtPeriodSlotsSuffix}';
       final ok = await _confirmBulkClose(label, affected);
       if (!ok) return;
     }
+    if (!mounted) return;
     setState(() {
       switch (period) {
-        case 'morning':
+        case SlotPeriod.morning:
           _isMorningOpen = isOpen;
           break;
-        case 'afternoon':
+        case SlotPeriod.afternoon:
           _isAfternoonOpen = isOpen;
           break;
-        case 'evening':
+        case SlotPeriod.evening:
           _isEveningOpen = isOpen;
           break;
-        case 'night':
+        case SlotPeriod.night:
           _isNightOpen = isOpen;
           break;
       }
-      // Check if all periods are closed, then close the day
       if (!_isMorningOpen &&
           !_isAfternoonOpen &&
           !_isEveningOpen &&
           !_isNightOpen) {
         _isDayOpen = false;
       } else if (!_isDayOpen) {
-        // If any period is opened, open the day
         _isDayOpen = true;
       }
     });
     await _applyPeriodChanges();
   }
 
+  String _periodDisplayName(SlotPeriod p) {
+    switch (p) {
+      case SlotPeriod.morning:
+        return AppStrings.slotMgmtPeriodMorning;
+      case SlotPeriod.afternoon:
+        return AppStrings.slotMgmtPeriodAfternoon;
+      case SlotPeriod.evening:
+        return AppStrings.slotMgmtPeriodEvening;
+      case SlotPeriod.night:
+        return AppStrings.slotMgmtPeriodNight;
+    }
+  }
+
+  /// SM-04/SM-05: bulk apply period state with try/catch, progress flag,
+  /// and a null-safe owner id check; failures surface a single toast.
   Future<void> _applyPeriodChanges() async {
+    if (_isApplyingBulk) return;
     final slotProvider = Provider.of<SlotProvider>(context, listen: false);
     final authProvider = Provider.of<AuthProvider>(context, listen: false);
+    final turfProvider = Provider.of<TurfProvider>(context, listen: false);
+    final turf = turfProvider.getTurfById(widget.turfId);
+    final ownerId = authProvider.currentUserId;
 
-    // Only apply to slots for the selected net
-    final netSlots = _getSlotsForSelectedNet(slotProvider.slots);
-
-    for (final slot in netSlots) {
-      // Skip past slots — cannot toggle slots whose time has passed
-      if (_isSlotInPast(slot)) continue;
-
-      final hour = int.tryParse(slot.startTime.split(':')[0]) ?? 0;
-      bool shouldBeBlocked = false;
-
-      // Determine which period this slot belongs to
-      if (hour >= 6 && hour < 12) {
-        shouldBeBlocked = !_isMorningOpen;
-      } else if (hour >= 12 && hour < 18) {
-        shouldBeBlocked = !_isAfternoonOpen;
-      } else if (hour >= 18 && hour < 24) {
-        shouldBeBlocked = !_isEveningOpen;
-      } else {
-        shouldBeBlocked = !_isNightOpen;
+    if (turf == null) return;
+    if (ownerId == null) {
+      if (mounted) {
+        showAppToast(context, AppStrings.slotMgmtSessionExpired,
+            type: ToastType.error);
       }
+      return;
+    }
 
-      // Only change status for available or blocked slots (don't touch booked/reserved)
-      if (shouldBeBlocked && slot.status == SlotStatus.available) {
-        // Period close: block ALL available slots in the period
-        await slotProvider.blockSlot(
-          slot.slotId,
-          authProvider.currentUserId!,
-          'Period closed by owner',
-        );
-      } else if (!shouldBeBlocked && slot.status == SlotStatus.blocked) {
-        // Period open: only unblock "Period closed" slots within operational hours.
-        // Leave auto-closed ("Closed") and manually-blocked slots untouched.
-        final reason = slot.blockReason ?? '';
-        if (reason.contains('Period closed') &&
-            _isWithinOperationalHours(slot)) {
-          await slotProvider.unblockSlot(slot.slotId);
+    setState(() => _isApplyingBulk = true);
+    final netSlots = _getSlotsForSelectedNet(slotProvider.slots);
+    bool hadFailure = false;
+
+    try {
+      for (final slot in netSlots) {
+        if (_isSlotInPast(slot)) continue;
+
+        final hour = int.tryParse(slot.startTime.split(':')[0]) ?? 0;
+        final period = SlotBusinessRules.periodForHour(hour);
+        bool periodOpen;
+        switch (period) {
+          case SlotPeriod.morning:
+            periodOpen = _isMorningOpen;
+            break;
+          case SlotPeriod.afternoon:
+            periodOpen = _isAfternoonOpen;
+            break;
+          case SlotPeriod.evening:
+            periodOpen = _isEveningOpen;
+            break;
+          case SlotPeriod.night:
+            periodOpen = _isNightOpen;
+            break;
         }
+        final shouldBeBlocked = !periodOpen;
+
+        try {
+          if (shouldBeBlocked && slot.status == SlotStatus.available) {
+            await slotProvider.blockSlot(
+              slot.slotId,
+              ownerId,
+              BlockReason.periodClosedByOwner,
+            );
+          } else if (!shouldBeBlocked && slot.status == SlotStatus.blocked) {
+            if (SlotBusinessRules.isPeriodCloseReason(slot.blockReason) &&
+                _isWithinOperationalHours(slot, turf)) {
+              await slotProvider.unblockSlot(slot.slotId);
+            }
+          }
+        } catch (_) {
+          hadFailure = true;
+        }
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _isApplyingBulk = false);
+      } else {
+        _isApplyingBulk = false;
       }
     }
 
-    // Reload to show updated status
-    _loadSlots();
+    if (hadFailure && mounted) {
+      showAppToast(context, AppStrings.slotMgmtBulkUpdateFailed,
+          type: ToastType.error);
+    }
+
+    await _loadSlots();
   }
 
   Widget _buildLegendItem(Color color, String label) {
@@ -771,15 +881,16 @@ class _SlotManagementScreenState extends State<SlotManagementScreen>
     );
   }
 
-  Widget _buildSlotsGrid() {
-    return Consumer<SlotProvider>(
-      builder: (context, slotProvider, _) {
-        if (slotProvider.isLoading) {
+  Widget _buildSlotsGrid(TurfModel turf) {
+    return Selector<SlotProvider, ({bool loading, List<SlotModel> slots})>(
+      selector: (_, p) => (loading: p.isLoading, slots: p.slots),
+      builder: (context, snap, _) {
+        if (snap.loading) {
           return const Center(child: CircularProgressIndicator());
         }
 
         // Filter slots by selected net
-        final netSlots = _getSlotsForSelectedNet(slotProvider.slots);
+        final netSlots = _getSlotsForSelectedNet(snap.slots);
 
         if (netSlots.isEmpty) {
           final c = AppColors.of(context);
@@ -794,7 +905,7 @@ class _SlotManagementScreenState extends State<SlotManagementScreen>
                 ),
                 const SizedBox(height: 16),
                 Text(
-                  'No slots for this date',
+                  AppStrings.slotMgmtNoSlotsForDate,
                   style: TextStyle(
                     fontSize: 16,
                     color: c.textSecondary,
@@ -805,46 +916,67 @@ class _SlotManagementScreenState extends State<SlotManagementScreen>
           );
         }
 
-        // Group slots by period
-        final morningSlots = netSlots.where((s) {
+        // Group slots by period using shared helper.
+        final morningSlots = <SlotModel>[];
+        final afternoonSlots = <SlotModel>[];
+        final eveningSlots = <SlotModel>[];
+        final nightSlots = <SlotModel>[];
+        for (final s in netSlots) {
           final h = int.tryParse(s.startTime.split(':')[0]) ?? 0;
-          return h >= 6 && h < 12;
-        }).toList();
-        final afternoonSlots = netSlots.where((s) {
-          final h = int.tryParse(s.startTime.split(':')[0]) ?? 0;
-          return h >= 12 && h < 18;
-        }).toList();
-        final eveningSlots = netSlots.where((s) {
-          final h = int.tryParse(s.startTime.split(':')[0]) ?? 0;
-          return h >= 18 && h < 24;
-        }).toList();
-        final nightSlots = netSlots.where((s) {
-          final h = int.tryParse(s.startTime.split(':')[0]) ?? 0;
-          return h >= 0 && h < 6;
-        }).toList();
+          switch (SlotBusinessRules.periodForHour(h)) {
+            case SlotPeriod.morning:
+              morningSlots.add(s);
+              break;
+            case SlotPeriod.afternoon:
+              afternoonSlots.add(s);
+              break;
+            case SlotPeriod.evening:
+              eveningSlots.add(s);
+              break;
+            case SlotPeriod.night:
+              nightSlots.add(s);
+              break;
+          }
+        }
 
         return ListView(
           padding: const EdgeInsets.all(16),
           children: [
-            _buildPeriodSection('Morning', '6 AM - 12 PM',
-                Icons.wb_sunny_outlined, morningSlots),
-            const SizedBox(height: 16),
-            _buildPeriodSection('Afternoon', '12 PM - 6 PM',
-                Icons.wb_cloudy_outlined, afternoonSlots),
-            const SizedBox(height: 16),
-            _buildPeriodSection('Evening', '6 PM - 12 AM',
-                Icons.nights_stay_outlined, eveningSlots),
+            _buildPeriodSection(
+                AppStrings.slotMgmtPeriodMorning,
+                AppStrings.slotMgmtRangeMorningLong,
+                Icons.wb_sunny_outlined,
+                morningSlots,
+                turf),
             const SizedBox(height: 16),
             _buildPeriodSection(
-                'Night', '12 AM - 6 AM', Icons.dark_mode_outlined, nightSlots),
+                AppStrings.slotMgmtPeriodAfternoon,
+                AppStrings.slotMgmtRangeAfternoonLong,
+                Icons.wb_cloudy_outlined,
+                afternoonSlots,
+                turf),
+            const SizedBox(height: 16),
+            _buildPeriodSection(
+                AppStrings.slotMgmtPeriodEvening,
+                AppStrings.slotMgmtRangeEveningLong,
+                Icons.nights_stay_outlined,
+                eveningSlots,
+                turf),
+            const SizedBox(height: 16),
+            _buildPeriodSection(
+                AppStrings.slotMgmtPeriodNight,
+                AppStrings.slotMgmtRangeNightLong,
+                Icons.dark_mode_outlined,
+                nightSlots,
+                turf),
           ],
         );
       },
     );
   }
 
-  Widget _buildPeriodSection(
-      String title, String timeRange, IconData icon, List<SlotModel> slots) {
+  Widget _buildPeriodSection(String title, String timeRange, IconData icon,
+      List<SlotModel> slots, TurfModel turf) {
     final c = AppColors.of(context);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -872,7 +1004,7 @@ class _SlotManagementScreenState extends State<SlotManagementScreen>
             ),
             const Spacer(),
             Text(
-              '${slots.where((s) => s.status == SlotStatus.available).length}/${slots.length} open',
+              '${slots.where((s) => s.status == SlotStatus.available).length}/${slots.length}${AppStrings.slotMgmtOpenCountSuffix}',
               style: TextStyle(fontSize: 11, color: c.textSecondary),
             ),
           ],
@@ -888,7 +1020,7 @@ class _SlotManagementScreenState extends State<SlotManagementScreen>
             ),
             child: Center(
               child: Text(
-                'No slots in this period',
+                AppStrings.slotMgmtNoSlotsInPeriod,
                 style: TextStyle(fontSize: 12, color: c.textSecondary),
               ),
             ),
@@ -905,31 +1037,30 @@ class _SlotManagementScreenState extends State<SlotManagementScreen>
             ),
             itemCount: slots.length,
             itemBuilder: (context, index) {
-              return _buildSlotCard(slots[index]);
+              return _buildSlotCard(slots[index], turf);
             },
           ),
       ],
     );
   }
 
-  Widget _buildSlotCard(SlotModel slot) {
+  Widget _buildSlotCard(SlotModel slot, TurfModel turf) {
     final c = AppColors.of(context);
     Color statusColor;
     IconData statusIcon;
 
     final isPast = _isSlotInPast(slot);
-    final reason = slot.blockReason ?? '';
+    final reason = slot.blockReason;
 
     // Slots that are system-closed or period-closed are non-interactive and dimmed.
-    // Manually-blocked slots remain interactive (owner can unblock them).
     final isSystemClosed = slot.status == SlotStatus.blocked &&
-        (reason == 'Closed' || reason.contains('Period closed'));
+        (reason == BlockReason.closed ||
+            SlotBusinessRules.isPeriodCloseReason(reason));
 
     // Manually-blocked slots are interactive (can be unblocked individually).
     final isManuallyBlocked = slot.status == SlotStatus.blocked &&
-        reason == 'Manually blocked by owner';
+        reason == BlockReason.manuallyBlockedByOwner;
 
-    // Past slots are always dimmed and non-interactive
     if (isPast) {
       statusColor = c.textDisabled;
       statusIcon = Icons.history;
@@ -951,47 +1082,47 @@ class _SlotManagementScreenState extends State<SlotManagementScreen>
           statusIcon = Icons.event_available;
           break;
         case SlotStatus.blocked:
-          // Manually blocked by owner — shown as red/interactive
           statusColor = c.error;
           statusIcon = Icons.block;
           break;
-        default:
-          statusColor = c.success;
-          statusIcon = Icons.check_circle_outline;
       }
     }
 
-    // Interactive: not past, not system-closed. Manually-blocked slots ARE interactive.
     final isInteractive = !isPast && !isSystemClosed;
+    // SM-18: fold past-state opacity into a single alpha calculation rather
+    // than wrapping the card in an Opacity layer.
+    final double fillAlpha = isPast ? 0.05 : (isInteractive ? 0.1 : 0.15);
+    final double borderAlpha = isPast ? 0.2 : (isInteractive ? 0.5 : 0.3);
+    final double textAlpha = isPast ? 0.5 : 1.0;
 
-    return GestureDetector(
-      onTap: isInteractive ? () => _showSlotActions(slot) : null,
-      child: Opacity(
-        opacity: isPast ? 0.5 : 1.0,
+    return Tooltip(
+      message: '${slot.displayTimeRange} — ${slot.status.displayName}',
+      child: GestureDetector(
+        onTap: isInteractive ? () => _showSlotActions(slot, turf) : null,
         child: Container(
           decoration: BoxDecoration(
-            color: statusColor.withValues(alpha: isInteractive ? 0.1 : 0.15),
+            color: statusColor.withValues(alpha: fillAlpha),
             borderRadius: BorderRadius.circular(12),
-            border: Border.all(
-                color:
-                    statusColor.withValues(alpha: isInteractive ? 0.5 : 0.3)),
+            border:
+                Border.all(color: statusColor.withValues(alpha: borderAlpha)),
           ),
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              Icon(statusIcon, color: statusColor, size: 24),
+              Icon(statusIcon,
+                  color: statusColor.withValues(alpha: textAlpha), size: 24),
               const SizedBox(height: 6),
               Text(
                 slot.displayTimeRange.split(' - ')[0],
                 style: TextStyle(
                   fontSize: 12,
                   fontWeight: FontWeight.w600,
-                  color: statusColor,
+                  color: statusColor.withValues(alpha: textAlpha),
                 ),
               ),
               if (isPast)
                 Text(
-                  'Past',
+                  AppStrings.slotMgmtBadgePast,
                   style: TextStyle(
                     fontSize: 10,
                     color: c.textHint,
@@ -1000,7 +1131,7 @@ class _SlotManagementScreenState extends State<SlotManagementScreen>
                 )
               else if (isSystemClosed)
                 Text(
-                  'Closed',
+                  AppStrings.slotMgmtBadgeClosed,
                   style: TextStyle(
                     fontSize: 10,
                     color: c.textHint,
@@ -1009,7 +1140,7 @@ class _SlotManagementScreenState extends State<SlotManagementScreen>
                 )
               else if (isManuallyBlocked)
                 Text(
-                  'Blocked',
+                  AppStrings.slotMgmtBadgeBlocked,
                   style: TextStyle(
                     fontSize: 10,
                     color: c.error,
@@ -1018,7 +1149,7 @@ class _SlotManagementScreenState extends State<SlotManagementScreen>
                 )
               else
                 Text(
-                  '₹${slot.price.toInt()}',
+                  PriceCalculator.formatPrice(slot.price),
                   style: TextStyle(
                     fontSize: 11,
                     color: c.textSecondary,
@@ -1031,20 +1162,25 @@ class _SlotManagementScreenState extends State<SlotManagementScreen>
     );
   }
 
-  void _showSlotActions(SlotModel slot) {
-    // Past slots cannot be toggled
+  void _showSlotActions(SlotModel slot, TurfModel turf) {
     if (_isSlotInPast(slot)) return;
 
     final authProvider = Provider.of<AuthProvider>(context, listen: false);
     final slotProvider = Provider.of<SlotProvider>(context, listen: false);
+    final ownerId = authProvider.currentUserId;
+    if (ownerId == null) {
+      showAppToast(context, AppStrings.slotMgmtSessionExpired,
+          type: ToastType.error);
+      return;
+    }
 
     showModalBottomSheet(
       context: context,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),
-      builder: (context) {
-        final c = AppColors.of(context);
+      builder: (sheetCtx) {
+        final c = AppColors.of(sheetCtx);
         return Padding(
           padding: const EdgeInsets.all(20),
           child: Column(
@@ -1069,54 +1205,69 @@ class _SlotManagementScreenState extends State<SlotManagementScreen>
               ),
               const SizedBox(height: 8),
               Text(
-                'Status: ${slot.status.displayName}',
+                '${AppStrings.slotMgmtSheetStatusPrefix}${slot.status.displayName}',
                 style: TextStyle(color: c.textSecondary),
               ),
               const SizedBox(height: 24),
               if (slot.status == SlotStatus.available) ...[
                 _buildActionButton(
                   icon: Icons.block,
-                  label: 'Block Slot',
+                  label: AppStrings.slotMgmtActionBlock,
                   color: c.warning,
                   onTap: () async {
-                    Navigator.pop(context);
-                    await slotProvider.blockSlot(
-                      slot.slotId,
-                      authProvider.currentUserId!,
-                      'Manually blocked by owner',
-                    );
-                    // Individual block does not affect period/day toggles — just reload slots
-                    _loadSlots();
+                    Navigator.pop(sheetCtx);
+                    try {
+                      await slotProvider.blockSlot(
+                        slot.slotId,
+                        ownerId,
+                        BlockReason.manuallyBlockedByOwner,
+                      );
+                    } catch (_) {
+                      if (mounted) {
+                        showAppToast(
+                            context, AppStrings.slotMgmtBulkUpdateFailed,
+                            type: ToastType.error);
+                      }
+                    }
+                    if (mounted) await _loadSlots();
                   },
                 ),
               ],
               if (slot.status == SlotStatus.blocked) ...[
                 _buildActionButton(
                   icon: Icons.check,
-                  label: 'Unblock Slot',
+                  label: AppStrings.slotMgmtActionUnblock,
                   color: c.success,
                   onTap: () async {
-                    Navigator.pop(context);
-                    // If slot is outside operational hours, mark as override
-                    // so _syncOperatingHoursForNet won't re-block it
-                    final isOpHours = _isWithinOperationalHours(slot);
-                    await slotProvider.unblockSlot(
-                      slot.slotId,
-                      overrideMarker: isOpHours ? null : 'Opened by owner',
-                    );
-                    // Individual unblock does not affect period/day toggles — just reload slots
-                    _loadSlots();
+                    Navigator.pop(sheetCtx);
+                    try {
+                      final isOpHours = _isWithinOperationalHours(slot, turf);
+                      await slotProvider.unblockSlot(
+                        slot.slotId,
+                        overrideMarker:
+                            isOpHours ? null : BlockReason.openedByOwner,
+                      );
+                    } catch (_) {
+                      if (mounted) {
+                        showAppToast(
+                            context, AppStrings.slotMgmtBulkUpdateFailed,
+                            type: ToastType.error);
+                      }
+                    }
+                    if (mounted) await _loadSlots();
                   },
                 ),
               ],
               if (slot.status == SlotStatus.booked) ...[
                 _buildActionButton(
                   icon: Icons.info,
-                  label: 'View Booking Details',
+                  label: AppStrings.slotMgmtActionViewBooking,
                   color: c.info,
                   onTap: () {
-                    Navigator.pop(context);
-                    // TODO: Show booking details
+                    Navigator.pop(sheetCtx);
+                    showAppToast(
+                        context, AppStrings.slotMgmtBookingDetailsComingSoon,
+                        type: ToastType.info);
                   },
                 ),
               ],

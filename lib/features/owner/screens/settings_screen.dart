@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import '../../../config/colors.dart';
 import '../../../config/glass_widgets.dart';
 import '../../../config/abstract_bg.dart';
+import '../../../core/constants/strings.dart';
 import '../../auth/providers/auth_provider.dart';
 import '../../../core/utils/app_toast.dart';
 import '../../../data/services/auth_service.dart';
@@ -56,21 +57,27 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   String? _validateEmail(String? value) {
-    if (value == null || value.isEmpty) return 'Email is required';
+    if (value == null || value.isEmpty)
+      return AppStrings.settingsErrEmailRequired;
     final emailRegex =
         RegExp(r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$');
-    if (!emailRegex.hasMatch(value)) return 'Enter a valid email';
+    if (!emailRegex.hasMatch(value)) return AppStrings.settingsErrEmailInvalid;
     return null;
   }
 
   String? _validatePassword(String? value) {
-    if (value == null || value.isEmpty) return 'Password is required';
-    if (value.length < 8) return 'Min 8 characters';
-    if (!RegExp(r'[A-Z]').hasMatch(value)) return 'Needs uppercase letter';
-    if (!RegExp(r'[a-z]').hasMatch(value)) return 'Needs lowercase letter';
-    if (!RegExp(r'[0-9]').hasMatch(value)) return 'Needs a number';
-    if (!RegExp(r'[!@#\$%^&*(),.?":{}|<>]').hasMatch(value))
-      return 'Needs special character';
+    if (value == null || value.isEmpty)
+      return AppStrings.settingsErrPasswordRequired;
+    if (value.length < 8) return AppStrings.settingsErrPasswordMin;
+    if (!RegExp(r'[A-Z]').hasMatch(value))
+      return AppStrings.settingsErrPasswordUpper;
+    if (!RegExp(r'[a-z]').hasMatch(value))
+      return AppStrings.settingsErrPasswordLower;
+    if (!RegExp(r'[0-9]').hasMatch(value))
+      return AppStrings.settingsErrPasswordNumber;
+    if (!RegExp(r'[!@#\$%^&*(),.?":{}|<>]').hasMatch(value)) {
+      return AppStrings.settingsErrPasswordSpecial;
+    }
     return null;
   }
 
@@ -90,7 +97,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
         return StatefulBuilder(
           builder: (ctx, setDialogState) {
             return AlertDialog(
-              title: const Text('Confirm your password'),
+              title: const Text(AppStrings.settingsDialogConfirmPasswordTitle),
               content: Column(
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -107,7 +114,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     autocorrect: false,
                     autofillHints: const [AutofillHints.password],
                     decoration: InputDecoration(
-                      labelText: 'Current password',
+                      labelText: AppStrings.settingsDialogCurrentPassword,
                       errorText: errorText,
                       suffixIcon: IconButton(
                         icon: Icon(
@@ -127,14 +134,15 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       Navigator.pop(dialogContext);
                     }
                   },
-                  child: const Text('Cancel'),
+                  child: const Text(AppStrings.settingsDialogCancel),
                 ),
                 ElevatedButton(
                   onPressed: () {
                     final entered = controller.text;
                     if (entered.isEmpty) {
                       setDialogState(
-                        () => errorText = 'Password is required',
+                        () =>
+                            errorText = AppStrings.settingsErrPasswordRequired,
                       );
                       return;
                     }
@@ -142,7 +150,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       Navigator.pop(dialogContext, entered);
                     }
                   },
-                  child: const Text('Confirm'),
+                  child: const Text(AppStrings.settingsDialogConfirm),
                 ),
               ],
             );
@@ -168,17 +176,18 @@ class _SettingsScreenState extends State<SettingsScreen> {
     if (ownerPhone == null ||
         ownerPhone.isEmpty ||
         ownerPhone.startsWith('pending_')) {
-      _showSnackBar('No verified phone number found.', isError: true);
+      _showSnackBar(AppStrings.settingsErrNoVerifiedPhone, isError: true);
       return;
     }
 
     final otpVerified = await _runRealOtpFlow(
       phone: ownerPhone,
-      purpose: 'email update',
+      purpose: AppStrings.settingsPurposeEmailUpdate,
     );
     if (!mounted || !otpVerified) return;
 
-    final currentPassword = await _promptCurrentPassword('email update');
+    final currentPassword =
+        await _promptCurrentPassword(AppStrings.settingsPurposeEmailUpdate);
     if (!mounted || currentPassword == null) return;
 
     setState(() => _isEmailLoading = true);
@@ -196,14 +205,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
             context: context,
             barrierDismissible: false,
             builder: (ctx) => AlertDialog(
-              title: const Text('Email Updated'),
+              title: const Text(AppStrings.settingsDialogEmailUpdatedTitle),
               content: const Text(
-                'Email verified and updated successfully. Please login again with your new email.',
+                AppStrings.settingsDialogEmailUpdatedBody,
               ),
               actions: [
                 TextButton(
                   onPressed: () => Navigator.pop(ctx, true),
-                  child: const Text('OK'),
+                  child: const Text(AppStrings.settingsDialogOk),
                 ),
               ],
             ),
@@ -221,7 +230,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
         );
       }
     } else {
-      _showSnackBar(authProvider.errorMessage ?? 'Failed to update email',
+      _showSnackBar(
+          authProvider.errorMessage ?? AppStrings.settingsErrEmailFailed,
           isError: true);
     }
   }
@@ -266,7 +276,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 }
 
                 return AlertDialog(
-                  title: const Text('Verify New Email'),
+                  title: const Text(AppStrings.settingsDialogVerifyEmailTitle),
                   content: Column(
                     mainAxisSize: MainAxisSize.min,
                     crossAxisAlignment: CrossAxisAlignment.start,
@@ -290,7 +300,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                           Navigator.pop(dialogContext, false);
                         }
                       },
-                      child: const Text('Cancel'),
+                      child: const Text(AppStrings.settingsDialogCancel),
                     ),
                     ElevatedButton(
                       onPressed: isChecking ? null : verifyNow,
@@ -300,7 +310,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                               height: 18,
                               child: CircularProgressIndicator(strokeWidth: 2),
                             )
-                          : const Text('Verify'),
+                          : const Text(AppStrings.settingsDialogVerify),
                     ),
                   ],
                 );
@@ -321,7 +331,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       return;
     }
     if (newPassword != confirmPassword) {
-      _showSnackBar('Passwords do not match', isError: true);
+      _showSnackBar(AppStrings.settingsErrPasswordsMismatch, isError: true);
       return;
     }
 
@@ -330,18 +340,19 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final phone = owner?.phone.trim();
 
     if (phone == null || phone.isEmpty || phone.startsWith('pending_')) {
-      _showSnackBar('No verified phone number found.', isError: true);
+      _showSnackBar(AppStrings.settingsErrNoVerifiedPhone, isError: true);
       return;
     }
 
     // Run phone OTP verification flow
     final otpVerified = await _runRealOtpFlow(
       phone: phone,
-      purpose: 'password update',
+      purpose: AppStrings.settingsPurposePasswordUpdate,
     );
     if (!mounted || !otpVerified) return;
 
-    final currentPassword = await _promptCurrentPassword('password update');
+    final currentPassword =
+        await _promptCurrentPassword(AppStrings.settingsPurposePasswordUpdate);
     if (!mounted || currentPassword == null) return;
 
     setState(() => _isPasswordLoading = true);
@@ -355,14 +366,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
       await showDialog<void>(
         context: context,
         builder: (ctx) => AlertDialog(
-          title: const Text('Password Updated'),
+          title: const Text(AppStrings.settingsDialogPasswordUpdatedTitle),
           content: const Text(
-            'Password changed successfully. You can now use this password to login.',
+            AppStrings.settingsDialogPasswordUpdatedBody,
           ),
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(ctx),
-              child: const Text('OK'),
+              child: const Text(AppStrings.settingsDialogOk),
             ),
           ],
         ),
@@ -371,7 +382,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
       _newPasswordController.clear();
       _confirmPasswordController.clear();
     } else {
-      _showSnackBar(authProvider.errorMessage ?? 'Failed to update password',
+      _showSnackBar(
+          authProvider.errorMessage ?? AppStrings.settingsErrPasswordFailed,
           isError: true);
     }
   }
@@ -390,7 +402,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     try {
       await authService.sendPhoneChangeOtp(phone: phone);
     } catch (e) {
-      _showSnackBar('Could not send OTP. Please try again.', isError: true);
+      _showSnackBar(AppStrings.settingsOtpErrSendFailed, isError: true);
       return false;
     }
 
@@ -403,7 +415,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
             Future<void> handleVerify() async {
               final entered = otpController.text.trim();
               if (entered.length != 6) {
-                setDialogState(() => errorText = 'Enter 6-digit OTP');
+                setDialogState(
+                    () => errorText = AppStrings.settingsOtpErrLength);
                 return;
               }
 
@@ -423,7 +436,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
               } catch (e) {
                 setDialogState(() {
                   isLoading = false;
-                  errorText = 'Invalid OTP. Please try again.';
+                  errorText = AppStrings.settingsOtpErrInvalid;
                 });
               }
             }
@@ -440,11 +453,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   isLoading = false;
                   otpController.clear();
                 });
-                _showSnackBar('OTP resent to ${_maskPhone(phone)}');
+                _showSnackBar(
+                    '${AppStrings.settingsOtpResentPrefix}${_maskPhone(phone)}');
               } catch (e) {
                 setDialogState(() {
                   isLoading = false;
-                  errorText = 'Could not resend OTP.';
+                  errorText = AppStrings.settingsOtpErrResendFailed;
                 });
               }
             }
@@ -470,7 +484,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       fontWeight: FontWeight.bold,
                     ),
                     decoration: InputDecoration(
-                      hintText: '6-digit OTP',
+                      hintText: AppStrings.settingsOtpHint,
                       errorText: errorText,
                       border: OutlineInputBorder(
                         borderRadius: BorderRadius.circular(10),
@@ -488,11 +502,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
                             Navigator.pop(dialogContext, false);
                           }
                         },
-                  child: const Text('Cancel'),
+                  child: const Text(AppStrings.settingsDialogCancel),
                 ),
                 TextButton(
                   onPressed: isLoading ? null : handleResend,
-                  child: const Text('Resend OTP'),
+                  child: const Text(AppStrings.settingsDialogResendOtp),
                 ),
                 ElevatedButton(
                   onPressed: isLoading ? null : handleVerify,
@@ -502,7 +516,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                           height: 18,
                           child: CircularProgressIndicator(strokeWidth: 2),
                         )
-                      : const Text('Verify'),
+                      : const Text(AppStrings.settingsDialogVerify),
                 ),
               ],
             );
@@ -544,7 +558,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
             SafeArea(
               child: Column(
                 children: [
-                  GlassAppBar(title: 'Profile Settings'),
+                  GlassAppBar(title: AppStrings.settingsTitle),
                   Expanded(
                     child: SingleChildScrollView(
                       padding: const EdgeInsets.all(20),
@@ -552,22 +566,23 @@ class _SettingsScreenState extends State<SettingsScreen> {
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           // Account Info
-                          _buildSectionTitle('Account Information'),
+                          _buildSectionTitle(AppStrings.settingsSectionAccount),
                           _buildAccountInfo(),
                           const SizedBox(height: 32),
 
                           // Change Email
-                          _buildSectionTitle('Change Email'),
+                          _buildSectionTitle(AppStrings.settingsSectionEmail),
                           _buildEmailSection(),
                           const SizedBox(height: 32),
 
                           // Change Password
-                          _buildSectionTitle('Change Password'),
+                          _buildSectionTitle(
+                              AppStrings.settingsSectionPassword),
                           _buildPasswordSection(),
                           const SizedBox(height: 32),
 
                           // Danger Zone
-                          _buildSectionTitle('Account'),
+                          _buildSectionTitle(AppStrings.settingsSectionDanger),
                           _buildDangerZone(),
                         ],
                       ),
@@ -621,11 +636,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ),
           child: Column(
             children: [
-              _buildInfoRow(Icons.person, 'Name', safeName),
+              _buildInfoRow(
+                  Icons.person, AppStrings.settingsLabelName, safeName),
               const Divider(height: 24),
-              _buildInfoRow(Icons.email, 'Email', safeEmail),
+              _buildInfoRow(
+                  Icons.email, AppStrings.settingsLabelEmail, safeEmail),
               const Divider(height: 24),
-              _buildInfoRow(Icons.phone, 'Phone', safePhone),
+              _buildInfoRow(
+                  Icons.phone, AppStrings.settingsLabelPhone, safePhone),
             ],
           ),
         );
@@ -669,7 +687,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
             controller: _emailController,
             keyboardType: TextInputType.emailAddress,
             decoration: InputDecoration(
-              labelText: 'New Email Address',
+              labelText: AppStrings.settingsFieldNewEmail,
               prefixIcon: const Icon(Icons.email_outlined),
               border:
                   OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
@@ -679,16 +697,19 @@ class _SettingsScreenState extends State<SettingsScreen> {
           SizedBox(
             width: double.infinity,
             height: 48,
-            child: ElevatedButton(
-              onPressed: _isEmailLoading ? null : _updateEmail,
-              child: _isEmailLoading
-                  ? const SizedBox(
-                      height: 20,
-                      width: 20,
-                      child: CircularProgressIndicator(
-                          color: Colors.white, strokeWidth: 2))
-                  : const Text('Update Email',
-                      style: TextStyle(fontWeight: FontWeight.w600)),
+            child: Tooltip(
+              message: AppStrings.settingsTooltipUpdateEmail,
+              child: ElevatedButton(
+                onPressed: _isEmailLoading ? null : _updateEmail,
+                child: _isEmailLoading
+                    ? const SizedBox(
+                        height: 20,
+                        width: 20,
+                        child: CircularProgressIndicator(
+                            color: Colors.white, strokeWidth: 2))
+                    : const Text(AppStrings.settingsBtnUpdateEmail,
+                        style: TextStyle(fontWeight: FontWeight.w600)),
+              ),
             ),
           ),
         ],
@@ -714,7 +735,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
             autocorrect: false,
             autofillHints: const [AutofillHints.newPassword],
             decoration: InputDecoration(
-              labelText: 'New Password',
+              labelText: AppStrings.settingsFieldNewPassword,
               prefixIcon: const Icon(Icons.lock_outline),
               suffixIcon: IconButton(
                 icon: Icon(_obscureNewPassword
@@ -725,7 +746,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
               ),
               border:
                   OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
-              helperText: 'Min 8 chars, upper, lower, number, special',
+              helperText: AppStrings.settingsPasswordHelper,
               helperMaxLines: 2,
             ),
           ),
@@ -737,7 +758,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
             autocorrect: false,
             autofillHints: const [AutofillHints.newPassword],
             decoration: InputDecoration(
-              labelText: 'Confirm New Password',
+              labelText: AppStrings.settingsFieldConfirmPassword,
               prefixIcon: const Icon(Icons.lock_outline),
               suffixIcon: IconButton(
                 icon: Icon(_obscureConfirmPassword
@@ -754,16 +775,19 @@ class _SettingsScreenState extends State<SettingsScreen> {
           SizedBox(
             width: double.infinity,
             height: 48,
-            child: ElevatedButton(
-              onPressed: _isPasswordLoading ? null : _updatePassword,
-              child: _isPasswordLoading
-                  ? const SizedBox(
-                      height: 20,
-                      width: 20,
-                      child: CircularProgressIndicator(
-                          color: Colors.white, strokeWidth: 2))
-                  : const Text('Update Password',
-                      style: TextStyle(fontWeight: FontWeight.w600)),
+            child: Tooltip(
+              message: AppStrings.settingsTooltipUpdatePassword,
+              child: ElevatedButton(
+                onPressed: _isPasswordLoading ? null : _updatePassword,
+                child: _isPasswordLoading
+                    ? const SizedBox(
+                        height: 20,
+                        width: 20,
+                        child: CircularProgressIndicator(
+                            color: Colors.white, strokeWidth: 2))
+                    : const Text(AppStrings.settingsBtnUpdatePassword,
+                        style: TextStyle(fontWeight: FontWeight.w600)),
+              ),
             ),
           ),
         ],
@@ -784,8 +808,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
         children: [
           ListTile(
             leading: Icon(Icons.logout, color: c.error),
-            title: Text('Logout',
+            title: Text(AppStrings.settingsBtnLogout,
                 style: TextStyle(color: c.error, fontWeight: FontWeight.w600)),
+            trailing: Tooltip(
+              message: AppStrings.settingsTooltipLogout,
+              child: const Icon(Icons.chevron_right),
+            ),
             onTap: () async {
               final didLogout = await _confirmAndSignOut();
               if (didLogout && mounted) {
@@ -797,11 +825,15 @@ class _SettingsScreenState extends State<SettingsScreen> {
           Divider(color: c.glassBorder, height: 1),
           ListTile(
             leading: Icon(Icons.delete_forever, color: c.error),
-            title: Text('Delete Account',
+            title: Text(AppStrings.settingsBtnDelete,
                 style: TextStyle(color: c.error, fontWeight: FontWeight.w600)),
             subtitle: const Text(
-              'Permanently remove your account, turfs, and bookings.',
+              AppStrings.settingsBtnDeleteSubtitle,
               style: TextStyle(fontSize: 12),
+            ),
+            trailing: Tooltip(
+              message: AppStrings.settingsTooltipDelete,
+              child: const Icon(Icons.chevron_right),
             ),
             onTap: () async {
               final didDelete = await _confirmAndDeleteAccount();
@@ -836,7 +868,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   canPop: !isLoading,
                   child: AlertDialog(
                     title: Text(
-                      'Delete account?',
+                      AppStrings.settingsDialogDeleteTitle,
                       style: TextStyle(color: c.error),
                     ),
                     content: Column(
@@ -884,7 +916,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                         onPressed: isLoading
                             ? null
                             : () => Navigator.pop(dialogContext, false),
-                        child: const Text('Cancel'),
+                        child: const Text(AppStrings.settingsDialogCancel),
                       ),
                       TextButton(
                         onPressed: (canDelete && !isLoading)
@@ -896,7 +928,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                                   setDialogState(() {
                                     isLoading = false;
                                     errorText = authProvider.errorMessage ??
-                                        'Could not delete account.';
+                                        AppStrings.settingsDeleteErr;
                                   });
                                   return;
                                 }
@@ -907,7 +939,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                             : null,
                         child: isLoading
                             ? const _BouncingBallLoader()
-                            : Text('Delete forever',
+                            : Text(AppStrings.settingsDialogDeleteForever,
                                 style: TextStyle(color: c.error)),
                       ),
                     ],
@@ -937,14 +969,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 return PopScope(
                   canPop: false,
                   child: AlertDialog(
-                    title: const Text('Logout'),
-                    content: const Text('Are you sure you want to logout?'),
+                    title: const Text(AppStrings.settingsDialogLogoutTitle),
+                    content: const Text(AppStrings.settingsDialogLogoutBody),
                     actions: [
                       TextButton(
                         onPressed: isLoading
                             ? null
                             : () => Navigator.pop(dialogContext, false),
-                        child: const Text('Cancel'),
+                        child: const Text(AppStrings.settingsDialogCancel),
                       ),
                       TextButton(
                         onPressed: isLoading
@@ -965,7 +997,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
                               },
                         child: isLoading
                             ? const _BouncingBallLoader()
-                            : Text('Logout', style: TextStyle(color: c.error)),
+                            : Text(AppStrings.settingsBtnLogout,
+                                style: TextStyle(color: c.error)),
                       ),
                     ],
                   ),

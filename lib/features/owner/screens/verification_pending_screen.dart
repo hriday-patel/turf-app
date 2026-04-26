@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 import '../../../config/colors.dart';
 import '../../../config/glass_widgets.dart';
 import '../../../core/constants/strings.dart';
+import '../../../core/utils/app_toast.dart';
 import '../../../app/routes.dart';
 import '../../auth/providers/auth_provider.dart';
 import '../providers/turf_provider.dart';
@@ -13,7 +14,8 @@ class VerificationPendingScreen extends StatefulWidget {
   const VerificationPendingScreen({super.key});
 
   @override
-  State<VerificationPendingScreen> createState() => _VerificationPendingScreenState();
+  State<VerificationPendingScreen> createState() =>
+      _VerificationPendingScreenState();
 }
 
 class _VerificationPendingScreenState extends State<VerificationPendingScreen> {
@@ -25,12 +27,17 @@ class _VerificationPendingScreenState extends State<VerificationPendingScreen> {
       _refreshTurfs();
     });
   }
-  
-  void _refreshTurfs() {
+
+  Future<void> _refreshTurfs() async {
     final authProvider = Provider.of<AuthProvider>(context, listen: false);
     final turfProvider = Provider.of<TurfProvider>(context, listen: false);
-    if (authProvider.currentUserId != null) {
-      turfProvider.loadOwnerTurfs(authProvider.currentUserId!);
+    final userId = authProvider.currentUserId;
+    if (userId == null) return;
+    try {
+      turfProvider.loadOwnerTurfs(userId);
+    } catch (e) {
+      if (!mounted) return;
+      showAppToast(context, e.toString(), type: ToastType.error);
     }
   }
 
@@ -47,7 +54,7 @@ class _VerificationPendingScreenState extends State<VerificationPendingScreen> {
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
                 const Spacer(),
-                
+
                 // Hourglass icon with neon glow
                 Container(
                   width: 140,
@@ -55,7 +62,8 @@ class _VerificationPendingScreenState extends State<VerificationPendingScreen> {
                   decoration: BoxDecoration(
                     color: c.secondary.withValues(alpha: 0.08),
                     shape: BoxShape.circle,
-                    border: Border.all(color: c.secondary.withValues(alpha: 0.15)),
+                    border:
+                        Border.all(color: c.secondary.withValues(alpha: 0.15)),
                     boxShadow: AppColors.neonGlow(color: c.secondary, blur: 24),
                   ),
                   child: Center(
@@ -74,11 +82,11 @@ class _VerificationPendingScreenState extends State<VerificationPendingScreen> {
                     ),
                   ),
                 ),
-                
+
                 const SizedBox(height: 40),
-                
+
                 Text(
-                  'Verification Pending',
+                  AppStrings.verificationPendingTitle,
                   style: TextStyle(
                     fontSize: 26,
                     fontWeight: FontWeight.bold,
@@ -86,9 +94,9 @@ class _VerificationPendingScreenState extends State<VerificationPendingScreen> {
                   ),
                   textAlign: TextAlign.center,
                 ),
-                
+
                 const SizedBox(height: 16),
-                
+
                 Text(
                   AppStrings.verificationMessage,
                   style: TextStyle(
@@ -98,9 +106,9 @@ class _VerificationPendingScreenState extends State<VerificationPendingScreen> {
                   ),
                   textAlign: TextAlign.center,
                 ),
-                
+
                 const SizedBox(height: 32),
-                
+
                 // Info Card — glass
                 GlassCard(
                   padding: const EdgeInsets.all(20),
@@ -108,47 +116,56 @@ class _VerificationPendingScreenState extends State<VerificationPendingScreen> {
                     children: [
                       _buildInfoRow(
                         Icons.timer_outlined,
-                        'Typical Review Time',
-                        '24-48 hours',
+                        AppStrings.verificationPendingReviewTimeLabel,
+                        AppStrings.verificationPendingReviewTimeValue,
                       ),
                       const GlassDivider(),
                       _buildInfoRow(
                         Icons.notifications_outlined,
-                        'Notification',
-                        "We'll notify you once approved",
+                        AppStrings.verificationPendingNotifyLabel,
+                        AppStrings.verificationPendingNotifyValue,
                       ),
                       const GlassDivider(),
                       _buildInfoRow(
                         Icons.support_agent_outlined,
-                        'Need Help?',
-                        'Contact our support team',
+                        AppStrings.verificationPendingHelpLabel,
+                        AppStrings.verificationPendingHelpValue,
                       ),
                     ],
                   ),
                 ),
-                
+
                 const Spacer(),
-                
-                GlassButton(
-                  label: AppStrings.goToDashboard,
-                  onPressed: () {
-                    _refreshTurfs();
-                    Navigator.pushNamedAndRemoveUntil(
-                      context, AppRoutes.ownerDashboard, (route) => false,
-                    );
-                  },
+
+                Tooltip(
+                  message: AppStrings.verificationPendingTooltipDashboard,
+                  child: GlassButton(
+                    label: AppStrings.goToDashboard,
+                    onPressed: () {
+                      _refreshTurfs();
+                      Navigator.pushNamedAndRemoveUntil(
+                        context,
+                        AppRoutes.ownerDashboard,
+                        (route) => false,
+                      );
+                    },
+                  ),
                 ),
-                
+
                 const SizedBox(height: 16),
-                
-                TextButton(
-                  onPressed: () => Navigator.pushNamed(context, AppRoutes.addTurf),
-                  child: Text(
-                    'Add Another Turf',
-                    style: TextStyle(
-                      fontSize: 14,
-                      fontWeight: FontWeight.w600,
-                      color: c.primary,
+
+                Tooltip(
+                  message: AppStrings.verificationPendingTooltipAddAnother,
+                  child: TextButton(
+                    onPressed: () =>
+                        Navigator.pushNamed(context, AppRoutes.addTurf),
+                    child: Text(
+                      AppStrings.verificationPendingAddAnother,
+                      style: TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w600,
+                        color: c.primary,
+                      ),
                     ),
                   ),
                 ),

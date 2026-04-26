@@ -14,23 +14,38 @@ import '../providers/slot_provider.dart';
 import '../providers/booking_provider.dart';
 import '../../auth/providers/auth_provider.dart';
 import '../../../core/utils/app_toast.dart';
+import '../../../core/utils/price_calculator.dart';
+import '../../../core/utils/slot_business_rules.dart';
+import '../../../core/constants/strings.dart';
 import '../../../data/services/database_service.dart';
 
-enum _ToastType { success, error, warning, info }
-
-void _showPremiumToast(BuildContext context, String message,
-    {_ToastType type = _ToastType.info}) {
-  final mapped = switch (type) {
-    _ToastType.success => ToastType.success,
-    _ToastType.error => ToastType.error,
-    _ToastType.warning => ToastType.warning,
-    _ToastType.info => ToastType.info,
-  };
-  showAppToast(context, message, type: mapped);
-}
-
-/// Comprehensive Slot Booking Screen
-/// Allows owner to view all slots and create manual bookings
+/// Owner-facing Booking Dashboard screen.
+///
+/// Lets the venue owner browse all generated slots for a selected
+/// turf+net+date, toggle entire days or time-periods open/closed
+/// (with manual per-slot overrides preserved across navigation),
+/// and create manual phone/walk-in bookings via an in-screen
+/// `_BookingDialog` followed by a `_BookingSuccessPopup` that can
+/// dispatch confirmation/receipt messages over WhatsApp.
+///
+/// Lifecycle: subscribes to [AppRoutes.routeObserver] in
+/// `didChangeDependencies` and refreshes data in `didPopNext` so
+/// state stays consistent when returning from booking-detail or
+/// turf-edit screens. A monotonically increasing
+/// `_loadSlotsGeneration` token guards against stale async writes
+/// from rapid date/turf switches.
+///
+/// Security: all mutating actions (block/unblock/cancel-booking)
+/// require a non-null `AuthProvider.currentUserId`; if the session
+/// has expired the user is shown a toast and the action is aborted
+/// rather than recorded against an empty owner id. Block-reasons
+/// are written through [BlockReason] constants for cross-screen
+/// consistency with `slot_management_screen.dart`.
+///
+/// Performance: uses [Selector] over [Provider.of]/[Consumer] for
+/// turf and slot streams, lazily generates section animations, and
+/// delegates time-bucket logic to
+/// [SlotBusinessRules.periodForHour].
 class SlotBookingScreen extends StatefulWidget {
   const SlotBookingScreen({super.key});
 
@@ -54,6 +69,10 @@ class _SlotBookingScreenState extends State<SlotBookingScreen>
   final Map<String, bool> _afternoonOpenStates = {};
   final Map<String, bool> _eveningOpenStates = {};
   final Map<String, bool> _nightOpenStates = {};
+
+  // Concurrency guards to prevent stacked refreshes / bulk-toggle races
+  bool _isRefreshing = false;
+  bool _isApplyingBulk = false;
 
   // Track manually overridden slots (open even when period is closed)
   // Key format: "turfId_netNumber_slotId"
@@ -165,32 +184,48 @@ class _SlotBookingScreenState extends State<SlotBookingScreen>
 
   @override
   void didPopNext() {
-    debugPrint('SlotBooking: didPopNext - refreshing slots');
     _refreshAllData();
   }
 
   Future<void> _refreshAllData() async {
-    final authProvider = Provider.of<AuthProvider>(context, listen: false);
-    final turfProvider = Provider.of<TurfProvider>(context, listen: false);
+    if (_isRefreshing) return;
+    _isRefreshing = true;
+    try {
+      final authProvider = Provider.of<AuthProvider>(context, listen: false);
+      final turfProvider = Provider.of<TurfProvider>(context, listen: false);
 
-    // Clear cached toggle states so they re-derive from fresh DB data
-    // (turf config may have changed, e.g. daysOpen edited)
-    _dayOpenStates.clear();
-    _morningOpenStates.clear();
-    _afternoonOpenStates.clear();
-    _eveningOpenStates.clear();
-    _nightOpenStates.clear();
-    // Note: _manuallyOpenedSlots is NOT cleared here — it is rebuilt
-    // from DB override markers in _updateToggleStatesFromSlots()
+      // Clear cached toggle states so they re-derive from fresh DB data
+      // (turf config may have changed, e.g. daysOpen edited)
+      _dayOpenStates.clear();
+      _morningOpenStates.clear();
+      _afternoonOpenStates.clear();
+      _eveningOpenStates.clear();
+      _nightOpenStates.clear();
+      // Note: _manuallyOpenedSlots is NOT cleared here — it is rebuilt
+      // from DB override markers in _updateToggleStatesFromSlots()
 
-    // Force refresh turfs first to get latest verification status
-    if (authProvider.currentUserId != null) {
-      await turfProvider.refreshTurfs(authProvider.currentUserId!);
+      // Force refresh turfs first to get latest verification status
+      final ownerId = authProvider.currentUserId;
+      if (ownerId == null) {
+        if (mounted) {
+          showAppToast(context, AppStrings.slotBookingSessionExpired,
+              type: ToastType.error);
+        }
+        return;
+      }
+      await turfProvider.refreshTurfs(ownerId);
+
+      if (!mounted) return;
+      // Re-initialize with only approved turfs
+      _initializeData();
+    } catch (e) {
+      if (mounted) {
+        showAppToast(context, '${AppStrings.slotBookingRefreshFailed}: $e',
+            type: ToastType.error);
+      }
+    } finally {
+      _isRefreshing = false;
     }
-
-    if (!mounted) return;
-    // Re-initialize with only approved turfs
-    _initializeData();
   }
 
   void _initializeData() {
@@ -239,7 +274,7 @@ class _SlotBookingScreenState extends State<SlotBookingScreen>
     }
   }
 
-  void _loadSlots() {
+  Future<void> _loadSlots() async {
     if (_selectedTurf == null) return;
 
     final turfProvider = Provider.of<TurfProvider>(context, listen: false);
@@ -255,15 +290,19 @@ class _SlotBookingScreenState extends State<SlotBookingScreen>
 
     final turfId = _selectedTurf!.turfId;
     final generation = ++_loadSlotsGeneration;
-    slotProvider
-        .generateSlots(turf: _selectedTurf!, date: dateStr)
-        .then((_) async {
+    try {
+      await slotProvider.generateSlots(turf: _selectedTurf!, date: dateStr);
       if (!mounted || generation != _loadSlotsGeneration) return;
       await slotProvider.loadSlots(turfId, dateStr);
       if (mounted && generation == _loadSlotsGeneration) {
         _updateToggleStatesFromSlots();
       }
-    });
+    } catch (e) {
+      if (mounted && generation == _loadSlotsGeneration) {
+        showAppToast(context, '${AppStrings.slotBookingLoadFailed}: $e',
+            type: ToastType.error);
+      }
+    }
   }
 
   /// Sync toggle states from loaded slot data.
@@ -338,8 +377,8 @@ class _SlotBookingScreenState extends State<SlotBookingScreen>
     }
     // Verify turf is still approved before selecting
     if (turf.verificationStatus != VerificationStatus.approved) {
-      _showPremiumToast(context, 'This turf is no longer approved',
-          type: _ToastType.warning);
+      showAppToast(context, AppStrings.slotBookingTurfNoLongerApproved,
+          type: ToastType.warning);
       _refreshAllData();
       return;
     }
@@ -402,7 +441,8 @@ class _SlotBookingScreenState extends State<SlotBookingScreen>
     _loadSlots();
   }
 
-  void _toggleDay(bool isOpen) async {
+  Future<void> _toggleDay(bool isOpen) async {
+    if (_isApplyingBulk) return;
     final key = _currentStateKey;
     setState(() {
       _dayOpenStates[key] = isOpen;
@@ -422,20 +462,21 @@ class _SlotBookingScreenState extends State<SlotBookingScreen>
     if (mounted) setState(() {});
   }
 
-  void _togglePeriod(String period, bool isOpen) async {
+  Future<void> _togglePeriod(SlotPeriod period, bool isOpen) async {
+    if (_isApplyingBulk) return;
     final key = _currentStateKey;
     setState(() {
       switch (period) {
-        case 'morning':
+        case SlotPeriod.morning:
           _morningOpenStates[key] = isOpen;
           break;
-        case 'afternoon':
+        case SlotPeriod.afternoon:
           _afternoonOpenStates[key] = isOpen;
           break;
-        case 'evening':
+        case SlotPeriod.evening:
           _eveningOpenStates[key] = isOpen;
           break;
-        case 'night':
+        case SlotPeriod.night:
           _nightOpenStates[key] = isOpen;
           break;
       }
@@ -455,72 +496,79 @@ class _SlotBookingScreenState extends State<SlotBookingScreen>
   }
 
   Future<void> _applyPeriodChanges() async {
-    final slotProvider = Provider.of<SlotProvider>(context, listen: false);
-    final authProvider = Provider.of<AuthProvider>(context, listen: false);
+    if (_isApplyingBulk) return;
+    _isApplyingBulk = true;
+    try {
+      final slotProvider = Provider.of<SlotProvider>(context, listen: false);
+      final authProvider = Provider.of<AuthProvider>(context, listen: false);
 
-    // Only apply changes to slots for the CURRENT net
-    final currentNetSlots = slotProvider.slots
-        .where((s) => s.netNumber == _selectedNetNumber)
-        .toList();
+      // Only apply changes to slots for the CURRENT net
+      final currentNetSlots = slotProvider.slots
+          .where((s) => s.netNumber == _selectedNetNumber)
+          .toList();
 
-    // Determine if this is a closed day (not in daysOpen)
-    const dayNames = ['MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT', 'SUN'];
-    final dayOfWeek = dayNames[_selectedDate.weekday - 1];
-    final isClosedDay = !_selectedTurf!.daysOpen.contains(dayOfWeek);
+      // Determine if this is a closed day (not in daysOpen)
+      const dayNames = ['MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT', 'SUN'];
+      final dayOfWeek = dayNames[_selectedDate.weekday - 1];
+      final isClosedDay = !_selectedTurf!.daysOpen.contains(dayOfWeek);
 
-    for (final slot in currentNetSlots) {
-      final hour = int.tryParse(slot.startTime.split(':')[0]) ?? 0;
-      bool shouldBeBlocked = false;
-      final isManuallyOpened = _isSlotManuallyOpened(slot.slotId);
-      final blockReason = slot.blockReason ?? '';
-      final isManualBlock =
-          blockReason == 'Blocked by owner' || blockReason == 'Closed by owner';
+      for (final slot in currentNetSlots) {
+        final hour = int.tryParse(slot.startTime.split(':')[0]) ?? 0;
+        bool shouldBeBlocked = false;
+        final isManuallyOpened = _isSlotManuallyOpened(slot.slotId);
+        final blockReason = slot.blockReason ?? '';
+        final isManualBlock = blockReason == BlockReason.manuallyBlockedByOwner;
 
-      // Check if this slot is within operating hours
-      final isWithinOperatingHours = _isSlotWithinOperatingHours(slot);
+        // Check if this slot is within operating hours
+        final isWithinOperatingHours = _isSlotWithinOperatingHours(slot);
 
-      if (hour >= 6 && hour < 12) {
-        shouldBeBlocked = !_isMorningOpen;
-      } else if (hour >= 12 && hour < 18) {
-        shouldBeBlocked = !_isAfternoonOpen;
-      } else if (hour >= 18 && hour < 24) {
-        shouldBeBlocked = !_isEveningOpen;
-      } else {
-        shouldBeBlocked = !_isNightOpen;
-      }
+        if (hour >= 6 && hour < 12) {
+          shouldBeBlocked = !_isMorningOpen;
+        } else if (hour >= 12 && hour < 18) {
+          shouldBeBlocked = !_isAfternoonOpen;
+        } else if (hour >= 18 && hour < 24) {
+          shouldBeBlocked = !_isEveningOpen;
+        } else {
+          shouldBeBlocked = !_isNightOpen;
+        }
 
-      // Respect manual overrides: keep slot open even if period is closed
-      if (isManuallyOpened && shouldBeBlocked) {
-        if (slot.status == SlotStatus.blocked) {
+        // Respect manual overrides: keep slot open even if period is closed
+        if (isManuallyOpened && shouldBeBlocked) {
+          if (slot.status == SlotStatus.blocked) {
+            await slotProvider.unblockSlot(
+              slot.slotId,
+              overrideMarker: BlockReason.openedByOwner,
+            );
+          }
+          continue;
+        }
+
+        if (shouldBeBlocked && slot.status == SlotStatus.available) {
+          final ownerId = authProvider.currentUserId;
+          if (ownerId == null) continue;
+          await slotProvider.blockSlot(
+            slot.slotId,
+            ownerId,
+            BlockReason.periodClosedByOwner,
+          );
+        } else if (!shouldBeBlocked &&
+            slot.status == SlotStatus.blocked &&
+            !isManualBlock &&
+            isWithinOperatingHours) {
           await slotProvider.unblockSlot(
             slot.slotId,
-            overrideMarker: 'Opened by owner',
+            overrideMarker: isClosedDay ? BlockReason.dayOpenedByOwner : null,
           );
         }
-        continue;
       }
 
-      if (shouldBeBlocked && slot.status == SlotStatus.available) {
-        await slotProvider.blockSlot(
-          slot.slotId,
-          authProvider.currentUserId!,
-          'Period closed by owner',
-        );
-      } else if (!shouldBeBlocked &&
-          slot.status == SlotStatus.blocked &&
-          !isManualBlock &&
-          isWithinOperatingHours) {
-        await slotProvider.unblockSlot(
-          slot.slotId,
-          overrideMarker: isClosedDay ? 'Day opened by owner' : null,
-        );
+      // Reload slot data from DB without regenerating/syncing
+      if (_selectedTurf != null) {
+        final dateStr = _selectedDate.toIso8601String().split('T')[0];
+        await slotProvider.loadSlots(_selectedTurf!.turfId, dateStr);
       }
-    }
-
-    // Reload slot data from DB without regenerating/syncing
-    if (_selectedTurf != null) {
-      final dateStr = _selectedDate.toIso8601String().split('T')[0];
-      await slotProvider.loadSlots(_selectedTurf!.turfId, dateStr);
+    } finally {
+      _isApplyingBulk = false;
     }
   }
 
@@ -531,7 +579,9 @@ class _SlotBookingScreenState extends State<SlotBookingScreen>
   int _cachedOpenMinutes = 0;
   int _cachedCloseMinutes = 0;
 
-  /// Check if a slot falls within the turf's operating hours
+  /// Check if a slot falls within the turf's operating hours.
+  /// Delegates the actual rule to [SlotBusinessRules.isWithinOperatingHours]
+  /// so this screen and `slot_management_screen.dart` agree.
   bool _isSlotWithinOperatingHours(SlotModel slot) {
     if (_selectedTurf == null) return false;
 
@@ -546,22 +596,14 @@ class _SlotBookingScreenState extends State<SlotBookingScreen>
 
       _cachedOpenMinutes = openHour * 60 + openMinute;
       final closeMinutesRaw = closeHour * 60 + closeMinute;
-      if (closeMinutesRaw == 0) {
-        _cachedCloseMinutes = 1440;
-      } else if (closeMinutesRaw == _cachedOpenMinutes) {
-        _cachedCloseMinutes = _cachedOpenMinutes;
-      } else if (closeMinutesRaw < _cachedOpenMinutes) {
-        _cachedCloseMinutes = closeMinutesRaw + 1440;
-      } else {
-        _cachedCloseMinutes = closeMinutesRaw;
-      }
+      _cachedCloseMinutes = SlotBusinessRules.normalizeCloseMinutes(
+        openMinutes: _cachedOpenMinutes,
+        closeMinutesRaw: closeMinutesRaw,
+      );
       _cachedOpHoursTurfId = _selectedTurf!.turfId;
       _cachedOpHoursOpen = _selectedTurf!.openTime;
       _cachedOpHoursClose = _selectedTurf!.closeTime;
     }
-
-    final openMinutes = _cachedOpenMinutes;
-    final closeMinutes = _cachedCloseMinutes;
 
     final startParts = slot.startTime.split(':');
     final endParts = slot.endTime.split(':');
@@ -569,43 +611,29 @@ class _SlotBookingScreenState extends State<SlotBookingScreen>
     final slotEndRaw = int.parse(endParts[0]) * 60 + int.parse(endParts[1]);
     final slotEnd = slotEndRaw == 0 ? 1440 : slotEndRaw;
 
-    if (closeMinutes == openMinutes) {
-      return false;
-    } else if (closeMinutes <= 1440) {
-      return slotStart >= openMinutes && slotEnd <= closeMinutes;
-    } else {
-      final inDayPortion = slotStart >= openMinutes && slotEnd <= 1440;
-      final inNightPortion =
-          slotStart < (closeMinutes - 1440) && slotEnd <= (closeMinutes - 1440);
-      return inDayPortion || inNightPortion;
-    }
+    return SlotBusinessRules.isWithinOperatingHours(
+      openMinutes: _cachedOpenMinutes,
+      closeMinutes: _cachedCloseMinutes,
+      slotStartMin: slotStart,
+      slotEndMin: slotEnd,
+    );
   }
 
-  String _getSlotPeriod(SlotModel slot) {
+  SlotPeriod _getSlotPeriod(SlotModel slot) {
     final hour = int.tryParse(slot.startTime.split(':')[0]) ?? 0;
-    // Time period divisions:
-    // Morning: 6 AM - 12 PM (hours 6-11)
-    // Afternoon: 12 PM - 6 PM (hours 12-17)
-    // Evening: 6 PM - 12 AM (hours 18-23)
-    // Night: 12 AM - 6 AM (hours 0-5)
-    if (hour >= 6 && hour < 12) return 'morning';
-    if (hour >= 12 && hour < 18) return 'afternoon';
-    if (hour >= 18 && hour < 24) return 'evening';
-    return 'night';
+    return SlotBusinessRules.periodForHour(hour);
   }
 
-  bool _isPeriodClosed(String period) {
+  bool _isPeriodClosed(SlotPeriod period) {
     switch (period) {
-      case 'morning':
+      case SlotPeriod.morning:
         return !_isMorningOpen;
-      case 'afternoon':
+      case SlotPeriod.afternoon:
         return !_isAfternoonOpen;
-      case 'evening':
+      case SlotPeriod.evening:
         return !_isEveningOpen;
-      case 'night':
+      case SlotPeriod.night:
         return !_isNightOpen;
-      default:
-        return false;
     }
   }
 
@@ -734,26 +762,30 @@ class _SlotBookingScreenState extends State<SlotBookingScreen>
                 overflow: TextOverflow.ellipsis,
               ),
             ),
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-              decoration: BoxDecoration(
-                color: c.primary.withValues(alpha: 0.1),
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(Icons.swap_horiz, size: 16, color: c.primary),
-                  const SizedBox(width: 4),
-                  Text(
-                    'Change',
-                    style: TextStyle(
-                      fontSize: 12,
-                      fontWeight: FontWeight.w600,
-                      color: c.primary,
+            Tooltip(
+              message: AppStrings.slotBookingTooltipChangeVenue,
+              child: Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                decoration: BoxDecoration(
+                  color: c.primary.withValues(alpha: 0.1),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(Icons.swap_horiz, size: 16, color: c.primary),
+                    const SizedBox(width: 4),
+                    Text(
+                      'Change',
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                        color: c.primary,
+                      ),
                     ),
-                  ),
-                ],
+                  ],
+                ),
               ),
             ),
           ],
@@ -772,7 +804,8 @@ class _SlotBookingScreenState extends State<SlotBookingScreen>
               size: 64, color: c.textSecondary.withValues(alpha: 0.5)),
           const SizedBox(height: 16),
           Text(
-            'No Approved Turfs',
+            // SBA-1: extracted to AppStrings (was 'No Approved Turfs')
+            AppStrings.slotBookingNoApprovedTurfs,
             style: TextStyle(
                 fontSize: 18,
                 fontWeight: FontWeight.w600,
@@ -780,14 +813,14 @@ class _SlotBookingScreenState extends State<SlotBookingScreen>
           ),
           const SizedBox(height: 8),
           Text(
-            'Add a turf and get it approved to manage slots',
+            AppStrings.slotBookingNoApprovedTurfsBody,
             style: TextStyle(color: c.textSecondary),
           ),
           const SizedBox(height: 24),
           ElevatedButton.icon(
             onPressed: () => Navigator.pushNamed(context, AppRoutes.addTurf),
             icon: const Icon(Icons.add),
-            label: const Text('Add Turf'),
+            label: const Text(AppStrings.slotBookingAddTurf),
             style: ElevatedButton.styleFrom(
               backgroundColor: c.primary,
               padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
@@ -830,10 +863,17 @@ class _SlotBookingScreenState extends State<SlotBookingScreen>
                             fontWeight: FontWeight.bold, color: c.textPrimary),
                       ),
                     ),
-                    GestureDetector(
-                      onTap: () => setState(() => _isSidebarVisible = false),
-                      child:
-                          Icon(Icons.close, color: c.textSecondary, size: 22),
+                    Tooltip(
+                      message: AppStrings.slotBookingTooltipCloseSidebar,
+                      child: GestureDetector(
+                        onTap: () => setState(() => _isSidebarVisible = false),
+                        child: Semantics(
+                          button: true,
+                          label: AppStrings.slotBookingTooltipCloseSidebar,
+                          child: Icon(Icons.close,
+                              color: c.textSecondary, size: 22),
+                        ),
+                      ),
                     ),
                   ],
                 ),
@@ -1264,6 +1304,7 @@ class _SlotBookingScreenState extends State<SlotBookingScreen>
           Row(
             children: [
               IconButton(
+                tooltip: AppStrings.slotBookingTooltipPrevMonth,
                 onPressed: canNavigateMonth(-1)
                     ? () {
                         final targetMonth = DateTime(
@@ -1305,6 +1346,7 @@ class _SlotBookingScreenState extends State<SlotBookingScreen>
                 ),
               ),
               IconButton(
+                tooltip: AppStrings.slotBookingTooltipNextMonth,
                 onPressed: canNavigateMonth(1)
                     ? () {
                         final targetMonth = DateTime(
@@ -1501,38 +1543,48 @@ class _SlotBookingScreenState extends State<SlotBookingScreen>
   // Inline toggle widget for period headers
   Widget _buildInlinePeriodToggle(String period, bool isOpen) {
     final c = AppColors.of(context);
-    return GestureDetector(
-      onTap: () => _togglePeriod(period.toLowerCase(), !isOpen),
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-        decoration: BoxDecoration(
-          color: isOpen
-              ? c.success.withValues(alpha: 0.15)
-              : c.error.withValues(alpha: 0.15),
-          borderRadius: BorderRadius.circular(16),
-          border: Border.all(
-            color: isOpen ? c.success : c.error,
-            width: 1,
-          ),
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(
-              isOpen ? Icons.lock_open : Icons.lock,
-              size: 12,
-              color: isOpen ? c.success : c.error,
-            ),
-            const SizedBox(width: 4),
-            Text(
-              isOpen ? 'OPEN' : 'CLOSED',
-              style: TextStyle(
-                fontSize: 10,
-                fontWeight: FontWeight.bold,
+    final periodEnum = _periodFromLabel(period);
+    return Tooltip(
+      message:
+          '${AppStrings.slotBookingTooltipTogglePeriodPrefix}$period${AppStrings.slotBookingTooltipTogglePeriodSuffix}',
+      child: Semantics(
+        button: true,
+        toggled: isOpen,
+        label: '$period ${isOpen ? 'open' : 'closed'}',
+        child: GestureDetector(
+          onTap: () => _togglePeriod(periodEnum, !isOpen),
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+            decoration: BoxDecoration(
+              color: isOpen
+                  ? c.success.withValues(alpha: 0.15)
+                  : c.error.withValues(alpha: 0.15),
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(
                 color: isOpen ? c.success : c.error,
+                width: 1,
               ),
             ),
-          ],
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(
+                  isOpen ? Icons.lock_open : Icons.lock,
+                  size: 12,
+                  color: isOpen ? c.success : c.error,
+                ),
+                const SizedBox(width: 4),
+                Text(
+                  isOpen ? 'OPEN' : 'CLOSED',
+                  style: TextStyle(
+                    fontSize: 10,
+                    fontWeight: FontWeight.bold,
+                    color: isOpen ? c.success : c.error,
+                  ),
+                ),
+              ],
+            ),
+          ),
         ),
       ),
     );
@@ -1541,64 +1593,74 @@ class _SlotBookingScreenState extends State<SlotBookingScreen>
   // Day toggle widget for net header
   Widget _buildDayToggle() {
     final c = AppColors.of(context);
-    return GestureDetector(
-      onTap: () => _toggleDay(!_isDayOpen),
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-        decoration: BoxDecoration(
-          color: _isDayOpen
-              ? c.success.withValues(alpha: 0.15)
-              : c.error.withValues(alpha: 0.15),
-          borderRadius: BorderRadius.circular(20),
-          border: Border.all(
-            color: _isDayOpen ? c.success : c.error,
-            width: 1.5,
-          ),
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(
-              _isDayOpen ? Icons.wb_sunny : Icons.nights_stay,
-              size: 16,
-              color: _isDayOpen ? Colors.orange : Colors.grey,
-            ),
-            const SizedBox(width: 6),
-            Text(
-              _isDayOpen ? 'DAY OPEN' : 'DAY CLOSED',
-              style: TextStyle(
-                fontSize: 11,
-                fontWeight: FontWeight.bold,
+    return Tooltip(
+      message: AppStrings.slotBookingTooltipToggleDay,
+      child: Semantics(
+        button: true,
+        toggled: _isDayOpen,
+        label: _isDayOpen ? 'Day open' : 'Day closed',
+        child: GestureDetector(
+          onTap: () => _toggleDay(!_isDayOpen),
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+            decoration: BoxDecoration(
+              color: _isDayOpen
+                  ? c.success.withValues(alpha: 0.15)
+                  : c.error.withValues(alpha: 0.15),
+              borderRadius: BorderRadius.circular(20),
+              border: Border.all(
                 color: _isDayOpen ? c.success : c.error,
+                width: 1.5,
               ),
             ),
-            const SizedBox(width: 6),
-            Container(
-              width: 32,
-              height: 18,
-              decoration: BoxDecoration(
-                color: _isDayOpen ? c.success : Colors.grey.shade400,
-                borderRadius: BorderRadius.circular(9),
-              ),
-              child: Stack(
-                children: [
-                  AnimatedPositioned(
-                    duration: const Duration(milliseconds: 150),
-                    left: _isDayOpen ? 16 : 2,
-                    top: 2,
-                    child: Container(
-                      width: 14,
-                      height: 14,
-                      decoration: const BoxDecoration(
-                        color: Colors.white,
-                        shape: BoxShape.circle,
-                      ),
-                    ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(
+                  _isDayOpen ? Icons.wb_sunny : Icons.nights_stay,
+                  size: 16,
+                  color: _isDayOpen ? c.warning : c.textSecondary,
+                ),
+                const SizedBox(width: 6),
+                Text(
+                  _isDayOpen ? 'DAY OPEN' : 'DAY CLOSED',
+                  style: TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.bold,
+                    color: _isDayOpen ? c.success : c.error,
                   ),
-                ],
-              ),
+                ),
+                const SizedBox(width: 6),
+                Container(
+                  width: 32,
+                  height: 18,
+                  decoration: BoxDecoration(
+                    color: _isDayOpen
+                        ? c.success
+                        : c.textSecondary.withValues(alpha: 0.4),
+                    borderRadius: BorderRadius.circular(9),
+                  ),
+                  child: Stack(
+                    children: [
+                      AnimatedPositioned(
+                        duration: const Duration(milliseconds: 150),
+                        left: _isDayOpen ? 16 : 2,
+                        top: 2,
+                        child: Container(
+                          width: 14,
+                          height: 14,
+                          decoration: BoxDecoration(
+                            color: c.surface,
+                            shape: BoxShape.circle,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
             ),
-          ],
+          ),
         ),
       ),
     );
@@ -1623,14 +1685,18 @@ class _SlotBookingScreenState extends State<SlotBookingScreen>
   }
 
   Widget _buildSlotsContent() {
-    return Consumer<SlotProvider>(
-      builder: (context, slotProvider, _) {
+    // SBA-2: Selector with record (loading + slots) so the slot grid only
+    // rebuilds when those two fields actually change, not on every
+    // SlotProvider notify (e.g. internal generation/maintenance ticks).
+    return Selector<SlotProvider, ({bool loading, List<SlotModel> slots})>(
+      selector: (_, p) => (loading: p.isLoading, slots: p.slots),
+      builder: (context, snapshot, _) {
         final c = AppColors.of(context);
-        if (slotProvider.isLoading) {
+        if (snapshot.loading) {
           return const Center(child: CircularProgressIndicator());
         }
 
-        var slots = slotProvider.slots;
+        var slots = snapshot.slots;
         if (slots.isEmpty) {
           return Center(
             child: Column(
@@ -1638,7 +1704,7 @@ class _SlotBookingScreenState extends State<SlotBookingScreen>
               children: [
                 Icon(Icons.event_busy, size: 48, color: c.textHint),
                 const SizedBox(height: 16),
-                Text('No slots available for this date',
+                Text(AppStrings.slotBookingNoSlotsForDate,
                     style: TextStyle(color: c.textSecondary)),
               ],
             ),
@@ -1655,7 +1721,8 @@ class _SlotBookingScreenState extends State<SlotBookingScreen>
               children: [
                 Icon(Icons.event_busy, size: 48, color: c.textHint),
                 const SizedBox(height: 16),
-                Text('No slots for Net $_selectedNetNumber',
+                Text(
+                    '${AppStrings.slotBookingNoSlotsForNetPrefix}$_selectedNetNumber',
                     style: TextStyle(color: c.textSecondary)),
               ],
             ),
@@ -1663,16 +1730,25 @@ class _SlotBookingScreenState extends State<SlotBookingScreen>
         }
 
         // Group slots by time period
-        final night =
-            slots.where((s) => _getTimePeriod(s.startTime) == 'Night').toList();
+        final night = slots
+            .where((s) =>
+                _getTimePeriod(s.startTime) ==
+                AppStrings.slotBookingPeriodNight)
+            .toList();
         final morning = slots
-            .where((s) => _getTimePeriod(s.startTime) == 'Morning')
+            .where((s) =>
+                _getTimePeriod(s.startTime) ==
+                AppStrings.slotBookingPeriodMorning)
             .toList();
         final afternoon = slots
-            .where((s) => _getTimePeriod(s.startTime) == 'Afternoon')
+            .where((s) =>
+                _getTimePeriod(s.startTime) ==
+                AppStrings.slotBookingPeriodAfternoon)
             .toList();
         final evening = slots
-            .where((s) => _getTimePeriod(s.startTime) == 'Evening')
+            .where((s) =>
+                _getTimePeriod(s.startTime) ==
+                AppStrings.slotBookingPeriodEvening)
             .toList();
 
         return SingleChildScrollView(
@@ -1781,17 +1857,31 @@ class _SlotBookingScreenState extends State<SlotBookingScreen>
     );
   }
 
+  SlotPeriod _periodFromLabel(String label) {
+    switch (label.toLowerCase()) {
+      case 'morning':
+        return SlotPeriod.morning;
+      case 'afternoon':
+        return SlotPeriod.afternoon;
+      case 'evening':
+        return SlotPeriod.evening;
+      default:
+        return SlotPeriod.night;
+    }
+  }
+
   String _getTimePeriod(String startTime) {
     final hour = int.tryParse(startTime.split(':')[0]) ?? 0;
-    // Time period divisions:
-    // Morning: 6 AM - 12 PM (hours 6-11)
-    // Afternoon: 12 PM - 6 PM (hours 12-17)
-    // Evening: 6 PM - 12 AM (hours 18-23)
-    // Night: 12 AM - 6 AM (hours 0-5)
-    if (hour >= 6 && hour < 12) return 'Morning';
-    if (hour >= 12 && hour < 18) return 'Afternoon';
-    if (hour >= 18 && hour < 24) return 'Evening';
-    return 'Night'; // 0-5 hours
+    switch (SlotBusinessRules.periodForHour(hour)) {
+      case SlotPeriod.morning:
+        return AppStrings.slotBookingPeriodMorning;
+      case SlotPeriod.afternoon:
+        return AppStrings.slotBookingPeriodAfternoon;
+      case SlotPeriod.evening:
+        return AppStrings.slotBookingPeriodEvening;
+      case SlotPeriod.night:
+        return AppStrings.slotBookingPeriodNight;
+    }
   }
 
   Widget _buildLegend() {
@@ -2142,7 +2232,7 @@ class _SlotBookingScreenState extends State<SlotBookingScreen>
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
                 Text(
-                  '₹${slot.price.toInt()}',
+                  PriceCalculator.formatPrice(slot.price),
                   style: TextStyle(fontSize: 16, color: c.textSecondary),
                 ),
                 if (isReserved) ...[
@@ -2215,9 +2305,8 @@ class _SlotBookingScreenState extends State<SlotBookingScreen>
                     );
                   }
                   _loadSlots();
-                  _showPremiumToast(
-                      context, 'Slot opened - You can now create a booking',
-                      type: _ToastType.success);
+                  showAppToast(context, AppStrings.slotBookingSlotOpenedToBook,
+                      type: ToastType.success);
                 },
               ),
               const SizedBox(height: 12),
@@ -2326,8 +2415,8 @@ class _SlotBookingScreenState extends State<SlotBookingScreen>
 
     if (booking == null || !mounted) {
       if (mounted) {
-        _showPremiumToast(context, 'Payment details not found',
-            type: _ToastType.warning);
+        showAppToast(context, AppStrings.slotBookingPaymentDetailsNotFound,
+            type: ToastType.warning);
       }
       return;
     }
@@ -2368,13 +2457,17 @@ class _SlotBookingScreenState extends State<SlotBookingScreen>
             _buildPaymentRow('Status', isPaid ? 'Paid' : 'Pending',
                 isPaid ? c.success : Colors.orange),
             const SizedBox(height: 8),
+            _buildPaymentRow('Total Amount',
+                PriceCalculator.formatPrice(booking.amount), c.textPrimary),
+            const SizedBox(height: 8),
             _buildPaymentRow(
-                'Total Amount', '₹${booking.amount.toInt()}', c.textPrimary),
+                'Advance Paid',
+                PriceCalculator.formatPrice(booking.advanceAmount),
+                c.textPrimary),
             const SizedBox(height: 8),
-            _buildPaymentRow('Advance Paid',
-                '₹${booking.advanceAmount.toInt()}', c.textPrimary),
-            const SizedBox(height: 8),
-            _buildPaymentRow('Balance Due', '₹${remaining.toInt()}',
+            _buildPaymentRow(
+                'Balance Due',
+                PriceCalculator.formatPrice(remaining.toDouble()),
                 remaining > 0 ? Colors.orange : c.success),
             const SizedBox(height: 16),
           ],
@@ -2401,12 +2494,20 @@ class _SlotBookingScreenState extends State<SlotBookingScreen>
     final bookingProvider =
         Provider.of<BookingProvider>(context, listen: false);
     final authProvider = Provider.of<AuthProvider>(context, listen: false);
+    final ownerId = authProvider.currentUserId;
+    if (ownerId == null) {
+      if (mounted) {
+        showAppToast(context, AppStrings.slotBookingSessionExpired,
+            type: ToastType.error);
+      }
+      return;
+    }
     final booking = await bookingProvider.getBookingBySlotId(slot.slotId);
 
     if (booking == null) {
       if (mounted) {
-        _showPremiumToast(context, 'Booking not found',
-            type: _ToastType.warning);
+        showAppToast(context, AppStrings.slotBookingBookingNotFound,
+            type: ToastType.warning);
       }
       return;
     }
@@ -2414,13 +2515,18 @@ class _SlotBookingScreenState extends State<SlotBookingScreen>
     final success = await bookingProvider.cancelBooking(
       booking.bookingId,
       slot.slotId,
-      authProvider.currentUserId ?? 'owner',
-      'Cancelled by owner',
+      ownerId,
+      AppStrings.slotBookingCancelReason,
     );
 
-    if (success && mounted) {
-      _showPremiumToast(context, 'Booking cancelled', type: _ToastType.success);
+    if (!mounted) return;
+    if (success) {
+      showAppToast(context, AppStrings.slotBookingBookingCancelled,
+          type: ToastType.success);
       _loadSlots();
+    } else {
+      showAppToast(context, AppStrings.slotBookingCancelFailed,
+          type: ToastType.error);
     }
   }
 
@@ -2430,14 +2536,25 @@ class _SlotBookingScreenState extends State<SlotBookingScreen>
     final slotProvider = Provider.of<SlotProvider>(context, listen: false);
 
     final booking = await bookingProvider.getBookingBySlotId(slot.slotId);
-    if (booking != null) {
+    if (booking == null) {
+      if (mounted) {
+        showAppToast(context, AppStrings.slotBookingBookingNotFound,
+            type: ToastType.warning);
+      }
+      return;
+    }
+    try {
       await bookingProvider.markPaymentReceived(booking.bookingId);
       await slotProvider.markSlotAsBooked(slot.slotId);
       _loadSlots();
-
       if (mounted) {
-        _showPremiumToast(context, 'Payment marked as received',
-            type: _ToastType.success);
+        showAppToast(context, AppStrings.slotBookingPaymentMarkedReceived,
+            type: ToastType.success);
+      }
+    } catch (e) {
+      if (mounted) {
+        showAppToast(context, '${AppStrings.slotBookingPaymentMarkFailed}: $e',
+            type: ToastType.error);
       }
     }
   }
@@ -2500,11 +2617,19 @@ class _SlotBookingScreenState extends State<SlotBookingScreen>
   Future<void> _blockSlot(SlotModel slot) async {
     final slotProvider = Provider.of<SlotProvider>(context, listen: false);
     final authProvider = Provider.of<AuthProvider>(context, listen: false);
-    final ownerId = authProvider.currentUserId ?? '';
+    final ownerId = authProvider.currentUserId;
+    if (ownerId == null) {
+      if (mounted) {
+        showAppToast(context, AppStrings.slotBookingSessionExpired,
+            type: ToastType.error);
+      }
+      return;
+    }
     // Clear manual override so the slot renders as closed
     final key = _getSlotOverrideKey(slot.slotId);
     _manuallyOpenedSlots.remove(key);
-    await slotProvider.blockSlot(slot.slotId, ownerId, 'Blocked by owner');
+    await slotProvider.blockSlot(
+        slot.slotId, ownerId, BlockReason.manuallyBlockedByOwner);
     _loadSlots();
   }
 }
@@ -2570,8 +2695,6 @@ class _BookingDialogState extends State<_BookingDialog> {
   @override
   Widget build(BuildContext context) {
     final c = AppColors.of(context);
-    final dateStr =
-        '${widget.selectedDate.day}/${widget.selectedDate.month}/${widget.selectedDate.year}';
 
     // Month names for ticket-style date
     const months = [
@@ -2658,7 +2781,7 @@ class _BookingDialogState extends State<_BookingDialog> {
                                 children: [
                                   Expanded(
                                     child: Text(
-                                      'Create Booking',
+                                      AppStrings.bookingDialogTitle,
                                       style: const TextStyle(
                                         fontSize: 18,
                                         fontWeight: FontWeight.w600,
@@ -2700,11 +2823,14 @@ class _BookingDialogState extends State<_BookingDialog> {
                                 children: [
                                   Expanded(
                                     child: _ticketField(
-                                        'Net', netLabel ?? 'Net 1'),
+                                        AppStrings.bookingDialogTicketNet,
+                                        netLabel ?? 'Net 1'),
                                   ),
                                   const SizedBox(width: 16),
                                   Expanded(
-                                    child: _ticketField('Date', ticketDate),
+                                    child: _ticketField(
+                                        AppStrings.bookingDialogTicketDate,
+                                        ticketDate),
                                   ),
                                 ],
                               ),
@@ -2714,7 +2840,8 @@ class _BookingDialogState extends State<_BookingDialog> {
                                 children: [
                                   Expanded(
                                     child: _ticketField(
-                                        'Time', widget.slot.displayTimeRange),
+                                        AppStrings.bookingDialogTicketTime,
+                                        widget.slot.displayTimeRange),
                                   ),
                                   const SizedBox(width: 16),
                                   Expanded(
@@ -2722,7 +2849,9 @@ class _BookingDialogState extends State<_BookingDialog> {
                                       crossAxisAlignment:
                                           CrossAxisAlignment.start,
                                       children: [
-                                        Text('Amount',
+                                        Text(
+                                            AppStrings
+                                                .bookingDialogTicketAmount,
                                             style: TextStyle(
                                                 fontSize: 12,
                                                 fontWeight: FontWeight.w500,
@@ -2769,13 +2898,17 @@ class _BookingDialogState extends State<_BookingDialog> {
                                                     filled: false,
                                                   ),
                                                   validator: (v) {
-                                                    if (v?.isEmpty == true)
-                                                      return 'Required';
+                                                    if (v?.isEmpty == true) {
+                                                      return AppStrings
+                                                          .bookingDialogRequired;
+                                                    }
                                                     final amount =
                                                         double.tryParse(v!) ??
                                                             0;
-                                                    if (amount <= 0)
-                                                      return 'Invalid';
+                                                    if (amount <= 0) {
+                                                      return AppStrings
+                                                          .bookingDialogInvalid;
+                                                    }
                                                     return null;
                                                   },
                                                   onChanged: (_) =>
@@ -2796,7 +2929,9 @@ class _BookingDialogState extends State<_BookingDialog> {
                                                   borderRadius:
                                                       BorderRadius.circular(6),
                                                 ),
-                                                child: Text('Peak',
+                                                child: Text(
+                                                    AppStrings
+                                                        .bookingDialogPeak,
                                                     style: TextStyle(
                                                         fontSize: 9,
                                                         color: Colors.white,
@@ -2897,7 +3032,7 @@ class _BookingDialogState extends State<_BookingDialog> {
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
                               // ── Customer ──
-                              Text('Customer',
+                              Text(AppStrings.bookingDialogCustomer,
                                   style: TextStyle(
                                       fontSize: 12,
                                       fontWeight: FontWeight.w500,
@@ -2906,7 +3041,7 @@ class _BookingDialogState extends State<_BookingDialog> {
                               TextFormField(
                                 controller: _nameController,
                                 decoration: InputDecoration(
-                                  hintText: 'Full Name',
+                                  hintText: AppStrings.bookingDialogFullName,
                                   hintStyle: TextStyle(
                                       fontSize: 14, color: c.textHint),
                                   prefixIcon: Icon(Icons.person_outline_rounded,
@@ -2930,7 +3065,7 @@ class _BookingDialogState extends State<_BookingDialog> {
                                       horizontal: 14, vertical: 13),
                                 ),
                                 validator: (v) => v?.isEmpty == true
-                                    ? 'Please enter name'
+                                    ? AppStrings.bookingDialogEnterName
                                     : null,
                               ),
                               const SizedBox(height: 12),
@@ -2943,7 +3078,7 @@ class _BookingDialogState extends State<_BookingDialog> {
                                   LengthLimitingTextInputFormatter(10),
                                 ],
                                 decoration: InputDecoration(
-                                  hintText: 'Phone Number',
+                                  hintText: AppStrings.bookingDialogPhoneNumber,
                                   hintStyle: TextStyle(
                                       fontSize: 14, color: c.textHint),
                                   prefixIcon: Icon(Icons.phone_outlined,
@@ -2968,10 +3103,13 @@ class _BookingDialogState extends State<_BookingDialog> {
                                       horizontal: 14, vertical: 13),
                                 ),
                                 validator: (v) {
-                                  if (v?.isEmpty == true)
-                                    return 'Please enter phone number';
-                                  if (v!.length != 10)
-                                    return 'Phone number must be 10 digits';
+                                  if (v?.isEmpty == true) {
+                                    return AppStrings.bookingDialogEnterPhone;
+                                  }
+                                  if (v!.length != 10) {
+                                    return AppStrings
+                                        .bookingDialogPhoneTenDigits;
+                                  }
                                   return null;
                                 },
                               ),
@@ -2980,13 +3118,13 @@ class _BookingDialogState extends State<_BookingDialog> {
                               // ── Advance ──
                               Row(
                                 children: [
-                                  Text('Advance',
+                                  Text(AppStrings.bookingDialogAdvance,
                                       style: TextStyle(
                                           fontSize: 12,
                                           fontWeight: FontWeight.w500,
                                           color: c.textSecondary)),
                                   const SizedBox(width: 6),
-                                  Text('(Enter 0 if none)',
+                                  Text(AppStrings.bookingDialogAdvanceHint,
                                       style: TextStyle(
                                           fontSize: 10, color: c.textDisabled)),
                                 ],
@@ -3023,12 +3161,18 @@ class _BookingDialogState extends State<_BookingDialog> {
                                       horizontal: 14, vertical: 13),
                                 ),
                                 validator: (v) {
-                                  if (v?.isEmpty == true)
-                                    return 'Please enter advance amount (0 if none)';
+                                  if (v?.isEmpty == true) {
+                                    return AppStrings.bookingDialogEnterAdvance;
+                                  }
                                   final advance = double.tryParse(v!) ?? 0;
-                                  if (advance < 0) return 'Cannot be negative';
-                                  if (advance > _bookingAmount)
-                                    return 'Cannot exceed booking amount';
+                                  if (advance < 0) {
+                                    return AppStrings
+                                        .bookingDialogCannotBeNegative;
+                                  }
+                                  if (advance > _bookingAmount) {
+                                    return AppStrings
+                                        .bookingDialogCannotExceedBooking;
+                                  }
                                   return null;
                                 },
                                 onChanged: (_) => setState(() {}),
@@ -3051,10 +3195,16 @@ class _BookingDialogState extends State<_BookingDialog> {
                                     Expanded(
                                       child: Text(
                                         _advanceAmount >= _bookingAmount
-                                            ? 'Full payment: ₹${_advanceAmount.toInt()} (pending confirmation)'
+                                            ? bookingDialogFullPaymentMsg(
+                                                _advanceAmount.toInt())
                                             : _advanceAmount > 0
-                                                ? 'Advance: ₹${_advanceAmount.toInt()} | Remaining: ₹${(_bookingAmount - _advanceAmount).toInt()}'
-                                                : 'Payment: ₹${_bookingAmount.toInt()} (Pay at Turf)',
+                                                ? bookingDialogAdvanceRemainingMsg(
+                                                    _advanceAmount.toInt(),
+                                                    (_bookingAmount -
+                                                            _advanceAmount)
+                                                        .toInt())
+                                                : bookingDialogPayAtTurfMsg(
+                                                    _bookingAmount.toInt()),
                                         style: TextStyle(
                                           color: c.primary,
                                           fontWeight: FontWeight.w500,
@@ -3068,7 +3218,7 @@ class _BookingDialogState extends State<_BookingDialog> {
                               const SizedBox(height: 18),
 
                               // ── Source ──
-                              Text('Booking Source',
+                              Text(AppStrings.bookingDialogBookingSource,
                                   style: TextStyle(
                                       fontSize: 12,
                                       fontWeight: FontWeight.w500,
@@ -3104,7 +3254,8 @@ class _BookingDialogState extends State<_BookingDialog> {
                                               strokeWidth: 2),
                                         )
                                       : const Text(
-                                          'Confirm Booking',
+                                          AppStrings
+                                              .bookingDialogConfirmBooking,
                                           style: TextStyle(
                                               fontSize: 15,
                                               fontWeight: FontWeight.w600,
@@ -3222,7 +3373,8 @@ class _BookingDialogState extends State<_BookingDialog> {
                                 fontWeight: FontWeight.w600,
                                 color: isPhone ? c.onPrimary : c.textSecondary,
                               ),
-                              child: const Text('Phone'),
+                              child: const Text(
+                                  AppStrings.bookingDialogSourcePhone),
                             ),
                           ],
                         ),
@@ -3255,7 +3407,8 @@ class _BookingDialogState extends State<_BookingDialog> {
                                 fontWeight: FontWeight.w600,
                                 color: !isPhone ? c.onPrimary : c.textSecondary,
                               ),
-                              child: const Text('Walk-In'),
+                              child: const Text(
+                                  AppStrings.bookingDialogSourceWalkIn),
                             ),
                           ],
                         ),
@@ -3278,45 +3431,56 @@ class _BookingDialogState extends State<_BookingDialog> {
 
     final bookingProvider =
         Provider.of<BookingProvider>(context, listen: false);
-    final authProvider = Provider.of<AuthProvider>(context, listen: false);
 
-    final bookingId = await bookingProvider.createManualBooking(
-      turfId: widget.turf.turfId,
-      slotId: widget.slot.slotId,
-      bookingDate: widget.selectedDate.toIso8601String().split('T')[0],
-      startTime: widget.slot.startTime,
-      endTime: widget.slot.endTime,
-      turfName: widget.turf.turfName,
-      customerName: _nameController.text.trim(),
-      customerPhone: _phoneController.text.trim(),
-      bookingSource: _bookingSource,
-      amount: _bookingAmount, // Use editable booking amount
-      advanceAmount: _advanceAmount,
-      netNumber: widget.selectedNetNumber,
-    );
+    try {
+      final bookingId = await bookingProvider.createManualBooking(
+        turfId: widget.turf.turfId,
+        slotId: widget.slot.slotId,
+        bookingDate: widget.selectedDate.toIso8601String().split('T')[0],
+        startTime: widget.slot.startTime,
+        endTime: widget.slot.endTime,
+        turfName: widget.turf.turfName,
+        customerName: _nameController.text.trim(),
+        customerPhone: _phoneController.text.trim(),
+        bookingSource: _bookingSource,
+        amount: _bookingAmount, // Use editable booking amount
+        advanceAmount: _advanceAmount,
+        netNumber: widget.selectedNetNumber,
+      );
 
-    setState(() => _isLoading = false);
+      if (!mounted) return;
+      setState(() => _isLoading = false);
 
-    if (bookingId != null && mounted) {
-      // Update slot price if owner changed the booking amount
-      if (_bookingAmount != widget.slot.price) {
-        final dbService = DatabaseService();
-        await dbService.updateSlotPrice(widget.slot.slotId, _bookingAmount);
+      if (bookingId != null) {
+        // Update slot price if owner changed the booking amount
+        if (_bookingAmount != widget.slot.price) {
+          try {
+            await DatabaseService()
+                .updateSlotPrice(widget.slot.slotId, _bookingAmount);
+          } catch (_) {
+            // Non-fatal: booking succeeded; price sync failure is silent.
+          }
+        }
+
+        if (!mounted) return;
+        Navigator.pop(context);
+        widget.onBookingCreated();
+
+        // Show payment confirmation dialog
+        _showPaymentConfirmation(bookingId);
+      } else {
+        showAppToast(context, AppStrings.bookingDialogCreateFailed,
+            type: ToastType.error);
       }
-
-      Navigator.pop(context);
-      widget.onBookingCreated();
-
-      // Show payment confirmation dialog with owner info
-      final owner = authProvider.currentOwner;
-      _showPaymentConfirmation(bookingId, owner);
-    } else {
-      _showPremiumToast(context, 'Failed to create booking',
-          type: _ToastType.error);
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _isLoading = false);
+      showAppToast(context, '${AppStrings.bookingDialogCreateFailed}: $e',
+          type: ToastType.error);
     }
   }
 
-  void _showPaymentConfirmation(String bookingId, dynamic owner) {
+  void _showPaymentConfirmation(String bookingId) {
     final dateStr =
         '${widget.selectedDate.day}/${widget.selectedDate.month}/${widget.selectedDate.year}';
     final customerName = _nameController.text.trim();
@@ -3381,7 +3545,6 @@ class _BookingSuccessPopupState extends State<_BookingSuccessPopup>
 
   bool _isSendingConfirmation = false;
   bool _confirmationSent = false;
-  bool _isMarkingPayment = false;
 
   @override
   void initState() {
@@ -3589,7 +3752,7 @@ class _BookingSuccessPopupState extends State<_BookingSuccessPopup>
           ),
           const SizedBox(height: 16),
           const Text(
-            'Booking Successful!',
+            AppStrings.bookingSuccessTitle,
             style: TextStyle(
               color: Colors.white,
               fontSize: 24,
@@ -3669,7 +3832,7 @@ class _BookingSuccessPopupState extends State<_BookingSuccessPopup>
                             borderRadius: BorderRadius.circular(10),
                           ),
                           child: Text(
-                            'Net ${widget.selectedNetNumber}',
+                            '${AppStrings.bookingDialogTicketNet} ${widget.selectedNetNumber}',
                             style: const TextStyle(
                               color: Colors.white,
                               fontSize: 11,
@@ -3689,10 +3852,14 @@ class _BookingSuccessPopupState extends State<_BookingSuccessPopup>
             padding: const EdgeInsets.all(16),
             child: Column(
               children: [
-                _buildReceiptRow(Icons.person, 'Customer', widget.customerName),
-                _buildReceiptRow(Icons.calendar_today, 'Date', widget.dateStr),
+                _buildReceiptRow(Icons.person, AppStrings.bookingDialogCustomer,
+                    widget.customerName),
+                _buildReceiptRow(Icons.calendar_today,
+                    AppStrings.bookingDialogTicketDate, widget.dateStr),
                 _buildReceiptRow(
-                    Icons.schedule, 'Time', widget.slot.displayTimeRange),
+                    Icons.schedule,
+                    AppStrings.bookingDialogTicketTime,
+                    widget.slot.displayTimeRange),
                 const Divider(height: 24),
 
                 // Payment Section
@@ -3745,14 +3912,14 @@ class _BookingSuccessPopupState extends State<_BookingSuccessPopup>
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
             const Text(
-              'Total Amount',
+              AppStrings.bookingSuccessTotalAmount,
               style: TextStyle(
                 fontWeight: FontWeight.w600,
                 fontSize: 15,
               ),
             ),
             Text(
-              '₹${widget.bookingAmount.toInt()}',
+              PriceCalculator.formatPrice(widget.bookingAmount),
               style: TextStyle(
                 fontWeight: FontWeight.bold,
                 fontSize: 22,
@@ -3788,7 +3955,9 @@ class _BookingSuccessPopupState extends State<_BookingSuccessPopup>
                         ),
                         const SizedBox(width: 6),
                         Text(
-                          _isFullPayment ? 'Paid' : 'Advance',
+                          _isFullPayment
+                              ? AppStrings.bookingSuccessPaid
+                              : AppStrings.bookingSuccessAdvanceLabel,
                           style: TextStyle(
                             color: _isFullPayment ? c.success : Colors.orange,
                             fontWeight: FontWeight.w600,
@@ -3797,7 +3966,7 @@ class _BookingSuccessPopupState extends State<_BookingSuccessPopup>
                       ],
                     ),
                     Text(
-                      '₹${widget.advanceAmount.toInt()}',
+                      PriceCalculator.formatPrice(widget.advanceAmount),
                       style: TextStyle(
                         fontWeight: FontWeight.bold,
                         color: _isFullPayment ? c.success : Colors.orange,
@@ -3811,11 +3980,11 @@ class _BookingSuccessPopupState extends State<_BookingSuccessPopup>
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
                       const Text(
-                        'Balance Due',
+                        AppStrings.bookingSuccessBalanceDue,
                         style: TextStyle(fontWeight: FontWeight.w500),
                       ),
                       Text(
-                        '₹${_remainingAmount.toInt()}',
+                        PriceCalculator.formatPrice(_remainingAmount),
                         style: const TextStyle(
                           fontWeight: FontWeight.bold,
                           color: Colors.orange,
@@ -3842,7 +4011,7 @@ class _BookingSuccessPopupState extends State<_BookingSuccessPopup>
                     size: 16, color: Colors.blue.shade700),
                 const SizedBox(width: 6),
                 Text(
-                  'Payment at venue',
+                  AppStrings.bookingSuccessPaymentAtVenue,
                   style: TextStyle(
                     color: Colors.blue.shade700,
                     fontWeight: FontWeight.w600,
@@ -3865,9 +4034,10 @@ class _BookingSuccessPopupState extends State<_BookingSuccessPopup>
         _buildMainActionButton(
           icon: _confirmationSent ? Icons.check_circle : Icons.send,
           label: _confirmationSent
-              ? 'Confirmation Sent!'
-              : 'Send Booking Confirmation',
-          sublabel: _confirmationSent ? null : 'Via FieldPass Business',
+              ? AppStrings.bookingSuccessConfirmationSent
+              : AppStrings.bookingSuccessSendConfirmation,
+          sublabel:
+              _confirmationSent ? null : AppStrings.bookingSuccessViaFieldPass,
           color: _confirmationSent ? c.success : const Color(0xFF25D366),
           isLoading: _isSendingConfirmation,
           onTap: _confirmationSent ? null : _sendBookingConfirmation,
@@ -3883,7 +4053,7 @@ class _BookingSuccessPopupState extends State<_BookingSuccessPopup>
               Expanded(
                 child: _buildSmallActionButton(
                   icon: Icons.receipt_long,
-                  label: 'Send Receipt',
+                  label: AppStrings.bookingSuccessSendReceipt,
                   color: c.primary,
                   onTap: _sendPaymentReceipt,
                 ),
@@ -3895,7 +4065,7 @@ class _BookingSuccessPopupState extends State<_BookingSuccessPopup>
             Expanded(
               child: _buildSmallActionButton(
                 icon: Icons.copy,
-                label: 'Copy Details',
+                label: AppStrings.bookingSuccessCopyDetails,
                 color: Colors.grey.shade700,
                 onTap: _copyBookingDetails,
               ),
@@ -3907,7 +4077,7 @@ class _BookingSuccessPopupState extends State<_BookingSuccessPopup>
             Expanded(
               child: _buildSmallActionButton(
                 icon: Icons.share,
-                label: 'Share',
+                label: AppStrings.bookingSuccessShare,
                 color: Colors.blue.shade600,
                 onTap: _shareBookingDetails,
               ),
@@ -3954,7 +4124,7 @@ class _BookingSuccessPopupState extends State<_BookingSuccessPopup>
                 crossAxisAlignment: CrossAxisAlignment.center,
                 children: [
                   Text(
-                    isLoading ? 'Sending...' : label,
+                    isLoading ? AppStrings.bookingSuccessSending : label,
                     style: const TextStyle(
                       color: Colors.white,
                       fontWeight: FontWeight.bold,
@@ -4019,7 +4189,7 @@ class _BookingSuccessPopupState extends State<_BookingSuccessPopup>
         padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 12),
       ),
       child: Text(
-        'Done',
+        AppStrings.bookingSuccessDone,
         style: TextStyle(
           color: c.textSecondary,
           fontSize: 16,
@@ -4105,63 +4275,49 @@ See you at the turf! 🏏
         });
 
         if (!sent) {
-          _showPremiumToast(
+          showAppToast(
             context,
-            'Unable to send WhatsApp message. Verify Cloud API configuration.',
-            type: _ToastType.error,
+            AppStrings.bookingSuccessSendFailed,
+            type: ToastType.error,
           );
         }
       }
     } catch (e) {
       if (mounted) {
         setState(() => _isSendingConfirmation = false);
-        _showPremiumToast(context, 'Error: $e', type: _ToastType.error);
+        showAppToast(context, '${AppStrings.bookingSuccessSendFailed}: $e',
+            type: ToastType.error);
       }
     }
   }
 
   /// Send payment receipt via WhatsApp Cloud API
   Future<void> _sendPaymentReceipt() async {
-    final message = _buildReceiptMessage();
-    final sent = await WhatsAppService.sendTextMessage(
-      toPhone: widget.customerPhone,
-      message: message,
-    );
-
-    if (!mounted) return;
-
-    _showPremiumToast(
-      context,
-      sent
-          ? 'Receipt sent on WhatsApp'
-          : 'Unable to send receipt. Verify Cloud API configuration.',
-      type: sent ? _ToastType.success : _ToastType.error,
-    );
-    if (sent) {
-      setState(() {
-        _confirmationSent = true;
-      });
-    }
-  }
-
-  /// Mark payment as confirmed
-  Future<void> _markPaymentConfirmed() async {
-    setState(() => _isMarkingPayment = true);
-
     try {
-      final bookingProvider =
-          Provider.of<BookingProvider>(context, listen: false);
-      await bookingProvider.markPaymentReceived(widget.bookingId);
+      final message = _buildReceiptMessage();
+      final sent = await WhatsAppService.sendTextMessage(
+        toPhone: widget.customerPhone,
+        message: message,
+      );
 
-      if (mounted) {
-        _showPremiumToast(context, 'Payment marked as confirmed!',
-            type: _ToastType.success);
-        Navigator.pop(context);
+      if (!mounted) return;
+
+      showAppToast(
+        context,
+        sent
+            ? AppStrings.bookingSuccessReceiptSent
+            : AppStrings.bookingSuccessReceiptFailed,
+        type: sent ? ToastType.success : ToastType.error,
+      );
+      if (sent) {
+        setState(() {
+          _confirmationSent = true;
+        });
       }
     } catch (e) {
       if (mounted) {
-        setState(() => _isMarkingPayment = false);
-        _showPremiumToast(context, 'Error: $e', type: _ToastType.error);
+        showAppToast(context, '${AppStrings.bookingSuccessReceiptFailed}: $e',
+            type: ToastType.error);
       }
     }
   }
@@ -4191,8 +4347,8 @@ ${!_isFullPayment && _hasAdvance ? 'Balance: ₹${_remainingAmount.toInt()}' : '
         .trim();
 
     Clipboard.setData(ClipboardData(text: details));
-    _showPremiumToast(context, 'Booking details copied!',
-        type: _ToastType.success);
+    showAppToast(context, AppStrings.bookingSuccessCopied,
+        type: ToastType.success);
   }
 
   /// Share booking details
@@ -4214,8 +4370,8 @@ ${!_isFullPayment && _hasAdvance ? 'Balance: ₹${_remainingAmount.toInt()}' : '
 
     // Use clipboard as fallback for sharing
     Clipboard.setData(ClipboardData(text: shareText));
-    _showPremiumToast(context, 'Booking details copied for sharing!',
-        type: _ToastType.success);
+    showAppToast(context, AppStrings.bookingSuccessCopiedShare,
+        type: ToastType.success);
   }
 }
 

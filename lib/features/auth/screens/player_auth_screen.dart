@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import '../../../config/colors.dart';
 import '../../../config/glass_widgets.dart';
@@ -6,10 +7,23 @@ import '../../../config/abstract_bg.dart';
 import '../providers/auth_provider.dart';
 import '../../../app/routes.dart';
 import '../../../core/constants/enums.dart';
+import '../../../core/constants/strings.dart';
 import '../../../core/utils/app_toast.dart';
 import '../utils/auth_form_utils.dart';
 import '../widgets/pending_signup_verification_dialog.dart';
 
+/// Player-side authentication hub (Phase 5 Iter 20 hardened).
+///
+/// Hosts three flows behind a tabbed UI:
+///   1. Email/password login → `AppRoutes.playerHome`.
+///   2. Google login → pending-signup dialog if phone missing → `playerHome`.
+///   3. Manual signup (name/email/phone/password) → OTP dialog → `playerHome`.
+///
+/// Navigation safety:
+///   * `_isNavigating` locks re-entry during a push so rapid taps cannot
+///     double-navigate the back button.
+///   * `_handledPendingOnLoad` is a one-shot flag preventing repeated
+///     post-frame resume attempts on rebuild.
 class PlayerAuthScreen extends StatefulWidget {
   const PlayerAuthScreen({super.key});
 
@@ -24,9 +38,29 @@ class _PlayerAuthScreenState extends State<PlayerAuthScreen>
   bool _obscureSignupPassword = true;
   bool _obscureSignupConfirmPassword = true;
   bool _handledPendingOnLoad = false;
+  bool _isNavigating = false;
+  // Phase 8 Iter 4 AUTH-08: phone-OTP login support for players (mirrors
+  // owner_auth_screen). `_isLoginWithEmail` toggles the inner method;
+  // `_otpSent` tracks whether we have sent the SMS for the entered phone.
+  bool _isLoginWithEmail = true;
+  bool _otpSent = false;
+
+  Future<void> _guardedNavigate(Future<void> Function() action) async {
+    if (_isNavigating) return;
+    _isNavigating = true;
+    try {
+      await action();
+    } finally {
+      if (mounted) _isNavigating = false;
+    }
+  }
 
   final _loginEmailController = TextEditingController();
   final _loginPasswordController = TextEditingController();
+  // Phase 8 Iter 4 AUTH-08: phone-OTP login controllers.
+  final _loginPhoneController = TextEditingController();
+  final _loginOtpController = TextEditingController();
+  final _loginPhoneFormKey = GlobalKey<FormState>();
 
   final _signupNameController = TextEditingController();
   final _signupEmailController = TextEditingController();
@@ -52,6 +86,8 @@ class _PlayerAuthScreenState extends State<PlayerAuthScreen>
     _tabController.dispose();
     _loginEmailController.dispose();
     _loginPasswordController.dispose();
+    _loginPhoneController.dispose();
+    _loginOtpController.dispose();
     _signupNameController.dispose();
     _signupEmailController.dispose();
     _signupPhoneController.dispose();
@@ -75,11 +111,13 @@ class _PlayerAuthScreenState extends State<PlayerAuthScreen>
     if (!mounted || !completed) return;
 
     if (authProvider.currentPlayer != null) {
-      Navigator.pushNamedAndRemoveUntil(
-        context,
-        AppRoutes.playerHome,
-        (route) => false,
-      );
+      await _guardedNavigate(() async {
+        Navigator.pushNamedAndRemoveUntil(
+          context,
+          AppRoutes.playerHome,
+          (route) => false,
+        );
+      });
     }
   }
 
@@ -89,7 +127,7 @@ class _PlayerAuthScreenState extends State<PlayerAuthScreen>
     final authProvider = Provider.of<AuthProvider>(context, listen: false);
     final success = await authProvider.signInPlayer(
       email: _loginEmailController.text.trim(),
-      password: _loginPasswordController.text.trim(),
+      password: _loginPasswordController.text,
     );
 
     if (success && mounted) {
@@ -101,7 +139,9 @@ class _PlayerAuthScreenState extends State<PlayerAuthScreen>
 
   Future<void> _handleGoogleContinue() async {
     final authProvider = Provider.of<AuthProvider>(context, listen: false);
-    final success = await authProvider.signInPlayerWithGoogle();
+    final success = await authProvider.signInPlayerWithGoogle(
+      allowSignup: _tabController.index == 1,
+    );
 
     if (success && mounted) {
       await _continueToPlayerHomeOrPhoneGate(authProvider);
@@ -119,7 +159,7 @@ class _PlayerAuthScreenState extends State<PlayerAuthScreen>
       name: _signupNameController.text.trim(),
       email: _signupEmailController.text.trim(),
       phone: AuthFormUtils.normalizeIndianPhone(_signupPhoneController.text),
-      password: _signupPasswordController.text.trim(),
+      password: _signupPasswordController.text,
       role: UserRole.player,
     );
 
@@ -146,11 +186,13 @@ class _PlayerAuthScreenState extends State<PlayerAuthScreen>
       return;
     }
 
-    Navigator.pushNamedAndRemoveUntil(
-      context,
-      AppRoutes.playerHome,
-      (route) => false,
-    );
+    await _guardedNavigate(() async {
+      Navigator.pushNamedAndRemoveUntil(
+        context,
+        AppRoutes.playerHome,
+        (route) => false,
+      );
+    });
   }
 
   Future<bool> _completePendingPlayerSignupIfNeeded(
@@ -185,12 +227,12 @@ class _PlayerAuthScreenState extends State<PlayerAuthScreen>
     await showDialog<void>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('Action Required'),
+        title: const Text(AppStrings.playerAuthActionRequiredTitle),
         content: Text(message),
         actions: [
           TextButton(
             onPressed: () => Navigator.of(context).pop(),
-            child: const Text('OK'),
+            child: const Text(AppStrings.playerAuthOkButton),
           ),
         ],
       ),
@@ -210,7 +252,7 @@ class _PlayerAuthScreenState extends State<PlayerAuthScreen>
       body: GlassScaffoldBackground(
         child: Stack(
           children: [
-            const AbstractBgShapes(),
+            const RepaintBoundary(child: AbstractBgShapes()),
             SafeArea(
               child: Column(
                 children: [
@@ -222,11 +264,14 @@ class _PlayerAuthScreenState extends State<PlayerAuthScreen>
                         IconButton(
                           icon: Icon(Icons.arrow_back_ios,
                               color: c.textPrimary, size: 20),
-                          onPressed: () => Navigator.pop(context),
+                          tooltip: AppStrings.playerAuthBackTooltip,
+                          onPressed: () => _guardedNavigate(() async {
+                            Navigator.pop(context);
+                          }),
                         ),
                         Expanded(
                           child: Text(
-                            'Player Zone',
+                            AppStrings.playerAuthAppBarTitle,
                             textAlign: TextAlign.center,
                             style: TextStyle(
                               color: c.textPrimary,
@@ -241,7 +286,7 @@ class _PlayerAuthScreenState extends State<PlayerAuthScreen>
                   ),
                   const SizedBox(height: 8),
                   Text(
-                    'FieldPass Player',
+                    AppStrings.playerAuthBrandTitle,
                     style: TextStyle(
                       fontSize: 24,
                       fontWeight: FontWeight.bold,
@@ -251,7 +296,7 @@ class _PlayerAuthScreenState extends State<PlayerAuthScreen>
                   ),
                   const SizedBox(height: 4),
                   Text(
-                    'Discover. Book. Play.',
+                    AppStrings.playerAuthBrandTagline,
                     style: TextStyle(
                       fontSize: 14,
                       color: c.textSecondary,
@@ -273,8 +318,8 @@ class _PlayerAuthScreenState extends State<PlayerAuthScreen>
                       indicatorSize: TabBarIndicatorSize.label,
                       dividerColor: Colors.transparent,
                       tabs: const [
-                        Tab(text: 'LOGIN'),
-                        Tab(text: 'SIGN UP'),
+                        Tab(text: AppStrings.playerAuthTabLogin),
+                        Tab(text: AppStrings.playerAuthTabSignup),
                       ],
                     ),
                   ),
@@ -299,62 +344,251 @@ class _PlayerAuthScreenState extends State<PlayerAuthScreen>
   Widget _buildLoginTab() {
     return SingleChildScrollView(
       padding: const EdgeInsets.all(24),
-      child: Form(
-        key: _loginFormKey,
-        child: Column(
-          children: [
-            TextFormField(
-              controller: _loginEmailController,
-              decoration: _inputDecoration(
-                context,
-                'Email Address',
-                Icons.email_outlined,
-              ),
-              keyboardType: TextInputType.emailAddress,
-              validator: (val) {
-                if (val == null || val.trim().isEmpty) {
-                  return 'Email is required';
-                }
-                return AuthFormUtils.isValidEmail(val)
-                    ? null
-                    : 'Enter a valid email address';
-              },
-            ),
-            const SizedBox(height: 16),
-            TextFormField(
-              controller: _loginPasswordController,
-              decoration: _inputDecoration(
-                context,
-                'Password',
-                Icons.lock_outline,
-                suffixIcon: _passwordVisibilitySuffix(
-                  isObscured: _obscureLoginPassword,
-                  onPressed: () => setState(
-                    () => _obscureLoginPassword = !_obscureLoginPassword,
-                  ),
+      child: Column(
+        children: [
+          // Phase 8 Iter 4 AUTH-08: method toggle (Email vs Phone OTP).
+          Row(
+            children: [
+              Expanded(
+                child: _buildMethodToggle(
+                  context: context,
+                  title: AppStrings.ownerAuthMethodEmail,
+                  isSelected: _isLoginWithEmail,
+                  onTap: () => setState(() {
+                    _isLoginWithEmail = true;
+                    _otpSent = false;
+                    _loginOtpController.clear();
+                  }),
                 ),
               ),
-              obscureText: _obscureLoginPassword,
-              validator: (val) {
-                if (val == null || val.isEmpty) {
-                  return 'Password is required';
-                }
-                return val.length >= 8
-                    ? null
-                    : 'Password must be at least 8 characters';
-              },
-            ),
-            const SizedBox(height: 24),
-            _buildSubmitButton('Login', _handleEmailLogin),
-            const SizedBox(height: 12),
-            _buildGoogleButton(
-              text: 'Continue with Google',
-              onPressed: _handleGoogleContinue,
-            ),
-          ],
+              const SizedBox(width: 16),
+              Expanded(
+                child: _buildMethodToggle(
+                  context: context,
+                  title: AppStrings.ownerAuthMethodPhone,
+                  isSelected: !_isLoginWithEmail,
+                  onTap: () => setState(() => _isLoginWithEmail = false),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 24),
+          if (_isLoginWithEmail)
+            _buildEmailLoginForm()
+          else
+            _buildPhoneLoginForm(),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildMethodToggle({
+    required BuildContext context,
+    required String title,
+    required bool isSelected,
+    required VoidCallback onTap,
+  }) {
+    final c = AppColors.of(context);
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(vertical: 12),
+        decoration: BoxDecoration(
+          color: isSelected ? c.primary.withValues(alpha: 0.1) : c.glassFill,
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(
+            color:
+                isSelected ? c.primary.withValues(alpha: 0.5) : c.glassBorder,
+            width: 1.5,
+          ),
+          boxShadow: isSelected ? AppColors.neonGlow(blur: 10) : null,
+        ),
+        alignment: Alignment.center,
+        child: Text(
+          title,
+          style: TextStyle(
+            fontWeight: FontWeight.bold,
+            color: isSelected ? c.primary : c.textSecondary,
+          ),
         ),
       ),
     );
+  }
+
+  Widget _buildEmailLoginForm() {
+    return Form(
+      key: _loginFormKey,
+      child: Column(
+        children: [
+          TextFormField(
+            controller: _loginEmailController,
+            decoration: _inputDecoration(
+              context,
+              'Email Address',
+              Icons.email_outlined,
+            ),
+            keyboardType: TextInputType.emailAddress,
+            autofillHints: const [AutofillHints.email, AutofillHints.username],
+            textInputAction: TextInputAction.next,
+            validator: (val) {
+              if (val == null || val.trim().isEmpty) {
+                return 'Email is required';
+              }
+              return AuthFormUtils.isValidEmail(val)
+                  ? null
+                  : 'Enter a valid email address';
+            },
+          ),
+          const SizedBox(height: 16),
+          TextFormField(
+            controller: _loginPasswordController,
+            decoration: _inputDecoration(
+              context,
+              'Password',
+              Icons.lock_outline,
+              suffixIcon: _passwordVisibilitySuffix(
+                isObscured: _obscureLoginPassword,
+                onPressed: () => setState(
+                  () => _obscureLoginPassword = !_obscureLoginPassword,
+                ),
+              ),
+            ),
+            obscureText: _obscureLoginPassword,
+            autofillHints: const [AutofillHints.password],
+            textInputAction: TextInputAction.done,
+            onFieldSubmitted: (_) => _handleEmailLogin(),
+            validator: (val) {
+              if (val == null || val.isEmpty) {
+                return 'Password is required';
+              }
+              return val.length >= 8
+                  ? null
+                  : 'Password must be at least 8 characters';
+            },
+          ),
+          const SizedBox(height: 24),
+          _buildSubmitButton(AppStrings.login, _handleEmailLogin),
+          const SizedBox(height: 12),
+          _buildGoogleButton(
+            text: AppStrings.playerAuthContinueWithGoogle,
+            onPressed: _handleGoogleContinue,
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildPhoneLoginForm() {
+    final c = AppColors.of(context);
+    return Form(
+      key: _loginPhoneFormKey,
+      child: Column(
+        children: [
+          TextFormField(
+            controller: _loginPhoneController,
+            decoration:
+                _inputDecoration(context, 'Phone Number', Icons.phone).copyWith(
+              prefixText: '+91 ',
+              prefixStyle: const TextStyle(fontWeight: FontWeight.bold),
+              counterText: '',
+            ),
+            keyboardType: TextInputType.phone,
+            maxLength: 10,
+            enabled: !_otpSent,
+            autofillHints: const [AutofillHints.telephoneNumberNational],
+            textInputAction: TextInputAction.done,
+            inputFormatters: [
+              FilteringTextInputFormatter.digitsOnly,
+              LengthLimitingTextInputFormatter(10),
+            ],
+            validator: (val) {
+              if (val == null || val.trim().isEmpty) {
+                return 'Phone number is required';
+              }
+              return AuthFormUtils.isValidIndianPhoneInput(val)
+                  ? null
+                  : 'Enter a valid 10-digit phone number';
+            },
+          ),
+          if (_otpSent) ...[
+            const SizedBox(height: 16),
+            TextFormField(
+              controller: _loginOtpController,
+              decoration: _inputDecoration(
+                      context, AppStrings.ownerAuthOtpLabel, Icons.security)
+                  .copyWith(counterText: ''),
+              keyboardType: TextInputType.number,
+              maxLength: 6,
+              textAlign: TextAlign.center,
+              autofillHints: const [AutofillHints.oneTimeCode],
+              textInputAction: TextInputAction.done,
+              inputFormatters: [
+                FilteringTextInputFormatter.digitsOnly,
+                LengthLimitingTextInputFormatter(6),
+              ],
+              onFieldSubmitted: (_) => _handlePhoneLoginVerifyOtp(),
+              style: TextStyle(
+                  letterSpacing: 8,
+                  fontWeight: FontWeight.bold,
+                  color: c.textPrimary),
+            ),
+            const SizedBox(height: 24),
+            _buildSubmitButton(AppStrings.ownerAuthVerifyAndContinue,
+                _handlePhoneLoginVerifyOtp),
+            const SizedBox(height: 12),
+            TextButton(
+              onPressed: () => setState(() {
+                _otpSent = false;
+                _loginOtpController.clear();
+              }),
+              child: Text(AppStrings.ownerAuthChangeNumber,
+                  style: TextStyle(color: c.secondary)),
+            ),
+          ] else ...[
+            const SizedBox(height: 24),
+            _buildSubmitButton(
+                AppStrings.ownerAuthSendOtp, _handlePhoneLoginSendOtp),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Future<void> _handlePhoneLoginSendOtp() async {
+    if (!_loginPhoneFormKey.currentState!.validate()) return;
+
+    final authProvider = Provider.of<AuthProvider>(context, listen: false);
+    final phone =
+        AuthFormUtils.normalizeIndianPhone(_loginPhoneController.text);
+
+    final success =
+        await authProvider.verifyPhone(phone, role: UserRole.player);
+
+    if (!mounted) return;
+    if (success) {
+      setState(() => _otpSent = true);
+      showAppToast(context, 'OTP sent to $phone', type: ToastType.success);
+    } else if (authProvider.errorMessage != null) {
+      await _showProviderError(authProvider);
+    }
+  }
+
+  Future<void> _handlePhoneLoginVerifyOtp() async {
+    final otp = _loginOtpController.text.trim();
+    if (otp.length != 6) {
+      _showError(AppStrings.ownerAuthInvalidOtp);
+      return;
+    }
+
+    final authProvider = Provider.of<AuthProvider>(context, listen: false);
+    final success = await authProvider.verifyOTP(otp);
+
+    if (!mounted) return;
+    if (success) {
+      await _continueToPlayerHomeOrPhoneGate(authProvider);
+    } else if (authProvider.errorMessage != null) {
+      await _showProviderError(authProvider);
+    }
   }
 
   Widget _buildSignupTab() {
@@ -367,7 +601,7 @@ class _PlayerAuthScreenState extends State<PlayerAuthScreen>
           _buildGoogleSignupPathCard(),
           const SizedBox(height: 18),
           Text(
-            'OR SIGN UP MANUALLY',
+            AppStrings.playerAuthOrSignupManually,
             style: TextStyle(
               color: c.textSecondary,
               fontSize: 12,
@@ -387,6 +621,8 @@ class _PlayerAuthScreenState extends State<PlayerAuthScreen>
                     'Full Name',
                     Icons.person_outline,
                   ),
+                  autofillHints: const [AutofillHints.name],
+                  textInputAction: TextInputAction.next,
                   validator: (val) {
                     if (val == null || val.trim().isEmpty) {
                       return 'Full name is required';
@@ -405,6 +641,11 @@ class _PlayerAuthScreenState extends State<PlayerAuthScreen>
                     Icons.email_outlined,
                   ),
                   keyboardType: TextInputType.emailAddress,
+                  autofillHints: const [
+                    AutofillHints.email,
+                    AutofillHints.username
+                  ],
+                  textInputAction: TextInputAction.next,
                   validator: (val) {
                     if (val == null || val.trim().isEmpty) {
                       return 'Email is required';
@@ -422,9 +663,16 @@ class _PlayerAuthScreenState extends State<PlayerAuthScreen>
                           .copyWith(
                     prefixText: '+91 ',
                     prefixStyle: const TextStyle(fontWeight: FontWeight.bold),
+                    counterText: '',
                   ),
                   keyboardType: TextInputType.phone,
                   maxLength: 10,
+                  autofillHints: const [AutofillHints.telephoneNumberNational],
+                  textInputAction: TextInputAction.next,
+                  inputFormatters: [
+                    FilteringTextInputFormatter.digitsOnly,
+                    LengthLimitingTextInputFormatter(10),
+                  ],
                   validator: (val) {
                     if (val == null || val.trim().isEmpty) {
                       return 'Phone number is required';
@@ -449,6 +697,8 @@ class _PlayerAuthScreenState extends State<PlayerAuthScreen>
                     ),
                   ),
                   obscureText: _obscureSignupPassword,
+                  autofillHints: const [AutofillHints.newPassword],
+                  textInputAction: TextInputAction.next,
                   validator: (val) {
                     if (val == null || val.isEmpty) {
                       return 'Password is required';
@@ -475,6 +725,9 @@ class _PlayerAuthScreenState extends State<PlayerAuthScreen>
                     ),
                   ),
                   obscureText: _obscureSignupConfirmPassword,
+                  autofillHints: const [AutofillHints.newPassword],
+                  textInputAction: TextInputAction.done,
+                  onFieldSubmitted: (_) => _handleSignup(),
                   validator: (val) {
                     if (val == null || val.isEmpty) {
                       return 'Confirm password is required';
@@ -486,10 +739,10 @@ class _PlayerAuthScreenState extends State<PlayerAuthScreen>
                   },
                 ),
                 const SizedBox(height: 32),
-                _buildSubmitButton('Sign Up', _handleSignup),
+                _buildSubmitButton(AppStrings.signup, _handleSignup),
                 const SizedBox(height: 24),
                 Text(
-                  'Phone OTP verification is required before account access.',
+                  AppStrings.playerAuthOtpRequiredBlurb,
                   style: TextStyle(color: c.textSecondary, fontSize: 12),
                   textAlign: TextAlign.center,
                 ),
@@ -516,7 +769,7 @@ class _PlayerAuthScreenState extends State<PlayerAuthScreen>
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
-            'Quick Sign Up',
+            AppStrings.playerAuthQuickSignup,
             style: TextStyle(
               color: c.textPrimary,
               fontSize: 16,
@@ -525,7 +778,7 @@ class _PlayerAuthScreenState extends State<PlayerAuthScreen>
           ),
           const SizedBox(height: 6),
           Text(
-            'Name and email are fetched from Google. Phone OTP verification is mandatory.',
+            AppStrings.playerAuthQuickSignupBlurb,
             style: TextStyle(
               color: c.textSecondary,
               fontSize: 12,
@@ -533,7 +786,7 @@ class _PlayerAuthScreenState extends State<PlayerAuthScreen>
           ),
           const SizedBox(height: 12),
           _buildGoogleButton(
-            text: 'Sign up with Google',
+            text: AppStrings.playerAuthSignupWithGoogle,
             onPressed: _handleGoogleContinue,
           ),
         ],
@@ -583,6 +836,7 @@ class _PlayerAuthScreenState extends State<PlayerAuthScreen>
         isObscured ? Icons.visibility_off : Icons.visibility,
         color: c.textSecondary,
       ),
+      tooltip: AppStrings.playerAuthPasswordVisibilityTooltip,
       onPressed: onPressed,
     );
   }

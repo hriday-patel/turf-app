@@ -3,6 +3,9 @@ import 'package:provider/provider.dart';
 import '../../../app/routes.dart';
 import '../../../config/colors.dart';
 import '../../../core/constants/enums.dart';
+import '../../../core/constants/strings.dart';
+import '../../../core/utils/app_toast.dart';
+import '../../../core/utils/price_calculator.dart';
 import '../../../data/models/booking_model.dart';
 import '../providers/turf_provider.dart';
 import '../providers/booking_provider.dart';
@@ -38,7 +41,7 @@ class _BookingManagementScreenState extends State<BookingManagementScreen>
     _ensureBookingsLoaded();
   }
 
-  void _loadBookings() {
+  Future<void> _loadBookings() async {
     final authProvider = Provider.of<AuthProvider>(context, listen: false);
     final turfProvider = Provider.of<TurfProvider>(context, listen: false);
     final bookingProvider =
@@ -48,7 +51,13 @@ class _BookingManagementScreenState extends State<BookingManagementScreen>
     final approvedTurfIds =
         turfProvider.approvedTurfs.map((t) => t.turfId).toList();
     if (approvedTurfIds.isNotEmpty && authProvider.currentUserId != null) {
-      bookingProvider.loadOwnerBookings(approvedTurfIds);
+      try {
+        bookingProvider.loadOwnerBookings(approvedTurfIds);
+      } catch (e) {
+        if (!mounted) return;
+        showAppToast(context, '${AppStrings.bookingMgmtLoadFailed}: $e',
+            type: ToastType.error);
+      }
     }
   }
 
@@ -61,20 +70,26 @@ class _BookingManagementScreenState extends State<BookingManagementScreen>
     final ownerId = authProvider.currentUserId;
     if (ownerId == null || ownerId.isEmpty) return;
 
-    if (turfProvider.turfs.isEmpty) {
-      turfProvider.loadOwnerTurfs(ownerId);
-      await turfProvider.refreshTurfs(ownerId);
+    try {
+      if (turfProvider.turfs.isEmpty) {
+        turfProvider.loadOwnerTurfs(ownerId);
+        await turfProvider.refreshTurfs(ownerId);
+        if (!mounted) return;
+      }
+
+      final approvedTurfIds =
+          turfProvider.approvedTurfs.map((t) => t.turfId).toList();
+      if (approvedTurfIds.isEmpty) return;
+
+      final loadKey = '$ownerId:${approvedTurfIds.join(',')}';
+      if (loadKey == _lastBookingLoadKey) return;
+      _lastBookingLoadKey = loadKey;
+      bookingProvider.loadOwnerBookings(approvedTurfIds);
+    } catch (e) {
       if (!mounted) return;
+      showAppToast(context, '${AppStrings.bookingMgmtLoadFailed}: $e',
+          type: ToastType.error);
     }
-
-    final approvedTurfIds =
-        turfProvider.approvedTurfs.map((t) => t.turfId).toList();
-    if (approvedTurfIds.isEmpty) return;
-
-    final loadKey = '$ownerId:${approvedTurfIds.join(',')}';
-    if (loadKey == _lastBookingLoadKey) return;
-    _lastBookingLoadKey = loadKey;
-    bookingProvider.loadOwnerBookings(approvedTurfIds);
   }
 
   Future<void> _forceRefreshData() async {
@@ -84,7 +99,8 @@ class _BookingManagementScreenState extends State<BookingManagementScreen>
         Provider.of<BookingProvider>(context, listen: false);
 
     // Force refresh turfs first to get latest verification status
-    if (authProvider.currentUserId != null) {
+    if (authProvider.currentUserId == null) return;
+    try {
       await turfProvider.refreshTurfs(authProvider.currentUserId!);
 
       if (!mounted) return;
@@ -94,6 +110,10 @@ class _BookingManagementScreenState extends State<BookingManagementScreen>
       if (approvedTurfIds.isNotEmpty) {
         bookingProvider.loadOwnerBookings(approvedTurfIds);
       }
+    } catch (e) {
+      if (!mounted) return;
+      showAppToast(context, '${AppStrings.bookingMgmtRefreshFailed}: $e',
+          type: ToastType.error);
     }
   }
 
@@ -113,7 +133,12 @@ class _BookingManagementScreenState extends State<BookingManagementScreen>
   @override
   Widget build(BuildContext context) {
     final c = AppColors.of(context);
-    const tabLabels = ['All', 'Paid', 'Pending', 'Cancelled'];
+    const tabLabels = [
+      AppStrings.bookingMgmtTabAll,
+      AppStrings.bookingMgmtTabPaid,
+      AppStrings.bookingMgmtTabPending,
+      AppStrings.bookingMgmtTabCancelled,
+    ];
     final tabColors = [c.primary, c.success, c.warning, c.error];
     return Scaffold(
       backgroundColor: c.inputBackground,
@@ -135,7 +160,7 @@ class _BookingManagementScreenState extends State<BookingManagementScreen>
                       ),
                       Expanded(
                         child: Center(
-                          child: Text('Booking History',
+                          child: Text(AppStrings.bookingMgmtTitle,
                               style: TextStyle(
                                   color: c.textPrimary,
                                   fontWeight: FontWeight.w600,
@@ -225,10 +250,11 @@ class _BookingManagementScreenState extends State<BookingManagementScreen>
   }
 
   Widget _buildList(String filter) {
-    return Consumer<BookingProvider>(
-      builder: (context, provider, _) {
+    return Selector<BookingProvider, List<BookingModel>>(
+      selector: (_, p) => p.bookings,
+      builder: (context, allBookings, _) {
         final c = AppColors.of(context);
-        var bookings = provider.bookings;
+        var bookings = allBookings;
 
         if (filter == 'paid') {
           // Only bookings manually marked as paid by owner (exclude cancelled)
@@ -262,7 +288,8 @@ class _BookingManagementScreenState extends State<BookingManagementScreen>
                 Icon(Icons.event_busy,
                     size: 64, color: c.textSecondary.withValues(alpha: 0.5)),
                 const SizedBox(height: 16),
-                Text('No bookings', style: TextStyle(color: c.textSecondary)),
+                Text(AppStrings.bookingMgmtNoBookings,
+                    style: TextStyle(color: c.textSecondary)),
               ],
             ),
           );
@@ -299,121 +326,132 @@ class _BookingManagementScreenState extends State<BookingManagementScreen>
       layerStrip = const Color(0xFFFCD34D);
     }
 
-    return GestureDetector(
-      onTap: () async {
-        final result = await Navigator.pushNamed(
-          context,
-          AppRoutes.bookingDetail,
-          arguments: {'bookingId': b.bookingId},
-        );
-        // Refresh list if booking was cancelled
-        if (result == true) {
-          _loadBookings();
-        }
-      },
-      child: Container(
-        margin: const EdgeInsets.only(bottom: 12),
-        decoration: BoxDecoration(
-          color: c.surface,
-          borderRadius: BorderRadius.circular(18),
-          border: Border.all(color: c.border),
-          boxShadow: [
-            BoxShadow(
-                color: Colors.black.withValues(alpha: 0.04),
-                blurRadius: 8,
-                offset: const Offset(0, 2)),
-          ],
-        ),
-        child: ClipRRect(
-          borderRadius: BorderRadius.circular(18),
-          child: IntrinsicHeight(
-            child: Row(
-              children: [
-                // Layered left status edge
-                Row(
+    return Tooltip(
+      message: AppStrings.bookingMgmtTooltipCard,
+      child: Semantics(
+        button: true,
+        label:
+            '${b.customerName}, ${b.bookingDate} ${b.displayTimeRange}, ${b.turfName}, ${PriceCalculator.formatPrice(b.amount.toDouble())}',
+        child: GestureDetector(
+          onTap: () async {
+            final result = await Navigator.pushNamed(
+              context,
+              AppRoutes.bookingDetail,
+              arguments: {'bookingId': b.bookingId},
+            );
+            // Refresh list if booking was cancelled
+            if (result == true) {
+              _loadBookings();
+            }
+          },
+          child: Container(
+            margin: const EdgeInsets.only(bottom: 12),
+            decoration: BoxDecoration(
+              color: c.surface,
+              borderRadius: BorderRadius.circular(18),
+              border: Border.all(color: c.border),
+              boxShadow: [
+                BoxShadow(
+                    color: Colors.black.withValues(alpha: 0.04),
+                    blurRadius: 8,
+                    offset: const Offset(0, 2)),
+              ],
+            ),
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(18),
+              child: IntrinsicHeight(
+                child: Row(
                   children: [
-                    Container(width: 3.5, color: mainStrip),
-                    Container(width: 3.5, color: layerStrip),
-                  ],
-                ),
-                // Card content
-                Expanded(
-                  child: Padding(
-                    padding: const EdgeInsets.fromLTRB(12, 16, 16, 16),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
+                    // Layered left status edge
+                    Row(
                       children: [
-                        Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                          children: [
-                            Expanded(
-                              child: Text(b.customerName,
-                                  style: TextStyle(
-                                      fontWeight: FontWeight.w600,
-                                      fontSize: 16,
-                                      color: c.textPrimary)),
-                            ),
-                            _statusBadge(b),
-                          ],
-                        ),
-                        const SizedBox(height: 8),
-                        Text('${b.bookingDate} • ${b.displayTimeRange}',
-                            style: TextStyle(
-                                color: c.textSecondary, fontSize: 14)),
-                        const SizedBox(height: 2),
-                        Text('${b.turfName} • ₹${b.amount.toInt()}',
-                            style: TextStyle(
-                                color: c.textSecondary, fontSize: 14)),
-                        if (hasAdvance && !isCancelled) ...[
-                          const SizedBox(height: 8),
-                          Row(
-                            children: [
-                              Container(
-                                padding: const EdgeInsets.symmetric(
-                                    horizontal: 8, vertical: 3),
-                                decoration: BoxDecoration(
-                                  color: b.paymentStatus == PaymentStatus.paid
-                                      ? c.successLight
-                                      : const Color(0xFFFFF7ED),
-                                  borderRadius: BorderRadius.circular(8),
-                                ),
-                                child: Text(
-                                  b.paymentStatus == PaymentStatus.paid
-                                      ? 'Paid: ₹${b.amount.toInt()}'
-                                      : b.advanceAmount >= b.amount
-                                          ? 'Advance (Full): ₹${b.advanceAmount.toInt()}'
-                                          : 'Advance: ₹${b.advanceAmount.toInt()} | Due: ₹${(b.amount - b.advanceAmount).toInt()}',
-                                  style: TextStyle(
-                                    fontSize: 11,
-                                    fontWeight: FontWeight.w600,
-                                    color: b.paymentStatus == PaymentStatus.paid
-                                        ? const Color(0xFF166534)
-                                        : const Color(0xFFC2410C),
-                                  ),
-                                ),
-                              ),
-                            ],
-                          ),
-                        ],
-                        const SizedBox(height: 10),
-                        Row(
-                          mainAxisAlignment: MainAxisAlignment.end,
-                          children: [
-                            Text('Tap for details',
-                                style: TextStyle(
-                                    color: c.primary,
-                                    fontSize: 12,
-                                    fontWeight: FontWeight.w500)),
-                            const SizedBox(width: 4),
-                            Icon(Icons.arrow_forward_ios,
-                                size: 12, color: c.primary),
-                          ],
-                        ),
+                        Container(width: 3.5, color: mainStrip),
+                        Container(width: 3.5, color: layerStrip),
                       ],
                     ),
-                  ),
+                    // Card content
+                    Expanded(
+                      child: Padding(
+                        padding: const EdgeInsets.fromLTRB(12, 16, 16, 16),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                              children: [
+                                Expanded(
+                                  child: Text(b.customerName,
+                                      style: TextStyle(
+                                          fontWeight: FontWeight.w600,
+                                          fontSize: 16,
+                                          color: c.textPrimary)),
+                                ),
+                                _statusBadge(b),
+                              ],
+                            ),
+                            const SizedBox(height: 8),
+                            Text('${b.bookingDate} • ${b.displayTimeRange}',
+                                style: TextStyle(
+                                    color: c.textSecondary, fontSize: 14)),
+                            const SizedBox(height: 2),
+                            Text(
+                                '${b.turfName} • ${PriceCalculator.formatPrice(b.amount.toDouble())}',
+                                style: TextStyle(
+                                    color: c.textSecondary, fontSize: 14)),
+                            if (hasAdvance && !isCancelled) ...[
+                              const SizedBox(height: 8),
+                              Row(
+                                children: [
+                                  Container(
+                                    padding: const EdgeInsets.symmetric(
+                                        horizontal: 8, vertical: 3),
+                                    decoration: BoxDecoration(
+                                      color:
+                                          b.paymentStatus == PaymentStatus.paid
+                                              ? c.successLight
+                                              : const Color(0xFFFFF7ED),
+                                      borderRadius: BorderRadius.circular(8),
+                                    ),
+                                    child: Text(
+                                      b.paymentStatus == PaymentStatus.paid
+                                          ? 'Paid: ${PriceCalculator.formatPrice(b.amount.toDouble())}'
+                                          : b.advanceAmount >= b.amount
+                                              ? 'Advance (Full): ${PriceCalculator.formatPrice(b.advanceAmount.toDouble())}'
+                                              : 'Advance: ${PriceCalculator.formatPrice(b.advanceAmount.toDouble())} | Due: ${PriceCalculator.formatPrice((b.amount - b.advanceAmount).toDouble())}',
+                                      style: TextStyle(
+                                        fontSize: 11,
+                                        fontWeight: FontWeight.w600,
+                                        color: b.paymentStatus ==
+                                                PaymentStatus.paid
+                                            ? const Color(0xFF166534)
+                                            : const Color(0xFFC2410C),
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ],
+                            const SizedBox(height: 10),
+                            Row(
+                              mainAxisAlignment: MainAxisAlignment.end,
+                              children: [
+                                Text(AppStrings.bookingMgmtTapForDetails,
+                                    style: TextStyle(
+                                        color: c.primary,
+                                        fontSize: 12,
+                                        fontWeight: FontWeight.w500)),
+                                const SizedBox(width: 4),
+                                Icon(Icons.arrow_forward_ios,
+                                    size: 12, color: c.primary),
+                              ],
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
-              ],
+              ),
             ),
           ),
         ),
@@ -429,7 +467,7 @@ class _BookingManagementScreenState extends State<BookingManagementScreen>
         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
         decoration: BoxDecoration(
             color: c.errorLight, borderRadius: BorderRadius.circular(20)),
-        child: const Text('Cancelled',
+        child: const Text(AppStrings.bookingMgmtBadgeCancelled,
             style: TextStyle(
                 fontSize: 11,
                 fontWeight: FontWeight.w600,
@@ -444,17 +482,17 @@ class _BookingManagementScreenState extends State<BookingManagementScreen>
       case PaymentStatus.paid:
         bgColor = c.successLight;
         textColor = const Color(0xFF166534);
-        label = 'Paid';
+        label = AppStrings.bookingMgmtBadgePaid;
         break;
       case PaymentStatus.pending:
         bgColor = c.warningLight;
         textColor = const Color(0xFF92400E);
-        label = 'Pending Payment';
+        label = AppStrings.bookingMgmtBadgePendingPayment;
         break;
       case PaymentStatus.payAtTurf:
         bgColor = c.warningLight;
         textColor = const Color(0xFF92400E);
-        label = 'Pay at Turf';
+        label = AppStrings.bookingMgmtBadgePayAtTurf;
         break;
       default:
         bgColor = c.inputBackground;

@@ -45,5 +45,25 @@
 	<true/>
 	<key>UIApplicationSupportsIndirectInputEvents</key>
 	<true/>
+	<!--
+		Phase Auth-Triage Iter 2 (AUTH-04): register the OAuth deep-link
+		URL scheme so Google sign-in (and any future provider) can reopen
+		the app after the browser redirects to
+		com.fieldpass.business://login-callback. Must stay in sync with
+		AuthConfig.iosOAuthRedirect and the Supabase Redirect URL allowlist.
+	-->
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleTypeRole</key>
+			<string>Editor</string>
+			<key>CFBundleURLName</key>
+			<string>com.fieldpass.business.oauth</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>com.fieldpass.business</string>
+			</array>
+		</dict>
+	</array>
 </dict>
 </plist>

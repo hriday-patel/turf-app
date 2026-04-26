@@ -1,9 +1,26 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import '../../config/colors.dart';
 
 enum ToastType { success, error, warning, info }
 
-void showAppToast(BuildContext context, String message, {ToastType type = ToastType.info}) {
+void showAppToast(BuildContext context, String message,
+    {ToastType type = ToastType.info}) {
+  // Phase 8 Iter 1 TOAST-01 + TOAST-02: resolve the messenger via
+  // `maybeOf` so a missing Scaffold ancestor or a context whose screen
+  // has already been popped silently no-ops instead of throwing. The
+  // dev-only debugPrint surfaces the misuse during development.
+  final messenger = ScaffoldMessenger.maybeOf(context);
+  if (messenger == null) {
+    if (kDebugMode) {
+      debugPrint(
+        'showAppToast: no ScaffoldMessenger in context (screen may have '
+        'been popped, or is missing a Scaffold ancestor). Message: $message',
+      );
+    }
+    return;
+  }
+
   final c = AppColors.of(context);
   Color bg, border, textColor;
   IconData icon;
@@ -31,14 +48,20 @@ void showAppToast(BuildContext context, String message, {ToastType type = ToastT
       icon = Icons.info_outline_rounded;
   }
 
-  ScaffoldMessenger.of(context).clearSnackBars();
-  ScaffoldMessenger.of(context).showSnackBar(
+  // Phase 8 Iter 1 TOAST-03: error/warning toasts get 5s so the user has
+  // time to actually read what went wrong; success/info stay at 3s.
+  final duration = (type == ToastType.error || type == ToastType.warning)
+      ? const Duration(seconds: 5)
+      : const Duration(seconds: 3);
+
+  messenger.clearSnackBars();
+  messenger.showSnackBar(
     SnackBar(
       behavior: SnackBarBehavior.floating,
       backgroundColor: Colors.transparent,
       elevation: 0,
       margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-      duration: const Duration(seconds: 3),
+      duration: duration,
       content: Container(
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
         decoration: BoxDecoration(

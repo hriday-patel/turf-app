@@ -11,8 +11,29 @@ import '../../auth/providers/auth_provider.dart';
 import '../../../core/utils/app_toast.dart';
 import 'add_turf_screen.dart';
 
-/// My Turfs Screen
-/// Shows list of owner's turfs with 3 tabs: All, Pending, Approved
+/// My Turfs Screen.
+///
+/// Owner-facing screen that lists every turf the signed-in owner has
+/// submitted, grouped under three tabs:
+///
+///  * **All Turfs** – every turf regardless of verification status.
+///  * **Pending** – submitted but awaiting admin approval.
+///  * **Approved** – verified and visible to players.
+///
+/// The screen also lets owners:
+///  * Open the Add Turf flow via the app-bar action or empty-state CTA.
+///  * Edit a turf (pushes [AddTurfScreen] in edit mode).
+///  * Toggle live status (open / closed / under renovation) on approved
+///    turfs via a confirmation dialog and an optional renovation-net picker.
+///  * Pull to refresh.
+///
+/// Refresh strategy:
+///  * `initState` triggers an initial refresh.
+///  * [didChangeDependencies] subscribes to [AppRoutes.routeObserver] so
+///    [didPopNext] re-fetches when returning from a child route.
+///  * An [_ValueNotifier]-style boolean (`_isRefreshing`) guards against
+///    overlapping refreshes; `_lastLoadedOwnerId` avoids reloading for the
+///    same owner across rebuilds, and is reset on dispose.
 class MyTurfsScreen extends StatefulWidget {
   const MyTurfsScreen({super.key});
 
@@ -25,14 +46,18 @@ class _MyTurfsScreenState extends State<MyTurfsScreen>
   late TabController _tabController;
   final Set<String> _pendingStatusUpdates = {};
   String? _lastLoadedOwnerId;
-  bool _isRefreshingTurfs =
-      false; // small-stuff: guard against overlapping refreshes
+  // Guards against overlapping refresh calls from initState, didPopNext,
+  // pull-to-refresh, and didChangeDependencies firing in quick succession.
+  bool _isRefreshing = false;
 
   @override
   void initState() {
     super.initState();
     _tabController = TabController(length: 3, vsync: this);
-    _refreshTurfs();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      _refreshTurfs();
+    });
   }
 
   @override
@@ -51,48 +76,64 @@ class _MyTurfsScreenState extends State<MyTurfsScreen>
   void dispose() {
     AppRoutes.routeObserver.unsubscribe(this);
     _tabController.dispose();
+    _lastLoadedOwnerId = null;
     super.dispose();
   }
 
   @override
   void didPopNext() {
-    // Called when returning to this screen
-    debugPrint('MyTurfs: didPopNext - refreshing data');
+    // Called when a child route is popped and this screen is shown again.
     _refreshTurfs();
   }
 
   Future<void> _refreshTurfs() async {
-    if (_isRefreshingTurfs)
-      return; // small-stuff: skip if a load is already running
+    if (_isRefreshing) return;
     final authProvider = Provider.of<AuthProvider>(context, listen: false);
     final turfProvider = Provider.of<TurfProvider>(context, listen: false);
-    if (authProvider.currentUserId != null) {
-      _isRefreshingTurfs = true;
-      try {
-        // Force refresh from database to get latest data
-        await turfProvider.refreshTurfs(authProvider.currentUserId!);
-      } finally {
-        _isRefreshingTurfs = false;
+    final ownerId = authProvider.currentUserId;
+    if (ownerId == null || ownerId.isEmpty) return;
+    _isRefreshing = true;
+    try {
+      await turfProvider.refreshTurfs(ownerId);
+      _lastLoadedOwnerId = ownerId;
+    } catch (_) {
+      if (mounted) {
+        showAppToast(
+          context,
+          AppStrings.myTurfsRefreshFailed,
+          type: ToastType.error,
+        );
       }
+    } finally {
+      _isRefreshing = false;
     }
   }
 
   Future<void> _ensureTurfsLoaded() async {
-    if (_isRefreshingTurfs)
-      return; // small-stuff: don't stomp on an in-flight refresh
+    if (_isRefreshing) return;
     final authProvider = Provider.of<AuthProvider>(context, listen: false);
     final ownerId = authProvider.currentUserId;
     if (ownerId == null || ownerId.isEmpty) return;
     if (_lastLoadedOwnerId == ownerId) return;
 
     final turfProvider = Provider.of<TurfProvider>(context, listen: false);
-    _lastLoadedOwnerId = ownerId;
-    _isRefreshingTurfs = true;
+    _isRefreshing = true;
     try {
+      // Prime the UI synchronously from cache, then refresh from network
+      // so the user sees something while the server round-trip completes.
       turfProvider.loadOwnerTurfs(ownerId);
       await turfProvider.refreshTurfs(ownerId);
+      _lastLoadedOwnerId = ownerId;
+    } catch (_) {
+      if (mounted) {
+        showAppToast(
+          context,
+          AppStrings.myTurfsRefreshFailed,
+          type: ToastType.error,
+        );
+      }
     } finally {
-      _isRefreshingTurfs = false;
+      _isRefreshing = false;
     }
   }
 
@@ -111,6 +152,7 @@ class _MyTurfsScreenState extends State<MyTurfsScreen>
                 actions: [
                   IconButton(
                     icon: Icon(Icons.add, color: c.primary),
+                    tooltip: AppStrings.myTurfsAddTooltip,
                     onPressed: () =>
                         Navigator.pushNamed(context, AppRoutes.addTurf),
                   ),
@@ -123,16 +165,16 @@ class _MyTurfsScreenState extends State<MyTurfsScreen>
                   unselectedLabelColor: c.textSecondary,
                   dividerColor: Colors.transparent,
                   tabs: const [
-                    Tab(text: 'All Turfs'),
-                    Tab(text: 'Pending'),
-                    Tab(text: 'Approved'),
+                    Tab(text: AppStrings.myTurfsTabAll),
+                    Tab(text: AppStrings.myTurfsTabPending),
+                    Tab(text: AppStrings.myTurfsTabApproved),
                   ],
                 ),
               ),
               Expanded(
-                child: Consumer<TurfProvider>(
-                  builder: (context, turfProvider, _) {
-                    final allTurfs = turfProvider.turfs;
+                child: Selector<TurfProvider, List<TurfModel>>(
+                  selector: (_, p) => p.turfs,
+                  builder: (context, allTurfs, _) {
                     final pendingTurfs = allTurfs
                         .where((t) =>
                             t.verificationStatus == VerificationStatus.pending)
@@ -145,11 +187,27 @@ class _MyTurfsScreenState extends State<MyTurfsScreen>
                     return TabBarView(
                       controller: _tabController,
                       children: [
-                        _buildTurfList(context, allTurfs, 'No turfs yet'),
                         _buildTurfList(
-                            context, pendingTurfs, 'No pending turfs'),
+                          context,
+                          allTurfs,
+                          AppStrings.myTurfsEmptyAll,
+                          AppStrings.myTurfsEmptySubtitleAll,
+                          showAddButton: true,
+                        ),
                         _buildTurfList(
-                            context, approvedTurfs, 'No approved turfs'),
+                          context,
+                          pendingTurfs,
+                          AppStrings.myTurfsEmptyPending,
+                          AppStrings.myTurfsEmptySubtitlePending,
+                          showAddButton: false,
+                        ),
+                        _buildTurfList(
+                          context,
+                          approvedTurfs,
+                          AppStrings.myTurfsEmptyApproved,
+                          AppStrings.myTurfsEmptySubtitleApproved,
+                          showAddButton: false,
+                        ),
                       ],
                     );
                   },
@@ -163,22 +221,55 @@ class _MyTurfsScreenState extends State<MyTurfsScreen>
   }
 
   Widget _buildTurfList(
-      BuildContext context, List<TurfModel> turfs, String emptyMessage) {
+    BuildContext context,
+    List<TurfModel> turfs,
+    String emptyMessage,
+    String emptySubtitle, {
+    required bool showAddButton,
+  }) {
     if (turfs.isEmpty) {
-      return _buildEmptyState(context, emptyMessage);
+      return RefreshIndicator(
+        onRefresh: _refreshTurfs,
+        child: ListView(
+          physics: const AlwaysScrollableScrollPhysics(),
+          children: [
+            SizedBox(
+              height: MediaQuery.of(context).size.height * 0.7,
+              child: _buildEmptyState(
+                context,
+                emptyMessage,
+                emptySubtitle,
+                showAddButton: showAddButton,
+              ),
+            ),
+          ],
+        ),
+      );
     }
 
-    return ListView.builder(
-      padding: const EdgeInsets.all(16),
-      itemCount: turfs.length,
-      itemBuilder: (context, index) {
-        final turf = turfs[index];
-        return _buildTurfCard(context, turf);
-      },
+    return RefreshIndicator(
+      onRefresh: _refreshTurfs,
+      child: ListView.builder(
+        padding: const EdgeInsets.all(16),
+        physics: const AlwaysScrollableScrollPhysics(),
+        itemCount: turfs.length,
+        itemBuilder: (context, index) {
+          final turf = turfs[index];
+          return RepaintBoundary(
+            key: ValueKey<String>(turf.turfId),
+            child: _buildTurfCard(context, turf),
+          );
+        },
+      ),
     );
   }
 
-  Widget _buildEmptyState(BuildContext context, String message) {
+  Widget _buildEmptyState(
+    BuildContext context,
+    String message,
+    String subtitle, {
+    required bool showAddButton,
+  }) {
     final c = AppColors.of(context);
     return Center(
       child: Column(
@@ -210,22 +301,25 @@ class _MyTurfsScreenState extends State<MyTurfsScreen>
           ),
           const SizedBox(height: 8),
           Text(
-            'Add a turf to start accepting bookings',
+            subtitle,
             style: TextStyle(
               fontSize: 14,
               color: c.textSecondary,
             ),
             textAlign: TextAlign.center,
           ),
-          const SizedBox(height: 32),
-          SizedBox(
-            width: 180,
-            child: GlassButton(
-              label: 'Add Turf',
-              icon: Icons.add,
-              onPressed: () => Navigator.pushNamed(context, AppRoutes.addTurf),
+          if (showAddButton) ...[
+            const SizedBox(height: 32),
+            SizedBox(
+              width: 180,
+              child: GlassButton(
+                label: AppStrings.myTurfsEmptyButton,
+                icon: Icons.add,
+                onPressed: () =>
+                    Navigator.pushNamed(context, AppRoutes.addTurf),
+              ),
             ),
-          ),
+          ],
         ],
       ),
     );
@@ -264,6 +358,12 @@ class _MyTurfsScreenState extends State<MyTurfsScreen>
                           fit: BoxFit.cover,
                           width: double.infinity,
                           height: 140,
+                          // Decode at display size to avoid blowing up memory
+                          // when many cards are scrolled.
+                          cacheWidth:
+                              (MediaQuery.of(context).devicePixelRatio * 400)
+                                  .round(),
+                          gaplessPlayback: true,
                           loadingBuilder: (context, child, loadingProgress) {
                             if (loadingProgress == null) return child;
                             return Center(
@@ -369,7 +469,8 @@ class _MyTurfsScreenState extends State<MyTurfsScreen>
                     const SizedBox(width: 12),
                     _buildInfoChip(
                       icon: Icons.grid_view,
-                      text: '${turf.numberOfNets} Nets',
+                      text:
+                          '${turf.numberOfNets}${AppStrings.myTurfsNetsSuffix}',
                     ),
                   ],
                 ),
@@ -396,8 +497,8 @@ class _MyTurfsScreenState extends State<MyTurfsScreen>
                           child: Text(
                             turf.verificationStatus ==
                                     VerificationStatus.pending
-                                ? 'Awaiting admin verification'
-                                : 'Turf rejected: ${turf.rejectionReason ?? "Contact support"}',
+                                ? AppStrings.myTurfsAwaitingVerification
+                                : '${AppStrings.myTurfsRejectedPrefix}${turf.rejectionReason ?? AppStrings.myTurfsRejectedFallback}',
                             style: TextStyle(
                               fontSize: 12,
                               color: c.warning,
@@ -415,14 +516,17 @@ class _MyTurfsScreenState extends State<MyTurfsScreen>
                 Row(
                   children: [
                     Expanded(
-                      child: OutlinedButton.icon(
-                        onPressed: () => _navigateToEdit(context, turf),
-                        icon: const Icon(Icons.edit_outlined, size: 18),
-                        label: const Text('Edit'),
-                        style: OutlinedButton.styleFrom(
-                          foregroundColor: c.primary,
-                          side: BorderSide(color: c.primary),
-                          padding: const EdgeInsets.symmetric(vertical: 12),
+                      child: Tooltip(
+                        message: AppStrings.myTurfsEditTooltip,
+                        child: OutlinedButton.icon(
+                          onPressed: () => _navigateToEdit(context, turf),
+                          icon: const Icon(Icons.edit_outlined, size: 18),
+                          label: const Text(AppStrings.myTurfsEdit),
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: c.primary,
+                            side: BorderSide(color: c.primary),
+                            padding: const EdgeInsets.symmetric(vertical: 12),
+                          ),
                         ),
                       ),
                     ),
@@ -434,20 +538,23 @@ class _MyTurfsScreenState extends State<MyTurfsScreen>
                       const SizedBox(width: 12),
                     ],
                     Expanded(
-                      child: ElevatedButton.icon(
-                        onPressed: turf.isApproved
-                            ? () => Navigator.pushNamed(
-                                  context,
-                                  AppRoutes.turfDetail,
-                                  arguments: {'turfId': turf.turfId},
-                                )
-                            : null,
-                        icon: const Icon(Icons.visibility_outlined, size: 18),
-                        label: const Text('View'),
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: c.primary,
-                          foregroundColor: c.onPrimary,
-                          padding: const EdgeInsets.symmetric(vertical: 12),
+                      child: Tooltip(
+                        message: AppStrings.myTurfsViewTooltip,
+                        child: ElevatedButton.icon(
+                          onPressed: turf.isApproved
+                              ? () => Navigator.pushNamed(
+                                    context,
+                                    AppRoutes.turfDetail,
+                                    arguments: {'turfId': turf.turfId},
+                                  )
+                              : null,
+                          icon: const Icon(Icons.visibility_outlined, size: 18),
+                          label: const Text(AppStrings.myTurfsView),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: c.primary,
+                            foregroundColor: c.onPrimary,
+                            padding: const EdgeInsets.symmetric(vertical: 12),
+                          ),
                         ),
                       ),
                     ),
@@ -477,6 +584,7 @@ class _MyTurfsScreenState extends State<MyTurfsScreen>
 
     return PopupMenuButton<TurfStatus>(
       enabled: !isUpdating,
+      tooltip: AppStrings.myTurfsStatusToggleTooltip,
       onSelected: (status) => _handleStatusUpdate(turf, status),
       itemBuilder: (context) => TurfStatus.values.map((status) {
         final isSelected = turf.status == status;
@@ -565,21 +673,22 @@ class _MyTurfsScreenState extends State<MyTurfsScreen>
     // U6: Confirm before flipping turf visibility status.
     if (status != TurfStatus.renovation) {
       final visibilityNote = status == TurfStatus.open
-          ? 'Customers will be able to see and book this turf again.'
-          : "Customers won't see or book this turf while it's ${status.displayName.toLowerCase()}.";
+          ? AppStrings.myTurfsVisibilityNoteOpen
+          : '${AppStrings.myTurfsVisibilityNoteClosedPrefix}${status.displayName.toLowerCase()}.';
       final confirmed = await showDialog<bool>(
-        context: this.context,
+        context: context,
         builder: (dialogContext) => AlertDialog(
-          title: Text('Change status to ${status.displayName}?'),
+          title: Text(
+              '${AppStrings.myTurfsChangeStatusTitlePrefix}${status.displayName}?'),
           content: Text('${turf.turfName}\n\n$visibilityNote'),
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(dialogContext, false),
-              child: const Text('Cancel'),
+              child: const Text(AppStrings.myTurfsCancel),
             ),
             ElevatedButton(
               onPressed: () => Navigator.pop(dialogContext, true),
-              child: const Text('Confirm'),
+              child: const Text(AppStrings.myTurfsConfirm),
             ),
           ],
         ),
@@ -597,8 +706,8 @@ class _MyTurfsScreenState extends State<MyTurfsScreen>
       if (selectedNets.isEmpty) {
         if (!mounted) return;
         showAppToast(
-          this.context,
-          'Select at least one net for under renovation',
+          context,
+          AppStrings.myTurfsRenovationSelectAtLeastOne,
           type: ToastType.warning,
         );
         return;
@@ -624,14 +733,14 @@ class _MyTurfsScreenState extends State<MyTurfsScreen>
         await _refreshTurfs();
         if (!mounted) return;
         showAppToast(
-          this.context,
-          'Turf status updated to ${status.displayName}',
+          context,
+          '${AppStrings.myTurfsStatusUpdatedPrefix}${status.displayName}',
           type: ToastType.success,
         );
       } else {
         showAppToast(
-          this.context,
-          turfProvider.errorMessage ?? 'Failed to update turf status',
+          context,
+          turfProvider.errorMessage ?? AppStrings.myTurfsStatusUpdateFailed,
           type: ToastType.error,
         );
       }
@@ -650,16 +759,17 @@ class _MyTurfsScreenState extends State<MyTurfsScreen>
         : <int>{1};
 
     return showDialog<List<int>>(
-      context: this.context,
+      context: context,
       builder: (dialogContext) {
         final c = AppColors.of(dialogContext);
+        final dialogWidth = MediaQuery.of(dialogContext).size.width * 0.85;
         return StatefulBuilder(
           builder: (context, setStateDialog) {
             return AlertDialog(
               backgroundColor: c.surface,
-              title: const Text('Select Nets Under Renovation'),
+              title: const Text(AppStrings.myTurfsRenovationDialogTitle),
               content: SizedBox(
-                width: 340,
+                width: dialogWidth.clamp(280.0, 380.0),
                 child: SingleChildScrollView(
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
@@ -669,7 +779,7 @@ class _MyTurfsScreenState extends State<MyTurfsScreen>
                       return CheckboxListTile(
                         value: isChecked,
                         contentPadding: EdgeInsets.zero,
-                        title: Text('Net $netNumber'),
+                        title: Text('${AppStrings.myTurfsNetPrefix}$netNumber'),
                         controlAffinity: ListTileControlAffinity.leading,
                         onChanged: (checked) {
                           setStateDialog(() {
@@ -688,14 +798,14 @@ class _MyTurfsScreenState extends State<MyTurfsScreen>
               actions: [
                 TextButton(
                   onPressed: () => Navigator.of(dialogContext).pop(null),
-                  child: const Text('Cancel'),
+                  child: const Text(AppStrings.myTurfsCancel),
                 ),
                 ElevatedButton(
                   onPressed: () {
                     final sorted = selected.toList()..sort();
                     Navigator.of(dialogContext).pop(sorted);
                   },
-                  child: const Text('Apply'),
+                  child: const Text(AppStrings.myTurfsApply),
                 ),
               ],
             );
@@ -706,22 +816,15 @@ class _MyTurfsScreenState extends State<MyTurfsScreen>
   }
 
   void _navigateToEdit(BuildContext context, TurfModel turf) {
+    // Pushed via MaterialPageRoute (a PageRoute) so the routeObserver still
+    // fires didPopNext on return — refresh is handled centrally there, no
+    // need to re-fetch in the .then callback.
     Navigator.push(
       context,
-      MaterialPageRoute(
+      MaterialPageRoute<bool>(
         builder: (context) => AddTurfScreen(editTurf: turf),
       ),
-    ).then((result) {
-      if (!mounted) return;
-      if (result == true) {
-        // Refresh turfs after editing
-        final authProvider = Provider.of<AuthProvider>(context, listen: false);
-        if (authProvider.currentUserId != null) {
-          Provider.of<TurfProvider>(context, listen: false)
-              .loadOwnerTurfs(authProvider.currentUserId!);
-        }
-      }
-    });
+    );
   }
 
   Widget _buildTurfStatusBadge(TurfStatus status) {
@@ -771,23 +874,11 @@ class _MyTurfsScreenState extends State<MyTurfsScreen>
 
   Widget _buildVerificationStatusBadge(VerificationStatus status) {
     final c = AppColors.of(context);
-    Color color;
-    String text;
-
-    switch (status) {
-      case VerificationStatus.approved:
-        color = c.success;
-        text = 'Approved';
-        break;
-      case VerificationStatus.pending:
-        color = c.warning;
-        text = 'Pending';
-        break;
-      case VerificationStatus.rejected:
-        color = c.error;
-        text = 'Rejected';
-        break;
-    }
+    final color = switch (status) {
+      VerificationStatus.approved => c.success,
+      VerificationStatus.pending => c.warning,
+      VerificationStatus.rejected => c.error,
+    };
 
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
@@ -796,7 +887,7 @@ class _MyTurfsScreenState extends State<MyTurfsScreen>
         borderRadius: BorderRadius.circular(20),
       ),
       child: Text(
-        text,
+        status.displayName,
         style: TextStyle(
           fontSize: 12,
           fontWeight: FontWeight.w600,

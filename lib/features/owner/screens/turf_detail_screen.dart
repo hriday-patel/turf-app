@@ -3,14 +3,30 @@ import 'package:provider/provider.dart';
 import '../../../config/colors.dart';
 import '../../../config/glass_widgets.dart';
 import '../../../app/routes.dart';
+import '../../../core/constants/enums.dart';
+import '../../../core/constants/strings.dart';
+import '../../../core/utils/app_toast.dart';
+import '../../../core/utils/price_calculator.dart';
 import '../../../data/models/turf_model.dart';
 import '../providers/turf_provider.dart';
-import '../../../core/utils/price_calculator.dart';
-import '../../../core/constants/enums.dart';
 import '../../auth/providers/auth_provider.dart';
+import 'add_turf_screen.dart';
 
 /// Turf Detail Screen
-/// Shows full turf information and provides access to slot management
+///
+/// Displays full read-only information for a single turf the current owner
+/// has access to. Sourced from [TurfProvider] (which holds the owner's full
+/// turf list) and refreshed lazily via [TurfProvider.refreshTurfs].
+///
+/// Behaviour:
+/// * Verifies that the requested [turfId] belongs to the signed-in owner; if
+///   not, shows an unauthorized state instead of leaking another owner's data.
+/// * Refreshes once on first build and again when the user pops back from a
+///   pushed child screen (RouteAware), debounced via [_isRefreshing].
+/// * Surfaces a refresh failure as a toast and lets the user retry via the
+///   AppBar overflow menu.
+/// * Provides quick navigation to Edit Turf and Manage Slots from the
+///   overflow menu so the owner does not have to back out to `MyTurfs`.
 class TurfDetailScreen extends StatefulWidget {
   final String turfId;
 
@@ -21,12 +37,15 @@ class TurfDetailScreen extends StatefulWidget {
 }
 
 class _TurfDetailScreenState extends State<TurfDetailScreen> with RouteAware {
+  bool _isRefreshing = false;
+  int _selectedNetIndex = 0;
+
   @override
   void initState() {
     super.initState();
-    _refreshData();
+    WidgetsBinding.instance.addPostFrameCallback((_) => _refreshData());
   }
-  
+
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
@@ -35,40 +54,87 @@ class _TurfDetailScreenState extends State<TurfDetailScreen> with RouteAware {
       AppRoutes.routeObserver.subscribe(this, route);
     }
   }
-  
+
   @override
   void dispose() {
     AppRoutes.routeObserver.unsubscribe(this);
     super.dispose();
   }
-  
+
   @override
   void didPopNext() {
-    debugPrint('TurfDetail: didPopNext - refreshing data');
     _refreshData();
   }
-  
+
   Future<void> _refreshData() async {
+    if (_isRefreshing) return;
     final authProvider = Provider.of<AuthProvider>(context, listen: false);
     final turfProvider = Provider.of<TurfProvider>(context, listen: false);
-    if (authProvider.currentUserId != null) {
-      // Force refresh from database to get latest data
-      await turfProvider.refreshTurfs(authProvider.currentUserId!);
-      if (!mounted) return;
+    final ownerId = authProvider.currentUserId;
+    if (ownerId == null) return;
+    _isRefreshing = true;
+    try {
+      await turfProvider.refreshTurfs(ownerId);
+    } catch (_) {
+      if (mounted) {
+        showAppToast(
+          context,
+          AppStrings.turfDetailRefreshFailed,
+          type: ToastType.error,
+        );
+      }
+    } finally {
+      _isRefreshing = false;
     }
   }
 
   @override
   Widget build(BuildContext context) {
-    return Consumer<TurfProvider>(
-      builder: (context, turfProvider, _) {
+    final ownerId =
+        Provider.of<AuthProvider>(context, listen: false).currentUserId;
+    return Selector<TurfProvider, TurfModel?>(
+      selector: (_, p) => p.getTurfById(widget.turfId),
+      builder: (context, turf, _) {
         final c = AppColors.of(context);
-        final turf = turfProvider.getTurfById(widget.turfId);
 
         if (turf == null) {
           return Scaffold(
-            appBar: AppBar(title: const Text('Turf Details')),
-            body: const Center(child: Text('Turf not found')),
+            backgroundColor: c.background,
+            appBar: AppBar(
+              backgroundColor: c.surface,
+              leading: const BackButton(),
+              title: const Text(AppStrings.turfDetailTitle),
+            ),
+            body: Center(
+              child: Text(
+                AppStrings.turfDetailNotFound,
+                style: TextStyle(color: c.textPrimary),
+              ),
+            ),
+          );
+        }
+
+        // TD-01: ownership guard — never display another owner's turf data.
+        if (ownerId != null &&
+            turf.ownerId.isNotEmpty &&
+            turf.ownerId != ownerId) {
+          return Scaffold(
+            backgroundColor: c.background,
+            appBar: AppBar(
+              backgroundColor: c.surface,
+              leading: const BackButton(),
+              title: const Text(AppStrings.turfDetailTitle),
+            ),
+            body: Center(
+              child: Padding(
+                padding: const EdgeInsets.all(24),
+                child: Text(
+                  AppStrings.turfDetailNotAuthorized,
+                  textAlign: TextAlign.center,
+                  style: TextStyle(color: c.textPrimary),
+                ),
+              ),
+            ),
           );
         }
 
@@ -82,13 +148,46 @@ class _TurfDetailScreenState extends State<TurfDetailScreen> with RouteAware {
                   expandedHeight: 200,
                   pinned: true,
                   backgroundColor: c.surface,
+                  actions: [
+                    PopupMenuButton<String>(
+                      tooltip: AppStrings.turfDetailMoreActionsTooltip,
+                      icon: Icon(Icons.more_vert, color: c.textPrimary),
+                      onSelected: (value) => _handleAction(value, turf),
+                      itemBuilder: (_) => const [
+                        PopupMenuItem(
+                          value: 'edit',
+                          child: ListTile(
+                            leading: Icon(Icons.edit_outlined),
+                            title: Text(AppStrings.turfDetailActionEdit),
+                            dense: true,
+                          ),
+                        ),
+                        PopupMenuItem(
+                          value: 'slots',
+                          child: ListTile(
+                            leading: Icon(Icons.event_available_outlined),
+                            title: Text(AppStrings.turfDetailActionManageSlots),
+                            dense: true,
+                          ),
+                        ),
+                        PopupMenuItem(
+                          value: 'refresh',
+                          child: ListTile(
+                            leading: Icon(Icons.refresh),
+                            title: Text(AppStrings.turfDetailActionRefresh),
+                            dense: true,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
                   flexibleSpace: FlexibleSpaceBar(
                     title: Text(
                       turf.turfName,
                       style: TextStyle(
                         fontWeight: FontWeight.bold,
                         color: c.textPrimary,
-                        shadows: [
+                        shadows: const [
                           Shadow(
                             color: Colors.black54,
                             blurRadius: 4,
@@ -100,76 +199,83 @@ class _TurfDetailScreenState extends State<TurfDetailScreen> with RouteAware {
                       decoration: BoxDecoration(
                         gradient: c.scaffoldGradient,
                       ),
-                    child: turf.primaryImageUrl != null
-                        ? Image.network(
-                            turf.primaryImageUrl!,
-                            fit: BoxFit.cover,
-                            width: double.infinity,
-                            height: double.infinity,
-                            loadingBuilder: (context, child, loadingProgress) {
-                              if (loadingProgress == null) return child;
-                              return Center(
-                                child: CircularProgressIndicator(
-                                  strokeWidth: 2,
-                                  color: c.primary,
-                                  value: loadingProgress.expectedTotalBytes != null
-                                      ? loadingProgress.cumulativeBytesLoaded /
-                                          loadingProgress.expectedTotalBytes!
-                                      : null,
-                                ),
-                              );
-                            },
-                            errorBuilder: (context, error, stackTrace) {
-                              return Center(
-                                child: Icon(
-                                  Icons.sports_cricket,
-                                  size: 80,
-                                  color: c.primary.withValues(alpha: 0.5),
-                                ),
-                              );
-                            },
-                          )
-                        : Center(
-                            child: Icon(
-                              Icons.sports_cricket,
-                              size: 80,
-                              color: c.primary.withValues(alpha: 0.5),
+                      child: turf.primaryImageUrl != null
+                          ? Image.network(
+                              turf.primaryImageUrl!,
+                              fit: BoxFit.cover,
+                              width: double.infinity,
+                              height: double.infinity,
+                              cacheWidth:
+                                  (MediaQuery.of(context).devicePixelRatio *
+                                          MediaQuery.of(context).size.width)
+                                      .round(),
+                              gaplessPlayback: true,
+                              loadingBuilder:
+                                  (context, child, loadingProgress) {
+                                if (loadingProgress == null) return child;
+                                return Center(
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                    color: c.primary,
+                                    value: loadingProgress.expectedTotalBytes !=
+                                            null
+                                        ? loadingProgress
+                                                .cumulativeBytesLoaded /
+                                            loadingProgress.expectedTotalBytes!
+                                        : null,
+                                  ),
+                                );
+                              },
+                              errorBuilder: (context, error, stackTrace) {
+                                return Center(
+                                  child: Icon(
+                                    Icons.sports_cricket,
+                                    size: 80,
+                                    color: c.primary.withValues(alpha: 0.5),
+                                  ),
+                                );
+                              },
+                            )
+                          : Center(
+                              child: Icon(
+                                Icons.sports_cricket,
+                                size: 80,
+                                color: c.primary.withValues(alpha: 0.5),
+                              ),
                             ),
-                          ),
+                    ),
                   ),
                 ),
 
-              ),
+                // Content
+                SliverToBoxAdapter(
+                  child: Padding(
+                    padding: const EdgeInsets.all(20),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        // Quick Stats
+                        _buildQuickStats(turf),
+                        const SizedBox(height: 24),
 
-              // Content
-              SliverToBoxAdapter(
-                child: Padding(
-                  padding: const EdgeInsets.all(20),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      // Quick Stats
-                      _buildQuickStats(turf),
-                      const SizedBox(height: 24),
+                        // Details Section
+                        _buildDetailsSection(turf),
+                        const SizedBox(height: 24),
 
-                      // Details Section
-                      _buildDetailsSection(turf),
-                      const SizedBox(height: 24),
+                        // Pricing Section
+                        _buildPricingSection(turf),
+                        const SizedBox(height: 24),
 
-                      // Pricing Section
-                      _buildPricingSection(turf),
-                      const SizedBox(height: 24),
-
-                      // Operating Hours
-                      _buildOperatingHours(turf),
-                      const SizedBox(height: 100),
-                    ],
+                        // Operating Hours
+                        _buildOperatingHours(turf),
+                        const SizedBox(height: 100),
+                      ],
+                    ),
                   ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
-        ),
         );
       },
     );
@@ -181,22 +287,23 @@ class _TurfDetailScreenState extends State<TurfDetailScreen> with RouteAware {
         Expanded(
           child: _buildStatItem(
             icon: Icons.location_on,
-            label: 'Location',
+            label: AppStrings.turfDetailStatLocation,
             value: turf.city,
           ),
         ),
         Expanded(
           child: _buildStatItem(
             icon: Icons.sports_cricket,
-            label: 'Type',
+            label: AppStrings.turfDetailStatType,
             value: turf.turfType.displayName,
           ),
         ),
         Expanded(
           child: _buildStatItem(
             icon: Icons.access_time,
-            label: 'Duration',
-            value: '${turf.slotDurationMinutes} min',
+            label: AppStrings.turfDetailStatDuration,
+            value:
+                '${turf.slotDurationMinutes}${AppStrings.turfDetailDurationSuffix}',
           ),
         ),
       ],
@@ -253,7 +360,7 @@ class _TurfDetailScreenState extends State<TurfDetailScreen> with RouteAware {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
-            'Details',
+            AppStrings.turfDetailSectionDetails,
             style: TextStyle(
               fontSize: 16,
               fontWeight: FontWeight.bold,
@@ -261,10 +368,12 @@ class _TurfDetailScreenState extends State<TurfDetailScreen> with RouteAware {
             ),
           ),
           const SizedBox(height: 16),
-          _buildDetailRow(Icons.location_on, 'Address', turf.address),
+          _buildDetailRow(Icons.location_on, AppStrings.turfDetailLabelAddress,
+              turf.address),
           if (turf.description != null) ...[
             const Divider(height: 24),
-            _buildDetailRow(Icons.info_outline, 'About', turf.description!),
+            _buildDetailRow(Icons.info_outline, AppStrings.turfDetailLabelAbout,
+                turf.description!),
           ],
         ],
       ),
@@ -307,7 +416,39 @@ class _TurfDetailScreenState extends State<TurfDetailScreen> with RouteAware {
   Widget _buildPricingSection(TurfModel turf) {
     final c = AppColors.of(context);
     final pricingRules = turf.pricingRules;
-    
+    final netCount = pricingRules.netPricing.length;
+    if (netCount == 0) {
+      return Container(
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: c.glassFill,
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: c.glassBorder),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              AppStrings.turfDetailSectionPricing,
+              style: TextStyle(
+                fontSize: 16,
+                fontWeight: FontWeight.bold,
+                color: c.textPrimary,
+              ),
+            ),
+            const SizedBox(height: 12),
+            Text(
+              AppStrings.turfDetailPricingUnavailable,
+              style: TextStyle(fontSize: 13, color: c.textSecondary),
+            ),
+          ],
+        ),
+      );
+    }
+
+    final safeNetIndex = _selectedNetIndex >= netCount ? 0 : _selectedNetIndex;
+    final selectedNet = pricingRules.netPricing[safeNetIndex];
+
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
@@ -318,60 +459,69 @@ class _TurfDetailScreenState extends State<TurfDetailScreen> with RouteAware {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
-            'Pricing',
-            style: TextStyle(
-              fontSize: 16,
-              fontWeight: FontWeight.bold,
-              color: c.textPrimary,
-            ),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text(
+                AppStrings.turfDetailSectionPricing,
+                style: TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.bold,
+                  color: c.textPrimary,
+                ),
+              ),
+              if (netCount > 1)
+                DropdownButton<int>(
+                  value: safeNetIndex,
+                  underline: const SizedBox.shrink(),
+                  items: List.generate(
+                    netCount,
+                    (i) => DropdownMenuItem(
+                      value: i,
+                      child: Text(
+                        '${AppStrings.turfDetailNetSelectorPrefix}${i + 1}',
+                      ),
+                    ),
+                  ),
+                  onChanged: (v) {
+                    if (v != null) setState(() => _selectedNetIndex = v);
+                  },
+                ),
+            ],
           ),
           const SizedBox(height: 8),
           Text(
-            '${turf.numberOfNets} Net(s) Available',
+            '${turf.numberOfNets}${AppStrings.turfDetailNetsAvailableSuffix}',
             style: TextStyle(
               fontSize: 13,
               color: c.textSecondary,
             ),
           ),
           const SizedBox(height: 12),
-          // Show first net pricing summary
-          if (pricingRules.netPricing.isNotEmpty) ...[
-            _buildDayTypePricingRow(
-              'Weekday',
-              pricingRules.netPricing.first.weekday,
-              c.primary,
-            ),
-            const Divider(height: 16),
-            _buildDayTypePricingRow(
-              'Weekend',
-              pricingRules.netPricing.first.weekend,
-              c.secondary,
-            ),
-            const Divider(height: 16),
-            _buildDayTypePricingRow(
-              'Holiday',
-              pricingRules.netPricing.first.holiday,
-              c.warning,
-            ),
-          ],
-          if (turf.numberOfNets > 1) ...[
-            const SizedBox(height: 12),
-            Text(
-              'Showing prices for Net 1. Other nets may have different pricing.',
-              style: TextStyle(
-                fontSize: 11,
-                fontStyle: FontStyle.italic,
-                color: c.textSecondary,
-              ),
-            ),
-          ],
+          _buildDayTypePricingRow(
+            AppStrings.turfDetailDayWeekday,
+            selectedNet.weekday,
+            c.primary,
+          ),
+          const Divider(height: 16),
+          _buildDayTypePricingRow(
+            AppStrings.turfDetailDayWeekend,
+            selectedNet.weekend,
+            c.secondary,
+          ),
+          const Divider(height: 16),
+          _buildDayTypePricingRow(
+            AppStrings.turfDetailDayHoliday,
+            selectedNet.holiday,
+            c.warning,
+          ),
         ],
       ),
     );
   }
 
-  Widget _buildDayTypePricingRow(String label, DayTypePricing pricing, Color color) {
+  Widget _buildDayTypePricingRow(
+      String label, DayTypePricing pricing, Color color) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -399,10 +549,14 @@ class _TurfDetailScreenState extends State<TurfDetailScreen> with RouteAware {
         Row(
           mainAxisAlignment: MainAxisAlignment.spaceAround,
           children: [
-            _buildTimeSlotPrice('Morning', pricing.morning.price, Icons.wb_sunny_outlined),
-            _buildTimeSlotPrice('Afternoon', pricing.afternoon.price, Icons.wb_cloudy_outlined),
-            _buildTimeSlotPrice('Evening', pricing.evening.price, Icons.wb_twilight),
-            _buildTimeSlotPrice('Night', pricing.night.price, Icons.nightlight_outlined),
+            _buildTimeSlotPrice(AppStrings.turfDetailSlotMorning,
+                pricing.morning.price, Icons.wb_sunny_outlined),
+            _buildTimeSlotPrice(AppStrings.turfDetailSlotAfternoon,
+                pricing.afternoon.price, Icons.wb_cloudy_outlined),
+            _buildTimeSlotPrice(AppStrings.turfDetailSlotEvening,
+                pricing.evening.price, Icons.wb_twilight),
+            _buildTimeSlotPrice(AppStrings.turfDetailSlotNight,
+                pricing.night.price, Icons.nightlight_outlined),
           ],
         ),
       ],
@@ -434,60 +588,9 @@ class _TurfDetailScreenState extends State<TurfDetailScreen> with RouteAware {
     );
   }
 
-  Widget _buildPriceRow(String label, double dayPrice, double nightPrice, Color color) {
-    final c = AppColors.of(context);
-    return Row(
-      children: [
-        Container(
-          width: 4,
-          height: 30,
-          decoration: BoxDecoration(
-            color: color,
-            borderRadius: BorderRadius.circular(2),
-          ),
-        ),
-        const SizedBox(width: 12),
-        Expanded(
-          child: Text(
-            label,
-            style: TextStyle(
-              fontWeight: FontWeight.w500,
-              color: c.textPrimary,
-            ),
-          ),
-        ),
-        Column(
-          crossAxisAlignment: CrossAxisAlignment.end,
-          children: [
-            Row(
-              children: [
-                Icon(Icons.wb_sunny, size: 14, color: c.warning),
-                const SizedBox(width: 4),
-                Text(
-                  PriceCalculator.formatPrice(dayPrice),
-                  style: const TextStyle(fontWeight: FontWeight.w600),
-                ),
-              ],
-            ),
-            const SizedBox(height: 4),
-            Row(
-              children: [
-                Icon(Icons.nightlight, size: 14, color: c.info),
-                const SizedBox(width: 4),
-                Text(
-                  PriceCalculator.formatPrice(nightPrice),
-                  style: const TextStyle(fontWeight: FontWeight.w600),
-                ),
-              ],
-            ),
-          ],
-        ),
-      ],
-    );
-  }
-
   Widget _buildOperatingHours(TurfModel turf) {
     final c = AppColors.of(context);
+    final sortedDays = _sortDaysOfWeek(turf.daysOpen);
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
@@ -499,7 +602,7 @@ class _TurfDetailScreenState extends State<TurfDetailScreen> with RouteAware {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
-            'Operating Hours',
+            AppStrings.turfDetailSectionHours,
             style: TextStyle(
               fontSize: 16,
               fontWeight: FontWeight.bold,
@@ -512,7 +615,7 @@ class _TurfDetailScreenState extends State<TurfDetailScreen> with RouteAware {
               Icon(Icons.access_time, color: c.primary),
               const SizedBox(width: 12),
               Text(
-                '${turf.openTime} - ${turf.closeTime}',
+                '${_formatTime(turf.openTime)} - ${_formatTime(turf.closeTime)}',
                 style: TextStyle(
                   fontSize: 18,
                   fontWeight: FontWeight.w600,
@@ -525,9 +628,10 @@ class _TurfDetailScreenState extends State<TurfDetailScreen> with RouteAware {
           Wrap(
             spacing: 8,
             runSpacing: 8,
-            children: turf.daysOpen.map((day) {
+            children: sortedDays.map((day) {
               return Container(
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
                 decoration: BoxDecoration(
                   color: c.primary.withValues(alpha: 0.1),
                   borderRadius: BorderRadius.circular(20),
@@ -546,5 +650,63 @@ class _TurfDetailScreenState extends State<TurfDetailScreen> with RouteAware {
         ],
       ),
     );
+  }
+
+  void _handleAction(String value, TurfModel turf) {
+    switch (value) {
+      case 'edit':
+        Navigator.push(
+          context,
+          MaterialPageRoute<bool>(
+            builder: (_) => AddTurfScreen(editTurf: turf),
+          ),
+        );
+        break;
+      case 'slots':
+        Navigator.pushNamed(
+          context,
+          AppRoutes.slotManagement,
+          arguments: {'turfId': turf.turfId},
+        );
+        break;
+      case 'refresh':
+        _refreshData();
+        break;
+    }
+  }
+
+  // TD-23: Sort day chips in canonical Mon→Sun order regardless of DB order.
+  static const List<String> _weekOrder = [
+    'Monday',
+    'Tuesday',
+    'Wednesday',
+    'Thursday',
+    'Friday',
+    'Saturday',
+    'Sunday',
+  ];
+
+  List<String> _sortDaysOfWeek(List<String> days) {
+    final sorted = [...days];
+    sorted.sort((a, b) {
+      final ai =
+          _weekOrder.indexWhere((d) => d.toLowerCase() == a.toLowerCase());
+      final bi =
+          _weekOrder.indexWhere((d) => d.toLowerCase() == b.toLowerCase());
+      if (ai == -1 && bi == -1) return a.compareTo(b);
+      if (ai == -1) return 1;
+      if (bi == -1) return -1;
+      return ai.compareTo(bi);
+    });
+    return sorted;
+  }
+
+  // TD-15: Strip trailing seconds ("09:00:00" → "09:00") from raw DB time strings.
+  String _formatTime(String raw) {
+    final parts = raw.split(':');
+    if (parts.length >= 2) {
+      return '${parts[0]}:${parts[1]}';
+    }
+    return raw;
   }
 }

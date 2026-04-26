@@ -2,9 +2,25 @@ import 'package:flutter/foundation.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:uuid/uuid.dart';
 import '../../core/constants/enums.dart';
+import '../../core/utils/url_utils.dart';
 
 /// Database Service
-/// Handles all Supabase database operations using RPC functions
+///
+/// Single chokepoint for every Supabase Postgres read / write / RPC. Mixes
+/// SECURITY DEFINER RPCs (mutating paths that need to bypass RLS — owner
+/// signup, atomic booking, slot lifecycle) with direct PostgREST queries
+/// (read paths constrained by RLS).
+///
+/// Hardening layers in this file:
+///   * `_assert*Writable` — mass-assignment defense for free-form update Maps.
+///   * `_public*Columns`  — read-side allowlists so future PII / audit columns
+///                         do not auto-leak to the client. (Phase 4 Iter 8 DB-03)
+///   * `_runWithRetry`    — single shared transient-network retry policy so
+///                         every retried mutation behaves identically.
+///                         (Phase 4 Iter 8 DB-04)
+///   * `_utcDateString`   — UTC-anchored date math so slot deletions never
+///                         skew by a day across the IST/UTC midnight boundary.
+///                         (Phase 4 Iter 8 DB-05)
 class DatabaseService {
   SupabaseClient get _client => Supabase.instance.client;
 
@@ -69,6 +85,44 @@ class DatabaseService {
       'days_open, pricing_rules, public_holidays, images, is_approved, '
       'verification_status, status, renovation_net_numbers, created_at, updated_at';
 
+  // Phase 4 Iter 8 DB-03: explicit read column allowlists for owners /
+  // players / bookings. Replaces the previous `select('*')` calls so any
+  // future audit / PII column added to these tables does not auto-leak.
+  static const _publicOwnerColumns =
+      'id, name, email, phone, role, is_verified, auth_methods, '
+      'profile_image, has_password, status, created_at, updated_at';
+  static const _publicPlayerColumns =
+      'id, name, email, phone, role, auth_methods, has_password, '
+      'profile_image, favorite_turfs, status, created_at, updated_at';
+  static const _publicBookingColumns =
+      'id, owner_id, turf_id, slot_id, booking_date, start_time, end_time, '
+      'turf_name, net_number, user_id, customer_name, customer_phone, '
+      'booking_source, payment_mode, payment_status, amount, advance_amount, '
+      'transaction_id, booking_status, cancelled_at, cancelled_by, '
+      'cancellation_reason, created_by, updated_by, created_at, updated_at';
+
+  // Phase 4 Iter 8 DB-04: shared retryable-error markers. Previously the
+  // four hand-rolled retry loops drifted apart — blockSlot/unblockSlot
+  // missed `socketexception` / `clientexception`. One source of truth now.
+  static const _retryableNetworkMarkers = <String>[
+    'failed to fetch',
+    'socketexception',
+    'clientexception',
+    'timeout',
+    'connection',
+    'network',
+  ];
+
+  bool _isRetryableNetworkError(Object error) {
+    final s = error.toString().toLowerCase();
+    return _retryableNetworkMarkers.any(s.contains);
+  }
+
+  // Phase 4 Iter 8 DB-05: UTC-anchored date string. Local-time `tomorrow`
+  // skewed slot-deletion queries by a day in IST near UTC midnight.
+  static String _utcDateString(DateTime dt) =>
+      dt.toUtc().toIso8601String().split('T')[0];
+
   void _assertOwnerWritable(Map<String, dynamic> data) {
     final bad = data.keys.where((k) => !_ownerWritableColumns.contains(k));
     if (bad.isNotEmpty) {
@@ -126,7 +180,10 @@ class DatabaseService {
       });
       return result == true;
     } catch (e) {
-      debugPrint('check_owner_exists RPC failed: $e');
+      // Phase 4 Iter 8 DB-11: gate string interpolation behind kDebugMode.
+      if (kDebugMode) {
+        debugPrint('check_owner_exists RPC failed: $e');
+      }
       rethrow;
     }
   }
@@ -157,11 +214,11 @@ class DatabaseService {
     }
   }
 
-  /// Get owner by ID
+  /// Get owner by ID. Phase 4 Iter 8 DB-03: explicit column allowlist.
   Future<Map<String, dynamic>?> getOwner(String ownerId) async {
     return await _client
         .from('owners')
-        .select('*')
+        .select(_publicOwnerColumns)
         .eq('id', ownerId)
         .maybeSingle();
   }
@@ -187,12 +244,13 @@ class DatabaseService {
     });
   }
 
-  /// Get owner by phone
+  /// Get owner by phone. Phase 4 Iter 8 DB-03 + DB-07: column allowlist +
+  /// trim phone (create-side already trims; lookup must match).
   Future<Map<String, dynamic>?> getOwnerByPhone(String phone) async {
     return await _client
         .from('owners')
-        .select('*')
-        .eq('phone', phone)
+        .select(_publicOwnerColumns)
+        .eq('phone', phone.trim())
         .maybeSingle();
   }
 
@@ -201,20 +259,21 @@ class DatabaseService {
   /// boolean. Returning the conflicting account's email here would let
   /// any caller probe whether a given phone is in use AND get back the
   /// owning email.
+  /// Phase 4 Iter 8 DB-07: trim phone (matches create-side normalization).
   Future<bool> checkPhoneAlreadyRegistered(String phone) async {
     final result = await _client
         .from('owners')
         .select('id')
-        .eq('phone', phone)
+        .eq('phone', phone.trim())
         .maybeSingle();
     return result != null;
   }
 
-  /// Get owner by email
+  /// Get owner by email. Phase 4 Iter 8 DB-03: explicit column allowlist.
   Future<Map<String, dynamic>?> getOwnerByEmail(String email) async {
     return await _client
         .from('owners')
-        .select('*')
+        .select(_publicOwnerColumns)
         .eq('email', email.trim().toLowerCase())
         .maybeSingle();
   }
@@ -256,21 +315,30 @@ class DatabaseService {
     await _client.from('players').update(data).eq('id', playerId);
   }
 
-  /// Get player by ID
+  /// Get player by ID. Phase 4 Iter 8 DB-03: explicit column allowlist.
   Future<Map<String, dynamic>?> getPlayer(String playerId) async {
     return await _client
         .from('players')
-        .select('*')
+        .select(_publicPlayerColumns)
         .eq('id', playerId)
         .maybeSingle();
   }
 
-  /// Get player by email.
+  /// Get player by email. Phase 4 Iter 8 DB-03: explicit column allowlist.
   Future<Map<String, dynamic>?> getPlayerByEmail(String email) async {
     return await _client
         .from('players')
-        .select('*')
+        .select(_publicPlayerColumns)
         .eq('email', email.trim().toLowerCase())
+        .maybeSingle();
+  }
+
+  /// Phase 8 Iter 4 AUTH-08: lookup player by phone for OTP-login gating.
+  Future<Map<String, dynamic>?> getPlayerByPhone(String phone) async {
+    return await _client
+        .from('players')
+        .select(_publicPlayerColumns)
+        .eq('phone', phone.trim())
         .maybeSingle();
   }
 
@@ -365,17 +433,21 @@ class DatabaseService {
   // TURF OPERATIONS
   // =====================================================
 
-  /// Stream owner's turfs
+  /// Stream owner's turfs.
+  /// Phase 4 Iter 8 DB-02: filter on the realtime stream itself with
+  /// `.eq('owner_id', ...)` instead of fetching every row in `turfs` and
+  /// filtering client-side. Cuts realtime traffic to just this owner's
+  /// rows and removes the row-leak vector if RLS ever regresses.
   Stream<List<Map<String, dynamic>>> streamOwnerTurfs(String ownerId) {
     return _client
         .from('turfs')
         .stream(primaryKey: ['id'])
-        .order('created_at', ascending: false)
-        .map(
-            (rows) => rows.where((row) => row['owner_id'] == ownerId).toList());
+        .eq('owner_id', ownerId)
+        .order('created_at', ascending: false);
   }
 
-  /// Get owner's turfs (one-time fetch)
+  /// Get owner's turfs (one-time fetch). Owner-side: full row OK (this
+  /// path is only used by the owner's own dashboard).
   Future<List<Map<String, dynamic>>> getOwnerTurfs(String ownerId) async {
     return await _client
         .from('turfs')
@@ -460,14 +532,9 @@ class DatabaseService {
 
         lastError = e is Exception ? e : Exception(e.toString());
 
-        // F5: only retry on TRUE network markers. Postgres/URI errors are
-        // real bugs and must surface immediately rather than be retried.
-        final errorStr = e.toString().toLowerCase();
-        final isRetryableError = errorStr.contains('failed to fetch') ||
-            errorStr.contains('socketexception') ||
-            errorStr.contains('timeout') ||
-            errorStr.contains('connection') ||
-            errorStr.contains('clientexception');
+        // F5 / Phase 4 Iter 8 DB-04: only retry on TRUE network markers.
+        // Postgres/URI errors are real bugs and must surface immediately.
+        final isRetryableError = _isRetryableNetworkError(e);
 
         if (isRetryableError && attempt < retryCount) {
           // Wait before retrying (exponential backoff with jitter)
@@ -488,46 +555,52 @@ class DatabaseService {
         Exception('Failed to create turf after $retryCount attempts');
   }
 
-  /// Sanitize turf data to prevent database/URI errors
+  /// Sanitize turf data to prevent database/URI errors.
+  /// Phase 4 Iter 8 DB-09: log dropped items in debug mode so silent data
+  /// loss is at least visible during development.
   Map<String, dynamic> _sanitizeTurfData(Map<String, dynamic> data) {
     final sanitized = Map<String, dynamic>.from(data);
 
     // Ensure images have valid URLs
     if (sanitized.containsKey('images') && sanitized['images'] is List) {
       final images = sanitized['images'] as List;
-      sanitized['images'] = images.where((img) {
+      final kept = images.where((img) {
         if (img is Map) {
           final url = img['url']?.toString() ?? '';
-          return url.isNotEmpty && _isValidUrl(url);
+          return url.isNotEmpty && UrlUtils.isValidUrl(url);
         }
         return false;
       }).toList();
+      if (kDebugMode && kept.length != images.length) {
+        debugPrint(
+            '_sanitizeTurfData: dropped ${images.length - kept.length} invalid image entries');
+      }
+      sanitized['images'] = kept;
     }
 
     if (sanitized.containsKey('renovation_net_numbers') &&
         sanitized['renovation_net_numbers'] is List) {
       final nets = sanitized['renovation_net_numbers'] as List;
-      sanitized['renovation_net_numbers'] = nets
+      final cleaned = nets
           .map<int>((e) => int.tryParse(e.toString()) ?? 0)
           .where((n) => n > 0)
           .toSet()
           .toList()
         ..sort();
+      if (kDebugMode && cleaned.length != nets.length) {
+        debugPrint(
+            '_sanitizeTurfData: dropped ${nets.length - cleaned.length} invalid renovation_net_numbers entries');
+      }
+      sanitized['renovation_net_numbers'] = cleaned;
     }
 
     return sanitized;
   }
 
-  /// Validate URL format
-  static bool _isValidUrl(String url) {
-    if (url.isEmpty) return false;
-    try {
-      final uri = Uri.parse(url);
-      return uri.hasScheme && (uri.scheme == 'http' || uri.scheme == 'https');
-    } catch (e) {
-      return false;
-    }
-  }
+  /// Validate URL format. Phase 7 Iter 3 CLEAN-01: delegated to
+  /// [UrlUtils.isValidUrl] so storage_service and database_service share a
+  /// single source of truth.
+  static bool _isValidUrl(String url) => UrlUtils.isValidUrl(url);
 
   bool _isMissingRenovationColumnError(Object error) {
     final errorStr = error.toString().toLowerCase();
@@ -582,13 +655,8 @@ class DatabaseService {
 
         lastError = e is Exception ? e : Exception(e.toString());
 
-        // F5: only retry on TRUE network markers.
-        final errorStr = e.toString().toLowerCase();
-        final isRetryableError = errorStr.contains('failed to fetch') ||
-            errorStr.contains('socketexception') ||
-            errorStr.contains('timeout') ||
-            errorStr.contains('connection') ||
-            errorStr.contains('clientexception');
+        // F5 / Phase 4 Iter 8 DB-04: only retry on TRUE network markers.
+        final isRetryableError = _isRetryableNetworkError(e);
 
         if (isRetryableError && attempt < retryCount) {
           // Wait before retrying (exponential backoff with jitter)
@@ -662,10 +730,12 @@ class DatabaseService {
   }
 
   /// Delete future available slots (for regeneration when settings change)
-  /// Only deletes AVAILABLE slots from tomorrow onwards
+  /// Only deletes AVAILABLE slots from tomorrow onwards.
+  /// Phase 4 Iter 8 DB-05: anchor `tomorrow` in UTC so the cutoff matches
+  /// the `slots.date` column (Postgres `date` is UTC-naive).
   Future<int> deleteFutureAvailableSlots(String turfId) async {
-    final tomorrow = DateTime.now().add(const Duration(days: 1));
-    final tomorrowStr = tomorrow.toIso8601String().split('T')[0];
+    final tomorrowStr =
+        _utcDateString(DateTime.now().toUtc().add(const Duration(days: 1)));
 
     // Delete all AVAILABLE slots from tomorrow onwards
     final result = await _client
@@ -692,12 +762,13 @@ class DatabaseService {
     return result.length;
   }
 
-  /// Delete all available slots for nets that exceed the current net count
-  /// Used when owner reduces the number of nets
+  /// Delete all available slots for nets that exceed the current net count.
+  /// Used when owner reduces the number of nets.
+  /// Phase 4 Iter 8 DB-05: anchor `tomorrow` in UTC.
   Future<int> deleteSlotsForRemovedNets(
       String turfId, int currentNetCount) async {
-    final tomorrow = DateTime.now().add(const Duration(days: 1));
-    final tomorrowStr = tomorrow.toIso8601String().split('T')[0];
+    final tomorrowStr =
+        _utcDateString(DateTime.now().toUtc().add(const Duration(days: 1)));
 
     // Delete all AVAILABLE slots for nets > currentNetCount from tomorrow onwards
     final result = await _client
@@ -800,7 +871,10 @@ class DatabaseService {
         );
   }
 
-  /// Block slot with retry logic
+  /// Block slot with retry logic.
+  /// Phase 4 Iter 8 DB-04: shared `_isRetryableNetworkError` so this path
+  /// retries on the same markers as createTurf/updateTurf (previously
+  /// missed `socketexception` and `clientexception`).
   Future<void> blockSlot(String slotId, String ownerId, String? reason,
       {int retryCount = 3}) async {
     Exception? lastError;
@@ -816,12 +890,7 @@ class DatabaseService {
         return; // Success
       } catch (e) {
         lastError = e is Exception ? e : Exception(e.toString());
-        final errorStr = e.toString().toLowerCase();
-
-        final isRetryableError = errorStr.contains('failed to fetch') ||
-            errorStr.contains('network') ||
-            errorStr.contains('timeout') ||
-            errorStr.contains('connection');
+        final isRetryableError = _isRetryableNetworkError(e);
 
         if (isRetryableError && attempt < retryCount) {
           await Future.delayed(Duration(milliseconds: 500 * attempt));
@@ -840,6 +909,7 @@ class DatabaseService {
   /// [overrideMarker] — if provided, stores a marker in block_reason on the
   /// now-AVAILABLE slot so that sync can distinguish manual overrides from
   /// normal available slots (e.g. 'Day opened by owner').
+  /// Phase 4 Iter 8 DB-04: shared `_isRetryableNetworkError`.
   Future<void> unblockSlot(String slotId,
       {int retryCount = 3, String? overrideMarker}) async {
     Exception? lastError;
@@ -855,12 +925,7 @@ class DatabaseService {
         return; // Success
       } catch (e) {
         lastError = e is Exception ? e : Exception(e.toString());
-        final errorStr = e.toString().toLowerCase();
-
-        final isRetryableError = errorStr.contains('failed to fetch') ||
-            errorStr.contains('network') ||
-            errorStr.contains('timeout') ||
-            errorStr.contains('connection');
+        final isRetryableError = _isRetryableNetworkError(e);
 
         if (isRetryableError && attempt < retryCount) {
           await Future.delayed(Duration(milliseconds: 500 * attempt));
@@ -875,48 +940,138 @@ class DatabaseService {
         Exception('Failed to unblock slot after $retryCount attempts');
   }
 
-  /// Reserve slot (using RPC)
+  /// Reserve slot (using RPC).
+  /// Phase 7 Iter 3 EDGE-03: wrap in shared retry loop so a 1-second
+  /// network blip does not leave the customer thinking the slot is
+  /// unavailable. RPC is server-side conditional (only succeeds if the
+  /// slot is currently AVAILABLE), so a retry that races with a real
+  /// reservation simply returns false on the second attempt.
   Future<bool> reserveSlot({
     required String slotId,
     required String userId,
     required int reservationMinutes,
   }) async {
-    final result = await _client.rpc('reserve_slot', params: {
-      'p_slot_id': slotId,
-      'p_reserved_by': userId,
-      'p_reservation_minutes': reservationMinutes,
-    });
-    return result == true;
+    Object? lastError;
+    for (int attempt = 1; attempt <= 3; attempt++) {
+      try {
+        final result = await _client.rpc('reserve_slot', params: {
+          'p_slot_id': slotId,
+          'p_reserved_by': userId,
+          'p_reservation_minutes': reservationMinutes,
+        });
+        return result == true;
+      } catch (e) {
+        lastError = e;
+        if (attempt < 3 && _isRetryableNetworkError(e)) {
+          await Future.delayed(Duration(milliseconds: 500 * attempt));
+          continue;
+        }
+        rethrow;
+      }
+    }
+    throw lastError ?? Exception('reserveSlot failed after 3 attempts');
   }
 
-  /// Release slot (using RPC)
-  Future<void> releaseSlot(String slotId) async {
-    await _client.rpc('release_slot', params: {
-      'p_slot_id': slotId,
-    });
+  /// Release slot (using RPC). Phase 4 Iter 8 DB-08: surface the RPC's
+  /// boolean result so callers can distinguish success from no-op (slot
+  /// already AVAILABLE / not held by this user).
+  /// Phase 7 Iter 3 EDGE-03: retry wrap. Release is idempotent server-side
+  /// (a second release of an already-AVAILABLE slot just returns false).
+  Future<bool> releaseSlot(String slotId) async {
+    Object? lastError;
+    for (int attempt = 1; attempt <= 3; attempt++) {
+      try {
+        final result = await _client.rpc('release_slot', params: {
+          'p_slot_id': slotId,
+        });
+        return result == true;
+      } catch (e) {
+        lastError = e;
+        if (attempt < 3 && _isRetryableNetworkError(e)) {
+          await Future.delayed(Duration(milliseconds: 500 * attempt));
+          continue;
+        }
+        rethrow;
+      }
+    }
+    throw lastError ?? Exception('releaseSlot failed after 3 attempts');
   }
 
-  /// Book slot (using RPC)
-  Future<void> bookSlot(String slotId) async {
-    await _client.rpc('book_slot', params: {
-      'p_slot_id': slotId,
-    });
+  /// Book slot (using RPC). Phase 4 Iter 8 DB-08: surface the RPC result.
+  /// Phase 7 Iter 3 EDGE-03: retry wrap. Server-side guard ensures only
+  /// a slot in RESERVED-by-this-user state flips to BOOKED, so a retry
+  /// after a successful first attempt simply returns false.
+  Future<bool> bookSlot(String slotId) async {
+    Object? lastError;
+    for (int attempt = 1; attempt <= 3; attempt++) {
+      try {
+        final result = await _client.rpc('book_slot', params: {
+          'p_slot_id': slotId,
+        });
+        return result == true;
+      } catch (e) {
+        lastError = e;
+        if (attempt < 3 && _isRetryableNetworkError(e)) {
+          await Future.delayed(Duration(milliseconds: 500 * attempt));
+          continue;
+        }
+        rethrow;
+      }
+    }
+    throw lastError ?? Exception('bookSlot failed after 3 attempts');
   }
 
   // =====================================================
   // BOOKING OPERATIONS
   // =====================================================
 
-  /// Create booking atomically (using RPC)
+  /// Create booking atomically (using RPC).
+  /// Phase 4 Iter 8 DB-01: explicit null + type guard + error wrapping.
+  /// Previously `result as String` would throw an opaque `_TypeError` if
+  /// the RPC returned null (constraint failure path) or threw a
+  /// PostgrestException — callers had no way to surface a real reason.
+  ///
+  /// Phase 4 Iter 8 DB-10 (deferred): true idempotency (retry-safe booking
+  /// across mid-RPC network failure) requires `create_booking_atomic` to
+  /// accept an idempotency key server-side. Tracked separately — this code
+  /// path currently relies on the unique partial index on
+  /// `bookings(slot_id) WHERE booking_status='CONFIRMED'` to prevent
+  /// double-confirms; a network-level retry between request and response
+  /// could still surface a 23505 to the caller as an error rather than
+  /// silent success.
+  ///
+  /// Phase 7 Iter 3 EDGE-01 (KNOWN LIMITATION, NOT FIXED CLIENT-SIDE):
+  /// If the network fails AFTER the server commits the booking but
+  /// BEFORE the success response reaches the client, the user will see
+  /// an error and may retry — the retry will hit the unique partial
+  /// index and fail with 23505, leaving a phantom successful booking on
+  /// the server. We deliberately do NOT add a client-side
+  /// catch-and-lookup workaround here because:
+  ///   1. Looking up by slot_id after a 23505 to recover the booking row
+  ///      is racy (another user could have just booked it post-cancel).
+  ///   2. The proper fix is server-side — `create_booking_atomic` needs
+  ///      to accept an idempotency key (e.g. client-generated UUID) and
+  ///      return the existing booking row on duplicate key.
+  /// When that DB function ships, this method should be updated to send
+  /// the key and convert 23505 into a successful return path.
   Future<String> createBookingAtomic({
     required String slotId,
     required Map<String, dynamic> bookingData,
   }) async {
-    final result = await _client.rpc('create_booking_atomic', params: {
-      'p_slot_id': slotId,
-      'p_booking_data': bookingData,
-    });
-    return result as String;
+    try {
+      final result = await _client.rpc('create_booking_atomic', params: {
+        'p_slot_id': slotId,
+        'p_booking_data': bookingData,
+      });
+      if (result is String && result.isNotEmpty) return result;
+      throw StateError(
+          'create_booking_atomic returned unexpected result: $result');
+    } on PostgrestException catch (e) {
+      if (kDebugMode) {
+        debugPrint('create_booking_atomic failed: ${e.code} ${e.message}');
+      }
+      rethrow;
+    }
   }
 
   /// Cancel booking (using RPC)
@@ -935,53 +1090,76 @@ class DatabaseService {
     return result == true;
   }
 
-  /// Stream owner bookings
+  /// Stream owner bookings.
+  /// Phase 4 Iter 8 DB-02: `.eq('owner_id', ...)` on the realtime stream
+  /// itself instead of fetching every row in `bookings` and filtering
+  /// client-side. Cuts traffic and removes the row-leak vector.
   Stream<List<Map<String, dynamic>>> streamOwnerBookings(String ownerId) {
     return _client
         .from('bookings')
         .stream(primaryKey: ['id'])
-        .order('booking_date', ascending: false)
-        .map(
-            (rows) => rows.where((row) => row['owner_id'] == ownerId).toList());
+        .eq('owner_id', ownerId)
+        .order('booking_date', ascending: false);
   }
 
-  /// Get booking by ID
+  /// Get booking by ID. Phase 4 Iter 8 DB-03: explicit column allowlist.
   Future<Map<String, dynamic>?> getBooking(String bookingId) async {
     return await _client
         .from('bookings')
-        .select('*')
+        .select(_publicBookingColumns)
         .eq('id', bookingId)
         .maybeSingle();
   }
 
-  /// Get bookings for a date
+  /// Get bookings for a date. Phase 4 Iter 8 DB-03: explicit column allowlist.
   Future<List<Map<String, dynamic>>> getBookingsForDate(
     String ownerId,
     String date,
   ) async {
     return await _client
         .from('bookings')
-        .select('*')
+        .select(_publicBookingColumns)
         .eq('owner_id', ownerId)
         .eq('booking_date', date)
         .order('start_time', ascending: true);
   }
 
   /// Get bookings created by a player account.
+  /// Phase 4 Iter 8 DB-03: explicit column allowlist.
   Future<List<Map<String, dynamic>>> getPlayerBookings(String userId) async {
     return await _client
         .from('bookings')
-        .select('*')
+        .select(_publicBookingColumns)
         .eq('user_id', userId)
         .order('booking_date', ascending: false)
         .order('start_time', ascending: true);
   }
 
-  /// Stream bookings for owner's turfs
+  /// Stream bookings for owner's turfs.
+  /// Note (Phase 4 Iter 8 DB-02): supabase_flutter realtime streams
+  /// support a single equality filter only — `inFilter` cannot be applied
+  /// at the stream level. We keep the client-side `where(...)` here and
+  /// rely on RLS for hard isolation; consider switching to a per-turf
+  /// stream fan-out if owner turf counts ever exceed ~20.
+  ///
+  /// Phase 7 Iter 3 EDGE-02 (TODO): once any single owner crosses ~20
+  /// turfs, this client-side filter becomes a real scaling problem —
+  /// every booking event from every owner on the platform is sent to
+  /// every device just to be discarded. Switch to per-turf stream
+  /// fan-out (one channel per turf, merged) at that point. For now we
+  /// emit a `kDebugMode` warning so the threshold is visible during dev.
   Stream<List<Map<String, dynamic>>> streamBookingsByTurfs(
       List<String> turfIds) {
     if (turfIds.isEmpty) {
       return Stream.value([]);
+    }
+    if (kDebugMode && turfIds.length > 20) {
+      debugPrint(
+        'streamBookingsByTurfs: owner has ${turfIds.length} turfs (> 20). '
+        'Consider switching to per-turf realtime channel fan-out — current '
+        'implementation receives all bookings platform-wide and filters '
+        'client-side.',
+      );
     }
     return _client
         .from('bookings')
@@ -991,7 +1169,7 @@ class DatabaseService {
             rows.where((row) => turfIds.contains(row['turf_id'])).toList());
   }
 
-  /// Get today's bookings
+  /// Get today's bookings. Phase 4 Iter 8 DB-03: column allowlist.
   Future<List<Map<String, dynamic>>> getTodaysBookings(
     List<String> turfIds,
     String date,
@@ -999,27 +1177,29 @@ class DatabaseService {
     if (turfIds.isEmpty) return [];
     return await _client
         .from('bookings')
-        .select('*')
+        .select(_publicBookingColumns)
         .inFilter('turf_id', turfIds)
         .eq('booking_date', date)
         .eq('booking_status', 'CONFIRMED')
         .order('start_time', ascending: true);
   }
 
-  /// Get pending payments (includes both PENDING and PAY_AT_TURF statuses)
+  /// Get pending payments (includes both PENDING and PAY_AT_TURF statuses).
+  /// Phase 4 Iter 8 DB-03: column allowlist.
   Future<List<Map<String, dynamic>>> getPendingPayments(
       List<String> turfIds) async {
     if (turfIds.isEmpty) return [];
     return await _client
         .from('bookings')
-        .select('*')
+        .select(_publicBookingColumns)
         .inFilter('turf_id', turfIds)
         .inFilter('payment_status', ['PAY_AT_TURF', 'PENDING'])
         .eq('booking_status', 'CONFIRMED')
         .order('booking_date', ascending: false);
   }
 
-  /// Get recent bookings across all turfs (one-time fetch, limited)
+  /// Get recent bookings across all turfs (one-time fetch, limited).
+  /// Phase 4 Iter 8 DB-03: column allowlist.
   Future<List<Map<String, dynamic>>> getRecentBookings(
     List<String> turfIds, {
     int limit = 5,
@@ -1027,7 +1207,7 @@ class DatabaseService {
     if (turfIds.isEmpty) return [];
     return await _client
         .from('bookings')
-        .select('*')
+        .select(_publicBookingColumns)
         .inFilter('turf_id', turfIds)
         .eq('booking_status', 'CONFIRMED')
         .order('created_at', ascending: false)
@@ -1048,18 +1228,27 @@ class DatabaseService {
 
   /// F3: dedicated method for marking an offline booking as paid. This is
   /// the ONLY app code path allowed to flip `payment_status` to 'PAID'.
-  Future<void> markBookingPaymentReceived(String bookingId) async {
-    await _client.from('bookings').update({
-      'payment_status': 'PAID',
-      'updated_at': DateTime.now().toIso8601String(),
-    }).eq('id', bookingId);
+  /// Phase 4 Iter 8 DB-06: returns true only if exactly one row was
+  /// updated. Previously the call resolved silently when the bookingId
+  /// was wrong / RLS denied / the row was already cancelled — the owner
+  /// believed payment was recorded when in reality nothing changed.
+  Future<bool> markBookingPaymentReceived(String bookingId) async {
+    final updated = await _client
+        .from('bookings')
+        .update({
+          'payment_status': 'PAID',
+          'updated_at': DateTime.now().toIso8601String(),
+        })
+        .eq('id', bookingId)
+        .select('id');
+    return updated.length == 1;
   }
 
-  /// Get booking by slot ID
+  /// Get booking by slot ID. Phase 4 Iter 8 DB-03: column allowlist.
   Future<Map<String, dynamic>?> getBookingBySlotId(String slotId) async {
     return await _client
         .from('bookings')
-        .select('*')
+        .select(_publicBookingColumns)
         .eq('slot_id', slotId)
         .eq('booking_status', 'CONFIRMED')
         .maybeSingle();

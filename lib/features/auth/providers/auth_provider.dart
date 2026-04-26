@@ -21,9 +21,10 @@ enum AuthStatus {
 enum _OtpFlow {
   none,
   ownerLogin,
-  // Phase 3 Iter2 CLEAN-01: removed unused `playerLogin` value. Player phone
-  // OTP login was never wired up (no caller assigned this value), so the
-  // enum case, _sendOtpForFlow handler, and verifyOTP branch were dead code.
+  // Phase 8 Iter 4 AUTH-08: re-added playerLogin so a player who already
+  // signed up (via Email or Google) can also log in by entering their
+  // phone + SMS OTP, mirroring the owner OTP-login flow.
+  playerLogin,
   ownerPhoneVerification,
   deferredSignup,
   forgotPassword,
@@ -250,13 +251,42 @@ class AuthProvider extends ChangeNotifier {
   }
 
   Future<void> _handleExpiredPendingSignupSession() async {
+    // Phase Auth-Triage Iter 1 (AUTH-03): the user authenticated (Google +
+    // phone OTP, or email + phone OTP) but abandoned the deferred-signup
+    // form before completing role/name. Their auth.users row is verified
+    // but has no row in `owners`/`players`, leaving a permanent orphan.
+    // Call the SECURITY DEFINER `delete_my_account()` RPC to wipe the auth
+    // row before signing out. Best-effort: if the RPC fails (e.g. session
+    // already expired), fall through to a normal sign-out so the user is
+    // not stranded; the server-side scheduled cleanup catches the leftover.
+    try {
+      if (_authService.currentUserId != null) {
+        await _authService.deleteAccount();
+        if (kDebugMode) {
+          debugPrint(
+            'AuthProvider: deleted abandoned signup auth row before sign-out',
+          );
+        }
+      }
+    } catch (e) {
+      if (kDebugMode) {
+        debugPrint(
+          'AuthProvider: delete_my_account on expired signup failed: $e. '
+          'Falling back to plain sign-out; server-side purge will catch it.',
+        );
+      }
+    }
     await _forceSignOutWithMessage(
       'Signup session expired. Please sign up again.',
     );
   }
 
   /// Load user profile (Owner or Player)
-  Future<void> _loadUserProfile(String uid) async {
+  Future<void> _loadUserProfile(
+    String uid, {
+    int retriesRemaining = 3,
+    bool expireStalePendingSignup = true,
+  }) async {
     // Phase 3 Iter1 BUG-01 fix: capture the current load token. If a sign-out
     // (or another load) bumps it before we finish, we discard our results so
     // a late response can't flip the app back to authenticated.
@@ -325,9 +355,18 @@ class AuthProvider extends ChangeNotifier {
         // created_at now returns null and is treated as already expired,
         // instead of crashing or extending the record's life forever.
         final pendingCreatedAt = _parsePendingCreatedAt(pending);
-        if (pendingCreatedAt == null ||
-            AuthFlowRules.isDeferredSignupExpired(pendingCreatedAt)) {
-          await _handleExpiredPendingSignupSession();
+        if (!AuthFlowRules.isDeferredSignupResumable(pendingCreatedAt)) {
+          if (expireStalePendingSignup) {
+            await _handleExpiredPendingSignupSession();
+            return;
+          }
+
+          _authState = AuthStatus.unauthenticated;
+          _currentOwner = null;
+          _currentPlayer = null;
+          _clearDeferredOwnerSignup();
+          _isResumingPendingSignup = false;
+          notifyListeners();
           return;
         }
         final roleRaw = (pending['role'] ?? '').toString().toUpperCase();
@@ -340,7 +379,7 @@ class AuthProvider extends ChangeNotifier {
           phone: (pending['phone'] ?? '').toString(),
           method: (pending['auth_method'] ?? 'email').toString(),
           hasPassword: pending['has_password'] == true,
-          createdAt: pendingCreatedAt,
+          createdAt: pendingCreatedAt!,
           resumed: true,
         );
         _isResumingPendingSignup = true;
@@ -366,6 +405,70 @@ class AuthProvider extends ChangeNotifier {
       if (!tokenStillValid()) return;
       if (kDebugMode) {
         debugPrint('AuthProvider: profile load failed: $e');
+      }
+      // Phase Auth-Triage Iter 3 (AUTH-06): up to 3 silent retries with
+      // exponential backoff (600ms, 1.2s, 2.4s) before showing the
+      // "Couldn't load your profile" dialog. The most common cause of a
+      // thrown exception here is a transient network blip or an RLS race
+      // right after an OAuth deep-link returns to the app, where
+      // `auth.uid()` is briefly out of sync with the policy check. Multiple
+      // retries with backoff resolve the false alarm without changing the
+      // behaviour for genuinely broken states (DB down, permanent RLS
+      // deny, expired session) — those still surface the dialog after
+      // retries are exhausted.
+      if (retriesRemaining > 0) {
+        // attempt index 0 → 600ms, 1 → 1200ms, 2 → 2400ms (using initial=3).
+        final attemptIndex = 3 - retriesRemaining;
+        final delayMs = 600 * (1 << attemptIndex);
+        await Future<void>.delayed(Duration(milliseconds: delayMs));
+        if (!tokenStillValid()) return;
+        if (kDebugMode) {
+          debugPrint(
+            'AuthProvider: retrying profile load for uid=$uid '
+            '(remaining=$retriesRemaining, delayed=${delayMs}ms)',
+          );
+        }
+        return _loadUserProfile(
+          uid,
+          retriesRemaining: retriesRemaining - 1,
+          expireStalePendingSignup: expireStalePendingSignup,
+        );
+      }
+      // Phase Auth-Triage Iter 2 (AUTH-05): if the failure looks like a
+      // dead/invalidated JWT (auth.users row was deleted by the orphan
+      // purge job, project keys rotated, refresh token revoked, etc.),
+      // silently clear the stale session and land on the login picker
+      // instead of nagging the user with the "Action Required" dialog at
+      // every cold start. The user has nothing actionable to do — their
+      // session is simply gone.
+      final errStr = e.toString().toLowerCase();
+      final isStaleSession = errStr.contains('jwt') ||
+          errStr.contains('user not found') ||
+          errStr.contains('user_not_found') ||
+          errStr.contains('invalid_token') ||
+          errStr.contains('invalid token') ||
+          errStr.contains('refresh token') ||
+          errStr.contains('not authenticated') ||
+          errStr.contains('401');
+      if (isStaleSession) {
+        if (kDebugMode) {
+          debugPrint(
+            'AuthProvider: stale session detected ($e). '
+            'Silently signing out and routing to login.',
+          );
+        }
+        try {
+          await _authService.signOut();
+        } catch (_) {}
+        _currentOwner = null;
+        _currentPlayer = null;
+        _clearDeferredOwnerSignup();
+        _isResumingPendingSignup = false;
+        _authState = AuthStatus.unauthenticated;
+        _errorMessage = null;
+        _blockingDialogMessage = null;
+        notifyListeners();
+        return;
       }
       await _forceSignOutWithMessage(
         "Couldn't load your profile. Please check your connection and sign in again.",
@@ -498,6 +601,8 @@ class AuthProvider extends ChangeNotifier {
         message ==
             'No password set. Use Google or set password via Forgot Password.' ||
         message ==
+            'This account uses Google or phone OTP. Please use Google or OTP to log in.' ||
+        message ==
             'This email is registered as a player account. Please use Player login.' ||
         message ==
             'This email is registered as an owner account. Please use Owner login.' ||
@@ -509,7 +614,8 @@ class AuthProvider extends ChangeNotifier {
             'This account uses Google. Use Google login or reset password.' ||
         message ==
             'Password must be at least 8 characters with uppercase, lowercase, number, and special character.' ||
-        message == 'Please verify your new email and try again.') {
+        message == 'Please verify your new email and try again.' ||
+        message == 'Signup session expired. Please sign up again.') {
       return message;
     }
 
@@ -741,6 +847,58 @@ class AuthProvider extends ChangeNotifier {
     return AuthFlowRules.mergeAuthMethods(existing: existing, add: add);
   }
 
+  List<String> _authMethodsFromRow(Map<String, dynamic>? row) {
+    final raw = row?['auth_methods'];
+    if (raw is! List) return const <String>[];
+    return raw
+        .map((method) => method.toString().trim().toLowerCase())
+        .where((method) => method.isNotEmpty)
+        .toSet()
+        .toList();
+  }
+
+  bool _rowCanUsePasswordLogin(Map<String, dynamic>? row) {
+    if (row == null) return false;
+    return AuthFlowRules.canUsePasswordLogin(
+      authMethods: _authMethodsFromRow(row),
+      hasPassword: row['has_password'] == true,
+    );
+  }
+
+  bool _ownerCanUsePasswordLogin(OwnerModel owner) {
+    return AuthFlowRules.canUsePasswordLogin(
+      authMethods: owner.authMethods,
+      hasPassword: owner.hasPassword,
+    );
+  }
+
+  bool _playerCanUsePasswordLogin(PlayerModel player) {
+    return AuthFlowRules.canUsePasswordLogin(
+      authMethods: player.authMethods,
+      hasPassword: player.hasPassword,
+    );
+  }
+
+  Future<void> _discardUnfinishedGoogleLoginSession() async {
+    try {
+      await _authService.deleteAccount();
+    } catch (deleteError) {
+      if (kDebugMode) {
+        debugPrint(
+          'AuthProvider: unfinished Google login cleanup failed: $deleteError',
+        );
+      }
+      try {
+        await _authService.signOut();
+      } catch (_) {}
+    } finally {
+      _currentOwner = null;
+      _currentPlayer = null;
+      _clearDeferredOwnerSignup();
+      _authState = AuthStatus.unauthenticated;
+    }
+  }
+
   Future<String?> _waitForCurrentUserId({
     Duration timeout = const Duration(seconds: 90),
   }) async {
@@ -845,7 +1003,12 @@ class AuthProvider extends ChangeNotifier {
       case _OtpFlow.ownerLogin:
         await _authService.sendPhoneOtp(phone: phone, shouldCreateUser: false);
         return;
-      // Phase 3 Iter2 CLEAN-01: removed dead `playerLogin` case.
+      case _OtpFlow.playerLogin:
+        // Phase 8 Iter 4 AUTH-08: phone-OTP login for existing players.
+        // shouldCreateUser:false so we never silently create an auth.users
+        // row from a phone the user has not signed up with.
+        await _authService.sendPhoneOtp(phone: phone, shouldCreateUser: false);
+        return;
       case _OtpFlow.forgotPassword:
         await _authService.sendPhoneOtp(phone: phone, shouldCreateUser: false);
         return;
@@ -973,7 +1136,10 @@ class AuthProvider extends ChangeNotifier {
     return true;
   }
 
-  Future<bool> _signInWithGoogleForRole(UserRole role) async {
+  Future<bool> _signInWithGoogleForRole(
+    UserRole role, {
+    required bool allowSignup,
+  }) async {
     _oauthHandlerInProgress = true;
     try {
       _isLoading = true;
@@ -998,17 +1164,38 @@ class AuthProvider extends ChangeNotifier {
             'Google account email is missing. Please use another account.');
       }
 
-      await _loadUserProfile(uid);
+      await _loadUserProfile(
+        uid,
+        expireStalePendingSignup: false,
+      ).catchError((Object e, StackTrace st) {
+        // Phase Auth-Triage Iter 3 (AUTH-07): never let a transient
+        // owners/players/pending lookup failure abort the Google OAuth
+        // flow. The block of code immediately below already does its own
+        // ownerByEmail/playerByEmail lookups and creates a pending signup
+        // row when needed, so a hiccup here is non-fatal. _loadUserProfile
+        // has already done its own 3-retry backoff before throwing; if it
+        // STILL threw, swallow it so the user sees the proper account
+        // state instead of the generic red "Could not sign in with
+        // Google" toast.
+        if (kDebugMode) {
+          debugPrint(
+            'AuthProvider: profile load during Google OAuth threw "$e" — '
+            'continuing with email-based lookup.',
+          );
+        }
+      });
       if (_authService.currentUserId == null) {
         throw AuthException(_errorMessage ??
             'Google sign-in session expired. Please try again.');
       }
 
       if (role == UserRole.owner && _currentPlayer != null) {
+        await _authService.signOut();
         throw AuthException(
             'This account belongs to a player. Please use Player login.');
       }
       if (role == UserRole.player && _currentOwner != null) {
+        await _authService.signOut();
         throw AuthException(
             'This account belongs to an owner. Please use Owner login.');
       }
@@ -1090,6 +1277,7 @@ class AuthProvider extends ChangeNotifier {
         _setBlockingDialogMessage(
           'This email is registered as a player account. Please use Player login.',
         );
+        await _authService.signOut();
         throw AuthException(
             'This email is registered as a player account. Please use Player login.');
       }
@@ -1100,8 +1288,14 @@ class AuthProvider extends ChangeNotifier {
         _setBlockingDialogMessage(
           'This email is registered as an owner account. Please use Owner login.',
         );
+        await _authService.signOut();
         throw AuthException(
             'This email is registered as an owner account. Please use Owner login.');
+      }
+
+      if (!allowSignup) {
+        await _discardUnfinishedGoogleLoginSession();
+        throw AuthException('Account not found, please sign up first.');
       }
 
       // Missing profile: move to pending signup and enforce phone OTP.
@@ -1111,15 +1305,30 @@ class AuthProvider extends ChangeNotifier {
               email.split('@').first;
 
       final existingPending = await _dbService.getPendingSignup(uid);
-      final pendingPhone = (existingPending?['phone'] ?? '').toString();
-      final pendingMethod = (existingPending?['auth_method'] ?? 'google')
-          .toString()
-          .trim()
-          .toLowerCase();
-      final pendingHasPassword = existingPending?['has_password'] == true;
-      final createdAt = existingPending != null
-          ? (_parsePendingCreatedAt(existingPending) ?? DateTime.now())
-          : DateTime.now();
+      final existingPendingCreatedAt = existingPending == null
+          ? null
+          : _parsePendingCreatedAt(existingPending);
+      final canResumePending = existingPending != null &&
+          AuthFlowRules.isDeferredSignupResumable(existingPendingCreatedAt);
+      final reusablePending = canResumePending ? existingPending : null;
+
+      if (existingPending != null && !canResumePending) {
+        try {
+          await _dbService.deletePendingSignup(uid);
+        } catch (deleteError) {
+          if (kDebugMode) {
+            debugPrint(
+              'AuthProvider: stale pending signup cleanup failed before Google resume: $deleteError',
+            );
+          }
+        }
+      }
+
+      final pendingPhone = (reusablePending?['phone'] ?? '').toString();
+      const pendingMethod = 'google';
+      final pendingHasPassword = reusablePending?['has_password'] == true;
+      final createdAt =
+          reusablePending != null ? existingPendingCreatedAt! : DateTime.now();
 
       await _dbService.upsertPendingSignup(
         userId: uid,
@@ -1128,7 +1337,7 @@ class AuthProvider extends ChangeNotifier {
         email: email,
         phone: pendingPhone,
         authMethod: pendingMethod.isEmpty ? 'google' : pendingMethod,
-        hasPassword: existingPending != null ? pendingHasPassword : false,
+        hasPassword: reusablePending != null ? pendingHasPassword : false,
       );
 
       _deferredOwnerSignup = _DeferredOwnerSignupData(
@@ -1138,11 +1347,11 @@ class AuthProvider extends ChangeNotifier {
         email: email,
         phone: pendingPhone,
         method: pendingMethod.isEmpty ? 'google' : pendingMethod,
-        hasPassword: existingPending != null ? pendingHasPassword : false,
+        hasPassword: reusablePending != null ? pendingHasPassword : false,
         createdAt: createdAt,
-        resumed: existingPending != null,
+        resumed: reusablePending != null,
       );
-      _isResumingPendingSignup = existingPending != null;
+      _isResumingPendingSignup = reusablePending != null;
 
       _authState = AuthStatus.authenticated;
       _isLoading = false;
@@ -1162,14 +1371,20 @@ class AuthProvider extends ChangeNotifier {
     }
   }
 
-  /// Owner-only Google OAuth login/signup.
-  Future<bool> signInOwnerWithGoogle() async {
-    return _signInWithGoogleForRole(UserRole.owner);
+  /// Owner Google OAuth. Set [allowSignup] only from the signup tab.
+  Future<bool> signInOwnerWithGoogle({bool allowSignup = false}) async {
+    return _signInWithGoogleForRole(
+      UserRole.owner,
+      allowSignup: allowSignup,
+    );
   }
 
-  /// Player Google OAuth login/signup.
-  Future<bool> signInPlayerWithGoogle() async {
-    return _signInWithGoogleForRole(UserRole.player);
+  /// Player Google OAuth. Set [allowSignup] only from the signup tab.
+  Future<bool> signInPlayerWithGoogle({bool allowSignup = false}) async {
+    return _signInWithGoogleForRole(
+      UserRole.player,
+      allowSignup: allowSignup,
+    );
   }
 
   /// Persist phone number for deferred owner Google signup before OTP verification.
@@ -1274,6 +1489,21 @@ class AuthProvider extends ChangeNotifier {
         throw AuthException('Account not found, please sign up first.');
       }
 
+      if (!_ownerCanUsePasswordLogin(_currentOwner!)) {
+        try {
+          await signOut();
+        } catch (signOutError) {
+          if (kDebugMode) {
+            debugPrint(
+              'AuthProvider signIn password-mode cleanup failed: $signOutError',
+            );
+          }
+        }
+        throw AuthException(
+          'This account uses Google or phone OTP. Please use Google or OTP to log in.',
+        );
+      }
+
       return true;
     } catch (e) {
       _authState = AuthStatus.error;
@@ -1285,18 +1515,15 @@ class AuthProvider extends ChangeNotifier {
 
       final normalizedEmail = AuthFormUtils.normalizeEmail(email);
       final ownerByEmail = await _dbService.getOwnerByEmail(normalizedEmail);
-      final ownerMethods = ownerByEmail?['auth_methods'];
-      final authMethods = ownerMethods is List
-          ? List<String>.from(ownerMethods.map((m) => m.toString()))
-          : const <String>[];
-      final hasPassword = ownerByEmail?['has_password'] == true;
+      final authMethods = _authMethodsFromRow(ownerByEmail);
+      final canUsePassword = _rowCanUsePasswordLogin(ownerByEmail);
 
       if (baseMessage == 'Invalid email or password.' &&
           ownerByEmail != null &&
           authMethods.contains('google') &&
-          !hasPassword) {
+          !canUsePassword) {
         _errorMessage =
-            'No password set. Use Google or set password via Forgot Password.';
+            'This account uses Google or phone OTP. Please use Google or OTP to log in.';
       } else {
         _errorMessage = baseMessage;
       }
@@ -1343,6 +1570,21 @@ class AuthProvider extends ChangeNotifier {
         throw AuthException('Player account not found. Please sign up.');
       }
 
+      if (!_playerCanUsePasswordLogin(_currentPlayer!)) {
+        try {
+          await signOut();
+        } catch (signOutError) {
+          if (kDebugMode) {
+            debugPrint(
+              'AuthProvider signInPlayer password-mode cleanup failed: $signOutError',
+            );
+          }
+        }
+        throw AuthException(
+          'This account uses Google or phone OTP. Please use Google or OTP to log in.',
+        );
+      }
+
       return true;
     } catch (e) {
       _authState = AuthStatus.error;
@@ -1354,16 +1596,15 @@ class AuthProvider extends ChangeNotifier {
 
       final normalizedEmail = AuthFormUtils.normalizeEmail(email);
       final playerByEmail = await _dbService.getPlayerByEmail(normalizedEmail);
-      final playerMethods = playerByEmail?['auth_methods'];
-      final authMethods = playerMethods is List
-          ? List<String>.from(playerMethods.map((m) => m.toString()))
-          : const <String>[];
+      final authMethods = _authMethodsFromRow(playerByEmail);
+      final canUsePassword = _rowCanUsePasswordLogin(playerByEmail);
 
       if (baseMessage == 'Invalid email or password.' &&
+          playerByEmail != null &&
           authMethods.contains('google') &&
-          !authMethods.contains('email')) {
+          !canUsePassword) {
         _errorMessage =
-            'This account uses Google sign-in. Continue with Google, or set a password using Forgot Password.';
+            'This account uses Google or phone OTP. Please use Google or OTP to log in.';
       } else {
         _errorMessage = baseMessage;
       }
@@ -1484,16 +1725,52 @@ class AuthProvider extends ChangeNotifier {
   }
 
   /// Send OTP for player login/signup flow.
+  ///
+  /// Phase 8 Iter 4 AUTH-08: supports both staged signup (deferred) and
+  /// login. For login the phone must already be registered to a player
+  /// row — we never create new users from phone OTP (Rule 3).
   Future<bool> sendPlayerOtp(String phone) async {
     final pending = _deferredOwnerSignup;
     if (pending != null && pending.role == UserRole.player) {
       return sendPhoneOtp(phone);
     }
 
-    _errorMessage =
-        'Player phone OTP is only available during signup verification.';
-    notifyListeners();
-    return false;
+    try {
+      _isLoading = true;
+      _errorMessage = null;
+      _blockingDialogMessage = null;
+      notifyListeners();
+
+      final normalizedPhone = AuthFormUtils.normalizeIndianPhone(phone);
+
+      // Login OTP: player must exist by phone. Per Rule 3, phone OTP
+      // cannot create new users — they must sign up via Email or Google
+      // first. If the phone exists only on an OWNER row, getPlayerByPhone
+      // returns null and we treat it as no-account.
+      final playerRow = await _dbService.getPlayerByPhone(normalizedPhone);
+      if (playerRow == null) {
+        _isLoading = false;
+        _errorMessage = 'Account not found, please sign up first.';
+        _clearOtpContext();
+        notifyListeners();
+        return false;
+      }
+
+      _setOtpContext(phone: normalizedPhone, flow: _OtpFlow.playerLogin);
+      await _sendOtpForFlow(_otpFlow, normalizedPhone);
+
+      _isLoading = false;
+      notifyListeners();
+      return true;
+    } catch (e) {
+      _isLoading = false;
+      _errorMessage = _friendlyAuthError(
+        e,
+        fallback: 'Could not send OTP. Please try again.',
+      );
+      notifyListeners();
+      return false;
+    }
   }
 
   /// Verify OTP and sign in
@@ -1587,6 +1864,36 @@ class AuthProvider extends ChangeNotifier {
       // Phase 3 Iter2 CLEAN-01: removed dead `_OtpFlow.playerLogin` branch.
       // No code path ever assigned this flow value, so this ~30-line block
       // was unreachable.
+
+      if (_otpFlow == _OtpFlow.playerLogin) {
+        // Phase 8 Iter 4 AUTH-08: player phone-OTP login.
+        final response = await _authService.verifyPhoneOtp(
+          phone: _phoneNumber!,
+          token: smsCode,
+        );
+
+        final uid = response.user?.id;
+        if (uid == null) {
+          throw AuthException('Authentication failed.');
+        }
+
+        await _loadUserProfile(uid);
+
+        if (_currentPlayer == null) {
+          final isOwnerAccount = _currentOwner != null;
+          await signOut();
+          if (isOwnerAccount) {
+            throw AuthException(
+                'This phone is registered as an owner account. Please use Owner login.');
+          }
+          throw AuthException('Account not found, please sign up first.');
+        }
+
+        _otpFlow = _OtpFlow.none;
+        _isLoading = false;
+        notifyListeners();
+        return true;
+      }
 
       if (_otpFlow != _OtpFlow.ownerLogin) {
         throw AuthException('OTP flow is invalid. Please request OTP again.');
@@ -1873,6 +2180,8 @@ class AuthProvider extends ChangeNotifier {
       bool silent = false;
       if (profileData == null) {
         silent = true;
+      } else if (!_rowCanUsePasswordLogin(profileData)) {
+        silent = true;
       } else {
         final candidatePhone = profileData['phone'] as String?;
         if (candidatePhone == null ||
@@ -2008,14 +2317,38 @@ class AuthProvider extends ChangeNotifier {
       // Forgot-password flow: identity has been proven via OTP earlier in
       // this same flow, so re-auth with the (unknown) old password is not
       // possible — use the OTP-verified update path.
+      final uid = _authService.currentUserId;
+      if (uid == null || uid.isEmpty) {
+        throw AuthException('Session expired. Please login again.');
+      }
+
+      final ownerData = await _dbService.getOwner(uid);
+      final playerData =
+          ownerData == null ? await _dbService.getPlayer(uid) : null;
+      final profileData = ownerData ?? playerData;
+      if (!_rowCanUsePasswordLogin(profileData)) {
+        throw AuthException(
+          'This account uses Google or phone OTP. Please use Google or OTP to log in.',
+        );
+      }
+
       await _authService.updatePasswordAfterReauth(newPassword: newPassword);
 
       // Update has_password flag in database
-      final uid = _authService.currentUserId;
-      if (uid != null) {
+      if (ownerData != null) {
         await _dbService.updateOwner(uid, {
           'has_password': true,
           'auth_methods': await _getUpdatedAuthMethods(uid, 'email'),
+        });
+        await _loadUserProfile(uid);
+      } else if (playerData != null) {
+        final existingMethods = _authMethodsFromRow(playerData);
+        await _dbService.updatePlayer(uid, {
+          'has_password': true,
+          'auth_methods': _mergeAuthMethods(
+            existing: existingMethods,
+            add: 'email',
+          ),
         });
         await _loadUserProfile(uid);
       }
@@ -2210,6 +2543,23 @@ class AuthProvider extends ChangeNotifier {
         return false;
       }
 
+      if (_currentOwner != null && !_ownerCanUsePasswordLogin(_currentOwner!)) {
+        _isLoading = false;
+        _errorMessage =
+            'This account uses Google or phone OTP. Please use Google or OTP to log in.';
+        notifyListeners();
+        return false;
+      }
+
+      if (_currentPlayer != null &&
+          !_playerCanUsePasswordLogin(_currentPlayer!)) {
+        _isLoading = false;
+        _errorMessage =
+            'This account uses Google or phone OTP. Please use Google or OTP to log in.';
+        notifyListeners();
+        return false;
+      }
+
       await _authService.updatePassword(
         newPassword: newPassword,
         currentPassword: currentPassword,
@@ -2254,68 +2604,13 @@ class AuthProvider extends ChangeNotifier {
     }
   }
 
-  /// Set password for Google user (unlocks manual login option)
-  /// Requires phone OTP verification to be done first in the calling screen.
-  ///
-  /// Q4 (security gate): we hard-fail unless [_isForgotPasswordOtpVerified]
-  /// is true at call time. Without this gate, a hijacked session could call
-  /// this method and silently set a password the real user never chose,
-  /// converting an OAuth-only account into a permanent backdoor.
-  Future<bool> setPasswordForGoogleUser(String newPassword) async {
-    try {
-      if (!_isForgotPasswordOtpVerified) {
-        _errorMessage =
-            'Phone OTP verification is required before setting a password.';
-        notifyListeners();
-        throw AuthException(
-            'Phone OTP verification is required before setting a password.');
-      }
-
-      _isLoading = true;
-      _errorMessage = null;
-      notifyListeners();
-
-      if (!_isStrongPassword(newPassword)) {
-        _isLoading = false;
-        _errorMessage =
-            'Password must be at least 8 characters with uppercase, lowercase, number, and special character.';
-        notifyListeners();
-        return false;
-      }
-
-      // Google-only user has no password yet — identity was proven via the
-      // phone OTP step in the calling screen, so use the OTP-verified path.
-      await _authService.updatePasswordAfterReauth(newPassword: newPassword);
-
-      // Mark that this Google user now has a password and add email to auth methods
-      if (_currentOwner != null) {
-        final updatedMethods = _mergeAuthMethods(
-          existing: _currentOwner!.authMethods,
-          add: 'email',
-        );
-        await _dbService.updateOwner(_currentOwner!.uid, {
-          'has_password': true,
-          'auth_methods': updatedMethods,
-        });
-        await _loadUserProfile(_currentOwner!.uid);
-      }
-
-      // Q4: consume the OTP-verified flag so the same OTP cannot be reused
-      // by a second call.
-      _isForgotPasswordOtpVerified = false;
-
-      _isLoading = false;
-      notifyListeners();
-      return true;
-    } catch (e) {
-      _isLoading = false;
-      _errorMessage = _friendlyAuthError(
-        e,
-        fallback: 'Could not set password. Please try again.',
-      );
-      notifyListeners();
-      return false;
-    }
+  /// Google-created accounts remain Google/OTP-only by policy.
+  Future<bool> setPasswordForGoogleUser(String _) async {
+    _isLoading = false;
+    _errorMessage =
+        'This account uses Google or phone OTP. Please use Google or OTP to log in.';
+    notifyListeners();
+    return false;
   }
 
   /// Get current email

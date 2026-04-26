@@ -2,20 +2,42 @@ import 'dart:async';
 import 'dart:ui';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import '../../../config/colors.dart';
 import '../../../config/glass_widgets.dart';
 import '../../../config/section_container.dart';
 import '../../../config/theme_provider.dart';
 import '../../../core/constants/enums.dart';
+import '../../../core/constants/strings.dart';
+import '../../../core/utils/app_toast.dart';
 import '../../../app/routes.dart';
 import '../../../data/models/booking_model.dart';
 import '../../auth/providers/auth_provider.dart';
 import '../providers/turf_provider.dart';
 import '../providers/booking_provider.dart';
 
-/// Owner Dashboard Screen
-/// Central hub for turf owners to manage their business
+/// Owner Dashboard Screen.
+///
+/// Central hub for turf owners to manage their business. Phase 5 Iter 24
+/// hardening:
+///   * RouteAware + WidgetsBindingObserver: refreshes on push/pop/resume.
+///   * Phone-gate overlay (`_buildPhoneVerificationLock`) blocks dashboard
+///     interaction until owner phone OTP is verified. Used both for normal
+///     onboarding and for the deferred (Google) signup flow — handled via
+///     [AuthProvider.completeDeferredOwnerSignup].
+///   * Quick Overview carousel uses an infinite-loop trick (large multiplier
+///     around an initial midpoint). Scale/opacity per-page is driven by a
+///     [ValueNotifier<double>] so only the carousel rebuilds on scroll, not
+///     the whole scaffold.
+///   * Auto-slide is a cancellable [Timer.periodic]; pause-on-drag uses a
+///     stored Timer so dispose can cancel it.
+///   * Quick Action cards animate in via a single [AnimationController].
+///   * `_phoneGateError` (red) and `_phoneGateInfo` (success/info) are
+///     separate fields — earlier code overloaded a single field which made
+///     the resend-success message render in error styling.
+///   * Logout failures surface a toast instead of silently leaving the
+///     dialog open.
 class OwnerDashboardScreen extends StatefulWidget {
   const OwnerDashboardScreen({super.key});
 
@@ -25,9 +47,37 @@ class OwnerDashboardScreen extends StatefulWidget {
 
 class _OwnerDashboardScreenState extends State<OwnerDashboardScreen>
     with WidgetsBindingObserver, RouteAware, TickerProviderStateMixin {
+  static final RegExp _phoneRe = RegExp(r'^\d{10}$');
+  static final RegExp _otpRe = RegExp(r'^\d{6}$');
+  static const List<String> _monthShortNames = [
+    'Jan',
+    'Feb',
+    'Mar',
+    'Apr',
+    'May',
+    'Jun',
+    'Jul',
+    'Aug',
+    'Sep',
+    'Oct',
+    'Nov',
+    'Dec',
+  ];
+  static const List<String> _weekdayShortNames = [
+    'Mon',
+    'Tue',
+    'Wed',
+    'Thu',
+    'Fri',
+    'Sat',
+    'Sun',
+  ];
+
   late final PageController _carouselController;
-  double _carouselPage = 0;
+  final ValueNotifier<double> _carouselPageNotifier = ValueNotifier(0);
   Timer? _autoSlideTimer;
+  Timer? _autoSlideResumeTimer;
+  Timer? _resendInfoTimer;
 
   // Quick Actions staggered entrance animation
   late final AnimationController _actionAnimController;
@@ -45,6 +95,7 @@ class _OwnerDashboardScreenState extends State<OwnerDashboardScreen>
   bool _phoneGateOtpSent = false;
   bool _phoneGateBusy = false;
   String? _phoneGateError;
+  String? _phoneGateInfo;
 
   @override
   void initState() {
@@ -54,11 +105,11 @@ class _OwnerDashboardScreenState extends State<OwnerDashboardScreen>
       viewportFraction: 0.80,
       initialPage: _carouselInitialPage,
     );
-    _carouselPage = _carouselInitialPage.toDouble();
+    _carouselPageNotifier.value = _carouselInitialPage.toDouble();
     _carouselController.addListener(() {
-      setState(() {
-        _carouselPage = _carouselController.page ?? 0;
-      });
+      // OD-04: only the carousel listens to this notifier; the rest of the
+      // screen does not rebuild on every scroll frame.
+      _carouselPageNotifier.value = _carouselController.page ?? 0;
     });
     _startAutoSlide();
 
@@ -88,17 +139,13 @@ class _OwnerDashboardScreenState extends State<OwnerDashboardScreen>
     });
     _actionAnimController.forward();
 
+    // OD-12 / OD-20: collapse the two postFrameCallbacks; _forceRefreshData
+    // already covers what _loadData did.
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       final authProvider = Provider.of<AuthProvider>(context, listen: false);
       authProvider.ensureOwnerReadyForDashboard();
-    });
-
-    _loadData();
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) {
-        _forceRefreshData();
-      }
+      _forceRefreshData();
     });
   }
 
@@ -115,9 +162,12 @@ class _OwnerDashboardScreenState extends State<OwnerDashboardScreen>
   @override
   void dispose() {
     _autoSlideTimer?.cancel();
+    _autoSlideResumeTimer?.cancel();
+    _resendInfoTimer?.cancel();
     _actionAnimController.dispose();
     _phoneGatePhoneController.dispose();
     _phoneGateOtpController.dispose();
+    _carouselPageNotifier.dispose();
     WidgetsBinding.instance.removeObserver(this);
     AppRoutes.routeObserver.unsubscribe(this);
     _carouselController.dispose();
@@ -159,9 +209,10 @@ class _OwnerDashboardScreenState extends State<OwnerDashboardScreen>
 
   Future<void> _sendPhoneVerificationOtp(AuthProvider authProvider) async {
     final enteredPhone = _phoneGatePhoneController.text.trim();
-    if (!RegExp(r'^\d{10}$').hasMatch(enteredPhone)) {
+    if (!_phoneRe.hasMatch(enteredPhone)) {
       setState(() {
-        _phoneGateError = 'Enter a valid 10-digit phone number';
+        _phoneGateError = AppStrings.phoneGateInvalidPhone;
+        _phoneGateInfo = null;
       });
       return;
     }
@@ -169,6 +220,7 @@ class _OwnerDashboardScreenState extends State<OwnerDashboardScreen>
     setState(() {
       _phoneGateBusy = true;
       _phoneGateError = null;
+      _phoneGateInfo = null;
     });
 
     final normalizedPhone = _normalizeToE164Indian(enteredPhone);
@@ -195,8 +247,7 @@ class _OwnerDashboardScreenState extends State<OwnerDashboardScreen>
       _phoneGateOtpSent = sent;
       _phoneGateError = sent
           ? null
-          : (authProvider.errorMessage ??
-              'Could not send OTP. Please try again.');
+          : (authProvider.errorMessage ?? AppStrings.phoneGateOtpSendFailed);
     });
   }
 
@@ -204,6 +255,7 @@ class _OwnerDashboardScreenState extends State<OwnerDashboardScreen>
     setState(() {
       _phoneGateBusy = true;
       _phoneGateError = null;
+      _phoneGateInfo = null;
       _phoneGateOtpController.clear();
     });
 
@@ -215,16 +267,23 @@ class _OwnerDashboardScreenState extends State<OwnerDashboardScreen>
 
     setState(() {
       _phoneGateBusy = false;
-      _phoneGateError = sent
-          ? 'OTP resent successfully'
-          : (authProvider.errorMessage ?? 'Could not resend OTP.');
+      if (sent) {
+        _phoneGateInfo = AppStrings.phoneGateResendSuccess;
+        _phoneGateError = null;
+      } else {
+        _phoneGateInfo = null;
+        _phoneGateError =
+            authProvider.errorMessage ?? AppStrings.phoneGateResendFailed;
+      }
     });
 
-    // Clear success message after 3 seconds
+    // Clear success message after 3 seconds via cancellable Timer.
     if (sent) {
-      Future.delayed(const Duration(seconds: 3), () {
-        if (mounted && _phoneGateError == 'OTP resent successfully') {
-          setState(() => _phoneGateError = null);
+      _resendInfoTimer?.cancel();
+      _resendInfoTimer = Timer(const Duration(seconds: 3), () {
+        if (!mounted) return;
+        if (_phoneGateInfo == AppStrings.phoneGateResendSuccess) {
+          setState(() => _phoneGateInfo = null);
         }
       });
     }
@@ -232,9 +291,10 @@ class _OwnerDashboardScreenState extends State<OwnerDashboardScreen>
 
   Future<void> _verifyPhoneVerificationOtp(AuthProvider authProvider) async {
     final otp = _phoneGateOtpController.text.trim();
-    if (!RegExp(r'^\d{6}$').hasMatch(otp)) {
+    if (!_otpRe.hasMatch(otp)) {
       setState(() {
-        _phoneGateError = 'Enter a valid 6-digit OTP';
+        _phoneGateError = AppStrings.phoneGateInvalidOtp;
+        _phoneGateInfo = null;
       });
       return;
     }
@@ -242,6 +302,7 @@ class _OwnerDashboardScreenState extends State<OwnerDashboardScreen>
     setState(() {
       _phoneGateBusy = true;
       _phoneGateError = null;
+      _phoneGateInfo = null;
     });
 
     final verified = await authProvider.verifyOTP(otp);
@@ -256,8 +317,8 @@ class _OwnerDashboardScreenState extends State<OwnerDashboardScreen>
         if (!completed) {
           setState(() {
             _phoneGateBusy = false;
-            _phoneGateError = authProvider.errorMessage ??
-                'Could not complete signup. Please try again.';
+            _phoneGateError =
+                authProvider.errorMessage ?? AppStrings.phoneGateCompleteFailed;
           });
           return;
         }
@@ -266,232 +327,277 @@ class _OwnerDashboardScreenState extends State<OwnerDashboardScreen>
       setState(() {
         _phoneGateBusy = false;
         _phoneGateError = null;
+        _phoneGateInfo = null;
         _phoneGateOtpSent = false;
         _phoneGateOtpController.clear();
       });
     } else {
       setState(() {
         _phoneGateBusy = false;
-        _phoneGateError = authProvider.errorMessage ??
-            'Could not verify OTP. Please try again.';
+        _phoneGateError =
+            authProvider.errorMessage ?? AppStrings.phoneGateOtpVerifyFailed;
       });
     }
   }
 
-  Widget _buildPhoneVerificationLock(AuthProvider authProvider) {
-    final c = AppColors.of(context);
-    _seedPhoneGateIfNeeded(authProvider);
+  Widget _buildPhoneVerificationLock() {
+    return Consumer<AuthProvider>(
+      builder: (context, authProvider, _) {
+        final c = AppColors.of(context);
+        _seedPhoneGateIfNeeded(authProvider);
 
-    final isGoogleSignup = authProvider.isInDeferredSignupFlow &&
-        authProvider.deferredSignupMethod == 'google';
-    final hasPhonePrefilled =
-        _phoneGatePhoneController.text.trim().isNotEmpty && !isGoogleSignup;
+        final isGoogleSignup = authProvider.isInDeferredSignupFlow &&
+            authProvider.deferredSignupMethod == 'google';
+        final hasPhonePrefilled =
+            _phoneGatePhoneController.text.trim().isNotEmpty && !isGoogleSignup;
 
-    return Positioned.fill(
-      child: Stack(
-        children: [
-          Positioned.fill(
-            child: BackdropFilter(
-              filter: ImageFilter.blur(sigmaX: 8, sigmaY: 8),
-              child: Container(color: Colors.black.withValues(alpha: 0.22)),
-            ),
-          ),
-          Center(
-            child: Material(
-              color: Colors.transparent,
-              child: ConstrainedBox(
-                constraints: const BoxConstraints(maxWidth: 420),
-                child: Container(
-                  margin: const EdgeInsets.all(20),
-                  padding: const EdgeInsets.all(18),
-                  decoration: BoxDecoration(
-                    color: c.surface,
-                    borderRadius: BorderRadius.circular(18),
-                    border: Border.all(color: c.glassBorder),
-                  ),
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        'Verify Phone To Continue',
-                        style: TextStyle(
-                          color: c.textPrimary,
-                          fontSize: 18,
-                          fontWeight: FontWeight.w700,
-                        ),
+        return Positioned.fill(
+          child: Stack(
+            children: [
+              Positioned.fill(
+                child: BackdropFilter(
+                  filter: ImageFilter.blur(sigmaX: 8, sigmaY: 8),
+                  child: Container(color: Colors.black.withValues(alpha: 0.22)),
+                ),
+              ),
+              Center(
+                child: Material(
+                  color: Colors.transparent,
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 420),
+                    child: Container(
+                      margin: const EdgeInsets.all(20),
+                      padding: const EdgeInsets.all(18),
+                      decoration: BoxDecoration(
+                        color: c.surface,
+                        borderRadius: BorderRadius.circular(18),
+                        border: Border.all(color: c.glassBorder),
                       ),
-                      const SizedBox(height: 8),
-                      Text(
-                        isGoogleSignup
-                            ? 'Please enter your phone number and verify with OTP to complete account setup.'
-                            : hasPhonePrefilled
-                                ? 'Verify your phone number with OTP to complete account setup.'
-                                : 'Phone OTP verification is mandatory for Owner access.',
-                        style: TextStyle(color: c.textSecondary),
-                      ),
-                      const SizedBox(height: 16),
-                      TextField(
-                        controller: _phoneGatePhoneController,
-                        keyboardType: TextInputType.phone,
-                        maxLength: 10,
-                        enabled: !_phoneGateOtpSent,
-                        decoration: const InputDecoration(
-                          labelText: 'Phone Number',
-                          prefixText: '+91 ',
-                          hintText: '10-digit mobile number',
-                        ),
-                      ),
-                      if (_phoneGateOtpSent) ...[
-                        const SizedBox(height: 12),
-                        TextField(
-                          controller: _phoneGateOtpController,
-                          keyboardType: TextInputType.number,
-                          maxLength: 6,
-                          decoration: const InputDecoration(
-                            labelText: 'Enter OTP',
-                            hintText: '6-digit code',
-                          ),
-                        ),
-                      ],
-                      if (_phoneGateError != null) ...[
-                        const SizedBox(height: 8),
-                        Text(
-                          _phoneGateError!,
-                          style: TextStyle(
-                              color: c.error, fontWeight: FontWeight.w600),
-                        ),
-                      ],
-                      const SizedBox(height: 12),
-                      Row(
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Expanded(
-                            child: ElevatedButton(
-                              onPressed: _phoneGateBusy
-                                  ? null
-                                  : () => _phoneGateOtpSent
-                                      ? _verifyPhoneVerificationOtp(
-                                          authProvider)
-                                      : _sendPhoneVerificationOtp(authProvider),
-                              child: _phoneGateBusy
-                                  ? const SizedBox(
-                                      width: 18,
-                                      height: 18,
-                                      child: CircularProgressIndicator(
-                                          strokeWidth: 2),
-                                    )
-                                  : Text(_phoneGateOtpSent
-                                      ? 'Verify OTP'
-                                      : 'Send OTP'),
+                          Text(
+                            AppStrings.phoneGateTitle,
+                            style: TextStyle(
+                              color: c.textPrimary,
+                              fontSize: 18,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                          const SizedBox(height: 8),
+                          Text(
+                            isGoogleSignup
+                                ? AppStrings.phoneGateBodyGoogle
+                                : hasPhonePrefilled
+                                    ? AppStrings.phoneGateBodyPrefilled
+                                    : AppStrings.phoneGateBodyMandatory,
+                            style: TextStyle(color: c.textSecondary),
+                          ),
+                          const SizedBox(height: 16),
+                          TextField(
+                            controller: _phoneGatePhoneController,
+                            keyboardType: TextInputType.phone,
+                            maxLength: 10,
+                            enabled: !_phoneGateOtpSent,
+                            inputFormatters: [
+                              FilteringTextInputFormatter.digitsOnly,
+                              LengthLimitingTextInputFormatter(10),
+                            ],
+                            autofillHints: const [
+                              AutofillHints.telephoneNumber
+                            ],
+                            textInputAction: TextInputAction.next,
+                            decoration: const InputDecoration(
+                              labelText: AppStrings.phoneGatePhoneLabel,
+                              prefixText: '+91 ',
+                              hintText: AppStrings.phoneGatePhoneHint,
+                              counterText: '',
                             ),
                           ),
                           if (_phoneGateOtpSent) ...[
-                            const SizedBox(width: 10),
-                            TextButton(
-                              onPressed: _phoneGateBusy
+                            const SizedBox(height: 12),
+                            TextField(
+                              controller: _phoneGateOtpController,
+                              keyboardType: TextInputType.number,
+                              maxLength: 6,
+                              autofocus: true,
+                              inputFormatters: [
+                                FilteringTextInputFormatter.digitsOnly,
+                                LengthLimitingTextInputFormatter(6),
+                              ],
+                              autofillHints: const [AutofillHints.oneTimeCode],
+                              textInputAction: TextInputAction.done,
+                              onSubmitted: (_) => _phoneGateBusy
                                   ? null
-                                  : () {
-                                      setState(() {
-                                        _phoneGateOtpSent = false;
-                                        _phoneGateOtpController.clear();
-                                        _phoneGateError = null;
-                                      });
-                                    },
-                              child: const Text('Edit Number'),
-                            ),
-                          ],
-                        ],
-                      ),
-                      if (_phoneGateOtpSent) ...[
-                        const SizedBox(height: 8),
-                        Center(
-                          child: TextButton(
-                            onPressed: _phoneGateBusy
-                                ? null
-                                : () =>
-                                    _resendPhoneVerificationOtp(authProvider),
-                            child: Text(
-                              'Resend OTP',
-                              style: TextStyle(
-                                color: c.secondary,
-                                fontSize: 13,
+                                  : _verifyPhoneVerificationOtp(authProvider),
+                              decoration: const InputDecoration(
+                                labelText: AppStrings.phoneGateOtpLabel,
+                                hintText: AppStrings.phoneGateOtpHint,
+                                counterText: '',
                               ),
                             ),
+                          ],
+                          if (_phoneGateError != null) ...[
+                            const SizedBox(height: 8),
+                            Text(
+                              _phoneGateError!,
+                              style: TextStyle(
+                                  color: c.error, fontWeight: FontWeight.w600),
+                            ),
+                          ],
+                          if (_phoneGateInfo != null) ...[
+                            const SizedBox(height: 8),
+                            Text(
+                              _phoneGateInfo!,
+                              style: TextStyle(
+                                  color: c.success,
+                                  fontWeight: FontWeight.w600),
+                            ),
+                          ],
+                          const SizedBox(height: 12),
+                          Row(
+                            children: [
+                              Expanded(
+                                child: ElevatedButton(
+                                  onPressed: _phoneGateBusy
+                                      ? null
+                                      : () => _phoneGateOtpSent
+                                          ? _verifyPhoneVerificationOtp(
+                                              authProvider)
+                                          : _sendPhoneVerificationOtp(
+                                              authProvider),
+                                  child: _phoneGateBusy
+                                      ? const SizedBox(
+                                          width: 18,
+                                          height: 18,
+                                          child: CircularProgressIndicator(
+                                              strokeWidth: 2),
+                                        )
+                                      : Text(_phoneGateOtpSent
+                                          ? AppStrings.phoneGateVerifyOtp
+                                          : AppStrings.phoneGateSendOtp),
+                                ),
+                              ),
+                              if (_phoneGateOtpSent) ...[
+                                const SizedBox(width: 10),
+                                TextButton(
+                                  onPressed: _phoneGateBusy
+                                      ? null
+                                      : () {
+                                          setState(() {
+                                            _phoneGateOtpSent = false;
+                                            _phoneGateOtpController.clear();
+                                            _phoneGateError = null;
+                                            _phoneGateInfo = null;
+                                          });
+                                        },
+                                  child: const Text(
+                                      AppStrings.phoneGateEditNumber),
+                                ),
+                              ],
+                            ],
                           ),
-                        ),
-                      ],
-                      const SizedBox(height: 12),
-                      SizedBox(
-                        width: double.infinity,
-                        child: TextButton(
-                          onPressed: _phoneGateBusy
-                              ? null
-                              : () async {
-                                  final confirmed = await showDialog<bool>(
-                                    context: context,
-                                    builder: (ctx) => AlertDialog(
-                                      title: Text(
-                                        authProvider.isInDeferredSignupFlow
-                                            ? 'Cancel Signup?'
-                                            : 'Go Back?',
-                                      ),
-                                      content: Text(
-                                        authProvider.isInDeferredSignupFlow
-                                            ? 'Confirm if you want to cancel now? Your current signup progress will be lost. You can sign up again anytime.'
-                                            : 'You\'ll need to complete phone verification to access the dashboard.',
-                                      ),
-                                      actions: [
-                                        TextButton(
-                                          onPressed: () =>
-                                              Navigator.pop(ctx, false),
-                                          child: Text(
+                          if (_phoneGateOtpSent) ...[
+                            const SizedBox(height: 8),
+                            Center(
+                              child: TextButton(
+                                onPressed: _phoneGateBusy
+                                    ? null
+                                    : () => _resendPhoneVerificationOtp(
+                                        authProvider),
+                                child: Text(
+                                  AppStrings.phoneGateResendOtp,
+                                  style: TextStyle(
+                                    color: c.secondary,
+                                    fontSize: 13,
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ],
+                          const SizedBox(height: 12),
+                          SizedBox(
+                            width: double.infinity,
+                            child: TextButton(
+                              onPressed: _phoneGateBusy
+                                  ? null
+                                  : () async {
+                                      final confirmed = await showDialog<bool>(
+                                        context: context,
+                                        builder: (ctx) => AlertDialog(
+                                          title: Text(
                                             authProvider.isInDeferredSignupFlow
-                                                ? 'No'
-                                                : 'Cancel',
+                                                ? AppStrings
+                                                    .phoneGateCancelSignupTitle
+                                                : AppStrings
+                                                    .phoneGateGoBackTitle,
                                           ),
-                                        ),
-                                        TextButton(
-                                          onPressed: () =>
-                                              Navigator.pop(ctx, true),
-                                          child: Text(
+                                          content: Text(
                                             authProvider.isInDeferredSignupFlow
-                                                ? 'Yes'
-                                                : 'Go Back to Login',
+                                                ? AppStrings
+                                                    .phoneGateCancelSignupBody
+                                                : AppStrings
+                                                    .phoneGateGoBackBody,
                                           ),
+                                          actions: [
+                                            TextButton(
+                                              onPressed: () =>
+                                                  Navigator.pop(ctx, false),
+                                              child: Text(
+                                                authProvider
+                                                        .isInDeferredSignupFlow
+                                                    ? AppStrings.phoneGateNo
+                                                    : AppStrings
+                                                        .ownerDashCancel,
+                                              ),
+                                            ),
+                                            TextButton(
+                                              onPressed: () =>
+                                                  Navigator.pop(ctx, true),
+                                              child: Text(
+                                                authProvider
+                                                        .isInDeferredSignupFlow
+                                                    ? AppStrings.phoneGateYes
+                                                    : AppStrings
+                                                        .phoneGateGoBackToLogin,
+                                              ),
+                                            ),
+                                          ],
                                         ),
-                                      ],
-                                    ),
-                                  );
-                                  if (confirmed ?? false) {
-                                    // Use cancelDeferredSignup to properly clean up
-                                    if (authProvider.isInDeferredSignupFlow) {
-                                      await authProvider.cancelDeferredSignup();
-                                    } else {
-                                      await authProvider.signOut();
-                                    }
-                                    if (mounted) {
-                                      Navigator.pushReplacementNamed(
-                                        context,
-                                        AppRoutes.ownerAuth,
                                       );
-                                    }
-                                  }
-                                },
-                          child: Text(
-                              authProvider.isInDeferredSignupFlow
-                                  ? 'Cancel Signup'
-                                  : 'Back to Login',
-                              style: const TextStyle(fontSize: 12)),
-                        ),
+                                      if (confirmed ?? false) {
+                                        if (authProvider
+                                            .isInDeferredSignupFlow) {
+                                          await authProvider
+                                              .cancelDeferredSignup();
+                                        } else {
+                                          await authProvider.signOut();
+                                        }
+                                        if (!mounted) return;
+                                        Navigator.pushReplacementNamed(
+                                          context,
+                                          AppRoutes.ownerAuth,
+                                        );
+                                      }
+                                    },
+                              child: Text(
+                                  authProvider.isInDeferredSignupFlow
+                                      ? AppStrings.phoneGateCancelSignup
+                                      : AppStrings.phoneGateBackToLogin,
+                                  style: const TextStyle(fontSize: 12)),
+                            ),
+                          ),
+                        ],
                       ),
-                    ],
+                    ),
                   ),
                 ),
               ),
-            ),
+            ],
           ),
-        ],
-      ),
+        );
+      },
     );
   }
 
@@ -509,8 +615,9 @@ class _OwnerDashboardScreenState extends State<OwnerDashboardScreen>
 
   void _pauseAutoSlide() {
     _autoSlideTimer?.cancel();
-    // Resume after 5 seconds of inactivity
-    Future.delayed(const Duration(seconds: 5), () {
+    _autoSlideResumeTimer?.cancel();
+    // Resume after 5 seconds of inactivity (cancellable Timer so dispose is safe).
+    _autoSlideResumeTimer = Timer(const Duration(seconds: 5), () {
       if (mounted) _startAutoSlide();
     });
   }
@@ -562,15 +669,6 @@ class _OwnerDashboardScreenState extends State<OwnerDashboardScreen>
     }
   }
 
-  void _loadData() {
-    final authProvider = Provider.of<AuthProvider>(context, listen: false);
-    final turfProvider = Provider.of<TurfProvider>(context, listen: false);
-
-    if (authProvider.currentUserId != null) {
-      turfProvider.loadOwnerTurfs(authProvider.currentUserId!);
-    }
-  }
-
   void _refreshBookings() {
     final turfProvider = Provider.of<TurfProvider>(context, listen: false);
     final bookingProvider =
@@ -593,8 +691,12 @@ class _OwnerDashboardScreenState extends State<OwnerDashboardScreen>
 
   @override
   Widget build(BuildContext context) {
-    final authProvider = Provider.of<AuthProvider>(context);
-    final isPhoneLocked = authProvider.requiresOwnerPhoneVerificationGate;
+    // OD-05: only listen to the gate flag here — the rest is read inside
+    // the Consumer in `_buildPhoneVerificationLock` so the entire scaffold
+    // does not rebuild on every AuthProvider notification.
+    final isPhoneLocked = context.select<AuthProvider, bool>(
+      (a) => a.requiresOwnerPhoneVerificationGate,
+    );
 
     final c = AppColors.of(context);
     return Stack(
@@ -619,50 +721,53 @@ class _OwnerDashboardScreenState extends State<OwnerDashboardScreen>
               ),
             ),
           ),
-          floatingActionButton: Container(
-            height: 58,
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(30),
-              gradient: LinearGradient(
-                colors: [c.primary, c.primaryDark],
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-              ),
-              boxShadow: [
-                BoxShadow(
-                  color: c.primary.withValues(alpha: 0.18),
-                  blurRadius: 18,
-                  offset: const Offset(0, 6),
-                ),
-              ],
-            ),
-            child: Material(
-              color: Colors.transparent,
-              child: InkWell(
+          floatingActionButton: Tooltip(
+            message: AppStrings.ownerDashAddTurf,
+            child: Container(
+              height: 58,
+              decoration: BoxDecoration(
                 borderRadius: BorderRadius.circular(30),
-                onTap: () => Navigator.pushNamed(context, AppRoutes.addTurf),
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 22),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(Icons.add, color: c.onPrimary, size: 22),
-                      const SizedBox(width: 8),
-                      Text(
-                        'Add Turf',
-                        style: TextStyle(
-                            color: c.onPrimary,
-                            fontWeight: FontWeight.w600,
-                            fontSize: 15),
-                      ),
-                    ],
+                gradient: LinearGradient(
+                  colors: [c.primary, c.primaryDark],
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                ),
+                boxShadow: [
+                  BoxShadow(
+                    color: c.primary.withValues(alpha: 0.18),
+                    blurRadius: 18,
+                    offset: const Offset(0, 6),
+                  ),
+                ],
+              ),
+              child: Material(
+                color: Colors.transparent,
+                child: InkWell(
+                  borderRadius: BorderRadius.circular(30),
+                  onTap: () => Navigator.pushNamed(context, AppRoutes.addTurf),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 22),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(Icons.add, color: c.onPrimary, size: 22),
+                        const SizedBox(width: 8),
+                        Text(
+                          AppStrings.ownerDashAddTurf,
+                          style: TextStyle(
+                              color: c.onPrimary,
+                              fontWeight: FontWeight.w600,
+                              fontSize: 15),
+                        ),
+                      ],
+                    ),
                   ),
                 ),
               ),
             ),
           ),
         ),
-        if (isPhoneLocked) _buildPhoneVerificationLock(authProvider),
+        if (isPhoneLocked) _buildPhoneVerificationLock(),
       ],
     );
   }
@@ -683,7 +788,7 @@ class _OwnerDashboardScreenState extends State<OwnerDashboardScreen>
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        'Welcome back,',
+                        AppStrings.ownerDashWelcomeBack,
                         style: TextStyle(
                           fontSize: 14,
                           color: c.textSecondary,
@@ -707,22 +812,25 @@ class _OwnerDashboardScreenState extends State<OwnerDashboardScreen>
                       // Theme toggle
                       Consumer<ThemeProvider>(
                         builder: (context, themeProvider, _) {
-                          return GestureDetector(
-                            onTap: () => themeProvider.toggle(),
-                            child: Container(
-                              width: 38,
-                              height: 38,
-                              decoration: BoxDecoration(
-                                color: c.glassFill,
-                                shape: BoxShape.circle,
-                                border: Border.all(color: c.glassBorder),
-                              ),
-                              child: Icon(
-                                themeProvider.isDarkMode
-                                    ? Icons.light_mode_rounded
-                                    : Icons.dark_mode_rounded,
-                                color: c.primary,
-                                size: 20,
+                          return Tooltip(
+                            message: AppStrings.ownerDashThemeToggleTooltip,
+                            child: GestureDetector(
+                              onTap: () => themeProvider.toggle(),
+                              child: Container(
+                                width: 38,
+                                height: 38,
+                                decoration: BoxDecoration(
+                                  color: c.glassFill,
+                                  shape: BoxShape.circle,
+                                  border: Border.all(color: c.glassBorder),
+                                ),
+                                child: Icon(
+                                  themeProvider.isDarkMode
+                                      ? Icons.light_mode_rounded
+                                      : Icons.dark_mode_rounded,
+                                  color: c.primary,
+                                  size: 20,
+                                ),
                               ),
                             ),
                           );
@@ -730,6 +838,7 @@ class _OwnerDashboardScreenState extends State<OwnerDashboardScreen>
                       ),
                       const SizedBox(width: 10),
                       PopupMenuButton<String>(
+                        tooltip: AppStrings.ownerDashAccountMenuTooltip,
                         icon: Container(
                           width: 40,
                           height: 40,
@@ -772,7 +881,7 @@ class _OwnerDashboardScreenState extends State<OwnerDashboardScreen>
                               Icon(Icons.person_outline,
                                   color: c.textSecondary),
                               const SizedBox(width: 8),
-                              Text('Profile',
+                              Text(AppStrings.ownerDashProfile,
                                   style: TextStyle(color: c.textPrimary))
                             ]),
                           ),
@@ -782,7 +891,8 @@ class _OwnerDashboardScreenState extends State<OwnerDashboardScreen>
                             child: Row(children: [
                               Icon(Icons.logout, color: c.error),
                               const SizedBox(width: 8),
-                              Text('Logout', style: TextStyle(color: c.error))
+                              Text(AppStrings.ownerDashLogout,
+                                  style: TextStyle(color: c.error))
                             ]),
                           ),
                         ],
@@ -832,14 +942,14 @@ class _OwnerDashboardScreenState extends State<OwnerDashboardScreen>
                 return PopScope(
                   canPop: false,
                   child: AlertDialog(
-                    title: const Text('Logout'),
-                    content: const Text('Are you sure you want to logout?'),
+                    title: const Text(AppStrings.ownerDashLogoutConfirmTitle),
+                    content: const Text(AppStrings.ownerDashLogoutConfirmBody),
                     actions: [
                       TextButton(
                         onPressed: isLoading
                             ? null
                             : () => Navigator.pop(dialogContext, false),
-                        child: const Text('Cancel'),
+                        child: const Text(AppStrings.ownerDashCancel),
                       ),
                       TextButton(
                         onPressed: isLoading
@@ -851,6 +961,13 @@ class _OwnerDashboardScreenState extends State<OwnerDashboardScreen>
 
                                 if (authProvider.errorMessage != null) {
                                   setDialogState(() => isLoading = false);
+                                  // OD-01: surface logout error to user.
+                                  showAppToast(
+                                    context,
+                                    authProvider.errorMessage ??
+                                        AppStrings.ownerDashLogoutFailed,
+                                    type: ToastType.error,
+                                  );
                                   return;
                                 }
 
@@ -859,8 +976,9 @@ class _OwnerDashboardScreenState extends State<OwnerDashboardScreen>
                                 }
                               },
                         child: isLoading
-                            ? const _BouncingBallLoader()
-                            : Text('Logout', style: TextStyle(color: c.error)),
+                            ? _BouncingBallLoader(color: c.error)
+                            : Text(AppStrings.ownerDashLogout,
+                                style: TextStyle(color: c.error)),
                       ),
                     ],
                   ),
@@ -890,7 +1008,7 @@ class _OwnerDashboardScreenState extends State<OwnerDashboardScreen>
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
-                'Quick Overview',
+                AppStrings.ownerDashQuickOverview,
                 style: TextStyle(
                   fontSize: 18,
                   fontWeight: FontWeight.bold,
@@ -915,48 +1033,53 @@ class _OwnerDashboardScreenState extends State<OwnerDashboardScreen>
                       final realIndex = index % _carouselRealCount;
                       final cards = [
                         _CarouselCardData(
-                          title: "Today's Bookings",
+                          title: AppStrings.ownerDashCardTodaysBookings,
                           value: '${bookingProvider.todaysCount}',
                           icon: Icons.event_available,
                           iconColor: const Color(0xFF1F9D57),
                           bgColor: const Color(0xFFCFEED8),
-                          subtitle: 'Confirmed',
+                          subtitle: AppStrings.ownerDashCardTodaysBookingsSub,
                         ),
                         _CarouselCardData(
-                          title: 'Pending Payments',
+                          title: AppStrings.ownerDashCardPendingPayments,
                           value: '${bookingProvider.pendingPaymentsCount}',
                           icon: Icons.currency_rupee,
                           iconColor: const Color(0xFFEA6A1B),
                           bgColor: const Color(0xFFFFD8BF),
-                          subtitle: 'Pay at turf',
+                          subtitle: AppStrings.ownerDashCardPendingPaymentsSub,
                         ),
                         _CarouselCardData(
-                          title: 'Total Turfs',
+                          title: AppStrings.ownerDashCardTotalTurfs,
                           value: '${turfProvider.totalTurfs}',
                           icon: Icons.sports_cricket,
                           iconColor: const Color(0xFF5B47C7),
                           bgColor: const Color(0xFFD9CCFF),
-                          subtitle: '${turfProvider.approvedCount} approved',
+                          subtitle:
+                              '${turfProvider.approvedCount}${AppStrings.ownerDashCardTotalTurfsSubSuffix}',
                         ),
                         _CarouselCardData(
-                          title: 'Pending Approval',
+                          title: AppStrings.ownerDashCardPendingApproval,
                           value: '${turfProvider.pendingCount}',
                           icon: Icons.pending_actions,
                           iconColor: const Color(0xFFC69214),
                           bgColor: const Color(0xFFFFE7A8),
-                          subtitle: 'Verification',
+                          subtitle: AppStrings.ownerDashCardPendingApprovalSub,
                         ),
                       ];
 
-                      // Scale: active = 1.0, neighbors shrink to 0.9
-                      final diff = (index - _carouselPage).abs();
-                      final scale = (1 - diff * 0.10).clamp(0.88, 1.0);
-                      final opacity = (1 - diff * 0.25).clamp(0.6, 1.0);
-
-                      return Transform.scale(
-                        scale: scale,
-                        child: Opacity(
-                          opacity: opacity,
+                      // OD-04: only this card subtree rebuilds on scroll.
+                      return ValueListenableBuilder<double>(
+                        valueListenable: _carouselPageNotifier,
+                        builder: (context, page, child) {
+                          final diff = (index - page).abs();
+                          final scale = (1 - diff * 0.10).clamp(0.88, 1.0);
+                          final opacity = (1 - diff * 0.25).clamp(0.6, 1.0);
+                          return Transform.scale(
+                            scale: scale,
+                            child: Opacity(opacity: opacity, child: child),
+                          );
+                        },
+                        child: RepaintBoundary(
                           child: _buildCarouselCard(cards[realIndex]),
                         ),
                       );
@@ -1022,10 +1145,6 @@ class _OwnerDashboardScreenState extends State<OwnerDashboardScreen>
                 ],
               ),
               const Spacer(),
-              const Text(
-                '',
-                style: TextStyle(fontSize: 0),
-              ),
               Text(
                 data.title,
                 style: const TextStyle(
@@ -1057,7 +1176,7 @@ class _OwnerDashboardScreenState extends State<OwnerDashboardScreen>
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
-            'Quick Actions',
+            AppStrings.ownerDashQuickActions,
             style: TextStyle(
               fontSize: 18,
               fontWeight: FontWeight.bold,
@@ -1075,8 +1194,8 @@ class _OwnerDashboardScreenState extends State<OwnerDashboardScreen>
                   child: _animatedCard(
                     index: 0,
                     child: _buildDashCard(
-                      title: 'Booking Dashboard',
-                      subtitle: 'Create bookings and manage slot availability',
+                      title: AppStrings.ownerDashActionBookingTitle,
+                      subtitle: AppStrings.ownerDashActionBookingSub,
                       icon: Icons.access_time_outlined,
                       bgColor: const Color(0xFF1F2937),
                       onTap: () =>
@@ -1094,9 +1213,8 @@ class _OwnerDashboardScreenState extends State<OwnerDashboardScreen>
                         child: _animatedCard(
                           index: 1,
                           child: _buildDashCard(
-                            title: 'View Turfs',
-                            subtitle:
-                                'Manage your turfs, view status and edit details',
+                            title: AppStrings.ownerDashActionTurfsTitle,
+                            subtitle: AppStrings.ownerDashActionTurfsSub,
                             icon: Icons.stadium_outlined,
                             bgColor: const Color(0xFF273445),
                             onTap: () =>
@@ -1109,8 +1227,8 @@ class _OwnerDashboardScreenState extends State<OwnerDashboardScreen>
                         child: _animatedCard(
                           index: 2,
                           child: _buildDashCard(
-                            title: 'View History',
-                            subtitle: 'View all bookings and manage payments',
+                            title: AppStrings.ownerDashActionHistoryTitle,
+                            subtitle: AppStrings.ownerDashActionHistorySub,
                             icon: Icons.calendar_month_outlined,
                             bgColor: const Color(0xFF334155),
                             onTap: () => Navigator.pushNamed(
@@ -1129,9 +1247,8 @@ class _OwnerDashboardScreenState extends State<OwnerDashboardScreen>
           _animatedCard(
             index: 3,
             child: _buildDashCard(
-              title: 'Analytics Dashboard',
-              subtitle:
-                  'View trends, analyse peak hours and utilisation metrics',
+              title: AppStrings.ownerDashActionAnalyticsTitle,
+              subtitle: AppStrings.ownerDashActionAnalyticsSub,
               icon: Icons.analytics_outlined,
               bgColor: const Color(0xFF3F4D63),
               onTap: () => Navigator.pushNamed(context, AppRoutes.analytics),
@@ -1227,10 +1344,12 @@ class _OwnerDashboardScreenState extends State<OwnerDashboardScreen>
   }
 
   Widget _buildRecentActivity() {
-    return Consumer<BookingProvider>(
-      builder: (context, bookingProvider, _) {
+    // OD-25: Selector limits rebuilds to changes in the recent-bookings list
+    // rather than every BookingProvider notify (e.g. status flips, totals).
+    return Selector<BookingProvider, List<BookingModel>>(
+      selector: (_, p) => p.recentBookings,
+      builder: (context, recentBookings, _) {
         final c = AppColors.of(context);
-        final recentBookings = bookingProvider.recentBookings;
 
         return NotchedSectionContainer(
           margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
@@ -1241,7 +1360,7 @@ class _OwnerDashboardScreenState extends State<OwnerDashboardScreen>
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
                   Text(
-                    'Recent Bookings',
+                    AppStrings.ownerDashRecentBookings,
                     style: TextStyle(
                       fontSize: 18,
                       fontWeight: FontWeight.bold,
@@ -1252,7 +1371,7 @@ class _OwnerDashboardScreenState extends State<OwnerDashboardScreen>
                     onPressed: () {
                       Navigator.pushNamed(context, AppRoutes.bookingManagement);
                     },
-                    child: const Text('View All'),
+                    child: const Text(AppStrings.ownerDashViewAll),
                   ),
                 ],
               ),
@@ -1282,7 +1401,7 @@ class _OwnerDashboardScreenState extends State<OwnerDashboardScreen>
             ),
             const SizedBox(height: 12),
             Text(
-              'No recent bookings',
+              AppStrings.ownerDashNoRecentBookings,
               style: TextStyle(
                 color: c.textSecondary,
                 fontSize: 14,
@@ -1300,21 +1419,7 @@ class _OwnerDashboardScreenState extends State<OwnerDashboardScreen>
       if (parts.length == 3) {
         final day = parts[2];
         final monthIndex = int.parse(parts[1]);
-        const months = [
-          'Jan',
-          'Feb',
-          'Mar',
-          'Apr',
-          'May',
-          'Jun',
-          'Jul',
-          'Aug',
-          'Sep',
-          'Oct',
-          'Nov',
-          'Dec'
-        ];
-        return '$day\n${months[monthIndex - 1]}';
+        return '$day\n${_monthShortNames[monthIndex - 1]}';
       }
     } catch (_) {}
     return bookingDate;
@@ -1409,7 +1514,7 @@ class _OwnerDashboardScreenState extends State<OwnerDashboardScreen>
                 Text(
                   booking.customerName.isNotEmpty
                       ? booking.customerName
-                      : 'Customer',
+                      : AppStrings.ownerDashCustomerFallback,
                   overflow: TextOverflow.ellipsis,
                   maxLines: 1,
                   style: TextStyle(
@@ -1437,15 +1542,15 @@ class _OwnerDashboardScreenState extends State<OwnerDashboardScreen>
             ),
           ),
           const SizedBox(width: 8),
-          _buildPaymentBadge(booking.paymentStatus.displayName),
+          _buildPaymentBadge(booking.paymentStatus),
         ],
       ),
     );
   }
 
-  Widget _buildPaymentBadge(String status) {
+  Widget _buildPaymentBadge(PaymentStatus status) {
     final c = AppColors.of(context);
-    final bool isPaid = status.toLowerCase() == 'paid';
+    final bool isPaid = status == PaymentStatus.paid;
     final Color bgColor = isPaid ? c.successLight : c.border;
     final Color textColor = isPaid ? c.success : c.textSecondary;
 
@@ -1456,7 +1561,7 @@ class _OwnerDashboardScreenState extends State<OwnerDashboardScreen>
         borderRadius: BorderRadius.circular(20),
       ),
       child: Text(
-        status,
+        status.displayName,
         style: TextStyle(
           fontSize: 11,
           fontWeight: FontWeight.w600,
@@ -1468,23 +1573,7 @@ class _OwnerDashboardScreenState extends State<OwnerDashboardScreen>
 
   String _getFormattedDate() {
     final now = DateTime.now();
-    final months = [
-      'Jan',
-      'Feb',
-      'Mar',
-      'Apr',
-      'May',
-      'Jun',
-      'Jul',
-      'Aug',
-      'Sep',
-      'Oct',
-      'Nov',
-      'Dec'
-    ];
-    final days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
-
-    return '${days[now.weekday - 1]}, ${now.day} ${months[now.month - 1]} ${now.year}';
+    return '${_weekdayShortNames[now.weekday - 1]}, ${now.day} ${_monthShortNames[now.month - 1]} ${now.year}';
   }
 }
 
@@ -1507,7 +1596,9 @@ class _CarouselCardData {
 }
 
 class _BouncingBallLoader extends StatefulWidget {
-  const _BouncingBallLoader();
+  const _BouncingBallLoader({required this.color});
+
+  final Color color;
 
   @override
   State<_BouncingBallLoader> createState() => _BouncingBallLoaderState();
@@ -1549,8 +1640,8 @@ class _BouncingBallLoaderState extends State<_BouncingBallLoader>
         child: Container(
           width: 10,
           height: 10,
-          decoration: const BoxDecoration(
-            color: Colors.red,
+          decoration: BoxDecoration(
+            color: widget.color,
             shape: BoxShape.circle,
           ),
         ),

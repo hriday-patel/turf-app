@@ -3,6 +3,8 @@ import 'package:provider/provider.dart';
 import '../../../data/models/booking_model.dart';
 import '../../../data/services/database_service.dart';
 import '../../../core/constants/enums.dart';
+import '../../../core/constants/strings.dart';
+import '../../../core/utils/price_calculator.dart';
 import '../../../app/routes.dart';
 import '../../auth/providers/auth_provider.dart';
 import '../../../core/utils/app_toast.dart';
@@ -20,7 +22,8 @@ class BookingDetailScreen extends StatefulWidget {
   State<BookingDetailScreen> createState() => _BookingDetailScreenState();
 }
 
-class _BookingDetailScreenState extends State<BookingDetailScreen> with RouteAware, TickerProviderStateMixin {
+class _BookingDetailScreenState extends State<BookingDetailScreen>
+    with RouteAware, TickerProviderStateMixin {
   final DatabaseService _dbService = DatabaseService();
   BookingModel? _booking;
   bool _isLoading = true;
@@ -38,12 +41,14 @@ class _BookingDetailScreenState extends State<BookingDetailScreen> with RouteAwa
       vsync: this,
       duration: const Duration(milliseconds: 300),
     );
-    _entranceOpacity = CurvedAnimation(parent: _entranceCtrl, curve: Curves.easeOut);
-    _entranceSlide = Tween<Offset>(begin: const Offset(0, 0.03), end: Offset.zero)
+    _entranceOpacity =
+        CurvedAnimation(parent: _entranceCtrl, curve: Curves.easeOut);
+    _entranceSlide = Tween<Offset>(
+            begin: const Offset(0, 0.03), end: Offset.zero)
         .animate(CurvedAnimation(parent: _entranceCtrl, curve: Curves.easeOut));
     _loadBooking();
   }
-  
+
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
@@ -52,14 +57,14 @@ class _BookingDetailScreenState extends State<BookingDetailScreen> with RouteAwa
       AppRoutes.routeObserver.subscribe(this, route);
     }
   }
-  
+
   @override
   void dispose() {
     _entranceCtrl.dispose();
     AppRoutes.routeObserver.unsubscribe(this);
     super.dispose();
   }
-  
+
   @override
   void didPopNext() {
     debugPrint('BookingDetail: didPopNext - refreshing data');
@@ -78,14 +83,14 @@ class _BookingDetailScreenState extends State<BookingDetailScreen> with RouteAwa
         _entranceCtrl.forward();
       } else {
         setState(() {
-          _errorMessage = 'Booking not found';
+          _errorMessage = AppStrings.bookingDetailNotFound;
           _isLoading = false;
         });
       }
     } catch (e) {
       if (!mounted) return;
       setState(() {
-        _errorMessage = 'Failed to load booking: $e';
+        _errorMessage = '${AppStrings.bookingDetailLoadFailed}: $e';
         _isLoading = false;
       });
     }
@@ -96,20 +101,17 @@ class _BookingDetailScreenState extends State<BookingDetailScreen> with RouteAwa
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('Cancel Booking'),
-        content: const Text(
-          'Are you sure you want to cancel this booking? '
-          'This action cannot be undone and the slot will become available again.',
-        ),
+        title: const Text(AppStrings.bookingDetailDialogCancelTitle),
+        content: const Text(AppStrings.bookingDetailDialogCancelBody),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context, false),
-            child: const Text('Keep Booking'),
+            child: const Text(AppStrings.bookingDetailDialogKeep),
           ),
           TextButton(
             onPressed: () => Navigator.pop(context, true),
             style: TextButton.styleFrom(foregroundColor: c.error),
-            child: const Text('Cancel Booking'),
+            child: const Text(AppStrings.bookingDetailDialogConfirmCancel),
           ),
         ],
       ),
@@ -120,28 +122,41 @@ class _BookingDetailScreenState extends State<BookingDetailScreen> with RouteAwa
     setState(() => _isProcessing = true);
 
     final authProvider = Provider.of<AuthProvider>(context, listen: false);
-    final bookingProvider = Provider.of<BookingProvider>(context, listen: false);
+    final bookingProvider =
+        Provider.of<BookingProvider>(context, listen: false);
 
     if (authProvider.currentUserId == null) {
       if (mounted) setState(() => _isProcessing = false);
       return;
     }
 
-    final success = await bookingProvider.cancelBooking(
-      _booking!.bookingId,
-      _booking!.slotId,
-      authProvider.currentUserId!,
-      'Cancelled by owner',
-    );
+    try {
+      final success = await bookingProvider.cancelBooking(
+        _booking!.bookingId,
+        _booking!.slotId,
+        authProvider.currentUserId!,
+        AppStrings.bookingDetailReasonOwner,
+      );
 
-    if (!mounted) return;
-    setState(() => _isProcessing = false);
+      if (!mounted) return;
+      setState(() => _isProcessing = false);
 
-    if (success) {
-      showAppToast(context, 'Booking cancelled successfully', type: ToastType.success);
-      Navigator.pop(context, true);
-    } else {
-      showAppToast(context, bookingProvider.errorMessage ?? 'Failed to cancel booking', type: ToastType.error);
+      if (success) {
+        showAppToast(context, AppStrings.bookingDetailToastCancelSuccess,
+            type: ToastType.success);
+        Navigator.pop(context, true);
+      } else {
+        showAppToast(
+            context,
+            bookingProvider.errorMessage ??
+                AppStrings.bookingDetailToastCancelFailed,
+            type: ToastType.error);
+      }
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _isProcessing = false);
+      showAppToast(context, '${AppStrings.bookingDetailToastCancelFailed}: $e',
+          type: ToastType.error);
     }
   }
 
@@ -150,17 +165,31 @@ class _BookingDetailScreenState extends State<BookingDetailScreen> with RouteAwa
 
     setState(() => _isProcessing = true);
 
-    final bookingProvider = Provider.of<BookingProvider>(context, listen: false);
-    final success = await bookingProvider.markPaymentReceived(_booking!.bookingId);
+    try {
+      final bookingProvider =
+          Provider.of<BookingProvider>(context, listen: false);
+      final success =
+          await bookingProvider.markPaymentReceived(_booking!.bookingId);
 
-    if (success) {
-      await _loadBooking();
-      if (mounted) {
-        showAppToast(context, 'Payment marked as received', type: ToastType.success);
+      if (success) {
+        await _loadBooking();
+        if (mounted) {
+          showAppToast(context, AppStrings.bookingDetailToastPaymentMarked,
+              type: ToastType.success);
+        }
+      } else if (mounted) {
+        showAppToast(context, AppStrings.bookingDetailToastPaymentFailed,
+            type: ToastType.error);
       }
+    } catch (e) {
+      if (mounted) {
+        showAppToast(
+            context, '${AppStrings.bookingDetailToastPaymentFailed}: $e',
+            type: ToastType.error);
+      }
+    } finally {
+      if (mounted) setState(() => _isProcessing = false);
     }
-
-    if (mounted) setState(() => _isProcessing = false);
   }
 
   @override
@@ -178,12 +207,18 @@ class _BookingDetailScreenState extends State<BookingDetailScreen> with RouteAwa
               child: Row(
                 children: [
                   IconButton(
-                    icon: Icon(Icons.arrow_back_ios, color: c.textPrimary, size: 20),
+                    tooltip: AppStrings.bookingDetailTooltipBack,
+                    icon: Icon(Icons.arrow_back_ios,
+                        color: c.textPrimary, size: 20),
                     onPressed: () => Navigator.pop(context),
                   ),
                   Expanded(
                     child: Center(
-                      child: Text('Booking Details', style: TextStyle(color: c.textPrimary, fontWeight: FontWeight.w600, fontSize: 18)),
+                      child: Text(AppStrings.bookingDetailTitle,
+                          style: TextStyle(
+                              color: c.textPrimary,
+                              fontWeight: FontWeight.w600,
+                              fontSize: 18)),
                     ),
                   ),
                   const SizedBox(width: 48),
@@ -212,7 +247,9 @@ class _BookingDetailScreenState extends State<BookingDetailScreen> with RouteAwa
             children: [
               Icon(Icons.error_outline, size: 64, color: c.error),
               const SizedBox(height: 16),
-              Text(_errorMessage!, style: TextStyle(color: c.error), textAlign: TextAlign.center),
+              Text(_errorMessage!,
+                  style: TextStyle(color: c.error),
+                  textAlign: TextAlign.center),
             ],
           ),
         ),
@@ -220,7 +257,7 @@ class _BookingDetailScreenState extends State<BookingDetailScreen> with RouteAwa
     }
 
     if (_booking == null) {
-      return const Center(child: Text('Booking not found'));
+      return const Center(child: Text(AppStrings.bookingDetailNotFound));
     }
 
     return FadeTransition(
@@ -229,103 +266,129 @@ class _BookingDetailScreenState extends State<BookingDetailScreen> with RouteAwa
         position: _entranceSlide,
         child: SingleChildScrollView(
           padding: const EdgeInsets.all(20),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          // Status Banner
-          _buildStatusBanner(),
-          const SizedBox(height: 20),
-
-          // Customer Info
-          _buildSection(
-            title: 'Customer Information',
-            icon: Icons.person_outline,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              _buildInfoRow('Name', _booking!.customerName),
-              _buildInfoRow('Phone', _booking!.customerPhone),
-            ],
-          ),
-          const SizedBox(height: 16),
+              // Status Banner
+              _buildStatusBanner(),
+              const SizedBox(height: 20),
 
-          // Booking Info
-          _buildSection(
-            title: 'Booking Details',
-            icon: Icons.calendar_today_outlined,
-            children: [
-              _buildInfoRow('Turf', _booking!.turfName),
-              if (_booking!.netNumber > 0)
-                _buildInfoRow('Net', 'Net ${_booking!.netNumber}'),
-              _buildInfoRow('Date', _booking!.bookingDate),
-              _buildInfoRow('Time', _booking!.displayTimeRange),
-              _buildInfoRow('Source', _booking!.bookingSource.displayName),
-            ],
-          ),
-          const SizedBox(height: 16),
-
-          // Payment Info
-          _buildSection(
-            title: 'Payment Information',
-            icon: Icons.payment_outlined,
-            children: [
-              _buildInfoRow('Total Amount', '₹${_booking!.amount.toInt()}'),
-              if (_booking!.advanceAmount > 0)
-                _buildInfoRow('Advance Paid', '₹${_booking!.advanceAmount.toInt()}'),
-              if (_booking!.isPartialPayment)
-                _buildInfoRow('Remaining', '₹${_booking!.remainingAmount.toInt()}', valueColor: c.warning),
-              _buildInfoRow('Mode', _booking!.paymentMode.displayName),
-              _buildInfoRow('Status', _booking!.paymentStatus.displayName),
-              if (_booking!.transactionId != null)
-                _buildInfoRow('Transaction ID', _booking!.transactionId!),
-            ],
-          ),
-          const SizedBox(height: 24),
-
-          // Action Buttons
-          if (_booking!.isActive) ...[
-            // Mark Payment Received (for pay at turf)
-            if (_booking!.isPendingPayment)
-              _SwipeToConfirm(
-                onConfirm: _isProcessing ? null : _markPaymentReceived,
-                isProcessing: _isProcessing,
-                label: 'Mark Payment Received',
-                icon: Icons.check_circle_outline,
-                trackColor: c.successLight,
-                borderColor: c.success,
-                textColor: c.success,
-                thumbColor: c.successLight,
+              // Customer Info
+              _buildSection(
+                title: AppStrings.bookingDetailSectionCustomer,
+                icon: Icons.person_outline,
+                children: [
+                  _buildInfoRow(AppStrings.bookingDetailLabelName,
+                      _booking!.customerName),
+                  _buildInfoRow(AppStrings.bookingDetailLabelPhone,
+                      _booking!.customerPhone),
+                ],
               ),
-            const SizedBox(height: 12),
+              const SizedBox(height: 16),
 
-            // Cancel Booking
-            _SwipeToConfirm(
-              onConfirm: _isProcessing ? null : _cancelBooking,
-              isProcessing: _isProcessing,
-              label: 'Cancel Booking',
-              icon: Icons.cancel_outlined,
-              trackColor: c.errorLight,
-              borderColor: c.error,
-              textColor: c.error,
-              thumbColor: c.errorLight,
-            ),
-          ],
+              // Booking Info
+              _buildSection(
+                title: AppStrings.bookingDetailSectionBooking,
+                icon: Icons.calendar_today_outlined,
+                children: [
+                  _buildInfoRow(
+                      AppStrings.bookingDetailLabelTurf, _booking!.turfName),
+                  if (_booking!.netNumber > 0)
+                    _buildInfoRow(AppStrings.bookingDetailLabelNet,
+                        '${AppStrings.bookingDetailLabelNet} ${_booking!.netNumber}'),
+                  _buildInfoRow(
+                      AppStrings.bookingDetailLabelDate, _booking!.bookingDate),
+                  _buildInfoRow(AppStrings.bookingDetailLabelTime,
+                      _booking!.displayTimeRange),
+                  _buildInfoRow(AppStrings.bookingDetailLabelSource,
+                      _booking!.bookingSource.displayName),
+                ],
+              ),
+              const SizedBox(height: 16),
 
-          // Cancellation Info (if cancelled)
-          if (_booking!.bookingStatus == BookingStatus.cancelled) ...[
-            const SizedBox(height: 16),
-            _buildSection(
-              title: 'Cancellation Details',
-              icon: Icons.cancel_outlined,
-              children: [
-                if (_booking!.cancelledBy != null)
-                  _buildInfoRow('Cancelled By', _booking!.cancelledBy!),
-                if (_booking!.cancellationReason != null)
-                  _buildInfoRow('Reason', _booking!.cancellationReason!),
+              // Payment Info
+              _buildSection(
+                title: AppStrings.bookingDetailSectionPayment,
+                icon: Icons.payment_outlined,
+                children: [
+                  _buildInfoRow(AppStrings.bookingDetailLabelTotalAmount,
+                      PriceCalculator.formatPrice(_booking!.amount.toDouble())),
+                  if (_booking!.advanceAmount > 0)
+                    _buildInfoRow(
+                        AppStrings.bookingDetailLabelAdvancePaid,
+                        PriceCalculator.formatPrice(
+                            _booking!.advanceAmount.toDouble())),
+                  if (_booking!.isPartialPayment)
+                    _buildInfoRow(
+                        AppStrings.bookingDetailLabelRemaining,
+                        PriceCalculator.formatPrice(
+                            _booking!.remainingAmount.toDouble()),
+                        valueColor: c.warning),
+                  _buildInfoRow(AppStrings.bookingDetailLabelMode,
+                      _booking!.paymentMode.displayName),
+                  _buildInfoRow(AppStrings.bookingDetailLabelStatus,
+                      _booking!.paymentStatus.displayName),
+                  if (_booking!.transactionId != null)
+                    _buildInfoRow(AppStrings.bookingDetailLabelTransactionId,
+                        _booking!.transactionId!),
+                ],
+              ),
+              const SizedBox(height: 24),
+
+              // Action Buttons
+              if (_booking!.isActive) ...[
+                // Mark Payment Received (for pay at turf)
+                if (_booking!.isPendingPayment)
+                  Tooltip(
+                    message: AppStrings.bookingDetailTooltipMarkPaid,
+                    child: _SwipeToConfirm(
+                      onConfirm: _isProcessing ? null : _markPaymentReceived,
+                      isProcessing: _isProcessing,
+                      label: AppStrings.bookingDetailActionMarkPaid,
+                      icon: Icons.check_circle_outline,
+                      trackColor: c.successLight,
+                      borderColor: c.success,
+                      textColor: c.success,
+                      thumbColor: c.successLight,
+                    ),
+                  ),
+                const SizedBox(height: 12),
+
+                // Cancel Booking
+                Tooltip(
+                  message: AppStrings.bookingDetailTooltipCancel,
+                  child: _SwipeToConfirm(
+                    onConfirm: _isProcessing ? null : _cancelBooking,
+                    isProcessing: _isProcessing,
+                    label: AppStrings.bookingDetailActionCancel,
+                    icon: Icons.cancel_outlined,
+                    trackColor: c.errorLight,
+                    borderColor: c.error,
+                    textColor: c.error,
+                    thumbColor: c.errorLight,
+                  ),
+                ),
               ],
-            ),
-          ],
-        ],
-      ),
-      ),
+
+              // Cancellation Info (if cancelled)
+              if (_booking!.bookingStatus == BookingStatus.cancelled) ...[
+                const SizedBox(height: 16),
+                _buildSection(
+                  title: AppStrings.bookingDetailSectionCancellation,
+                  icon: Icons.cancel_outlined,
+                  children: [
+                    if (_booking!.cancelledBy != null)
+                      _buildInfoRow(AppStrings.bookingDetailLabelCancelledBy,
+                          _booking!.cancelledBy!),
+                    if (_booking!.cancellationReason != null)
+                      _buildInfoRow(AppStrings.bookingDetailLabelReason,
+                          _booking!.cancellationReason!),
+                  ],
+                ),
+              ],
+            ],
+          ),
+        ),
       ),
     );
   }
@@ -371,7 +434,11 @@ class _BookingDetailScreenState extends State<BookingDetailScreen> with RouteAwa
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  isCancelled ? 'Booking Cancelled' : isPending ? 'Payment Pending' : 'Booking Confirmed',
+                  isCancelled
+                      ? AppStrings.bookingDetailBannerCancelled
+                      : isPending
+                          ? AppStrings.bookingDetailBannerPending
+                          : AppStrings.bookingDetailBannerConfirmed,
                   style: TextStyle(
                     fontSize: 17,
                     fontWeight: FontWeight.w600,
@@ -380,7 +447,7 @@ class _BookingDetailScreenState extends State<BookingDetailScreen> with RouteAwa
                 ),
                 const SizedBox(height: 2),
                 Text(
-                  'ID: ${_booking!.bookingId}',
+                  '${AppStrings.bookingDetailIdPrefix}${_booking!.bookingId}',
                   style: TextStyle(
                     fontSize: 12,
                     color: textColor.withValues(alpha: 0.7),
@@ -409,7 +476,10 @@ class _BookingDetailScreenState extends State<BookingDetailScreen> with RouteAwa
         borderRadius: BorderRadius.circular(18),
         border: Border.all(color: c.border),
         boxShadow: [
-          BoxShadow(color: Colors.black.withValues(alpha: 0.04), blurRadius: 8, offset: const Offset(0, 2)),
+          BoxShadow(
+              color: Colors.black.withValues(alpha: 0.04),
+              blurRadius: 8,
+              offset: const Offset(0, 2)),
         ],
       ),
       child: Column(
@@ -584,7 +654,10 @@ class _SwipeToConfirmState extends State<_SwipeToConfirm>
   void _animateReset() {
     final startVal = _dragExtent;
     if (startVal <= 0) {
-      setState(() { _confirmed = false; _dragExtent = 0; });
+      setState(() {
+        _confirmed = false;
+        _dragExtent = 0;
+      });
       return;
     }
     _resetAnim = Tween<double>(begin: startVal, end: 0).animate(
@@ -604,7 +677,10 @@ class _SwipeToConfirmState extends State<_SwipeToConfirm>
     if (status == AnimationStatus.completed && mounted) {
       _resetCtrl.removeListener(_onResetTick);
       _resetCtrl.removeStatusListener(_onResetDone);
-      setState(() { _confirmed = false; _dragExtent = 0; });
+      setState(() {
+        _confirmed = false;
+        _dragExtent = 0;
+      });
     }
   }
 
@@ -642,7 +718,8 @@ class _SwipeToConfirmState extends State<_SwipeToConfirm>
       builder: (context, constraints) {
         final trackWidth = constraints.maxWidth;
         final maxDrag = trackWidth - _thumbSize - (_trackPadding * 2);
-        final progress = maxDrag > 0 ? (_dragExtent / maxDrag).clamp(0.0, 1.0) : 0.0;
+        final progress =
+            maxDrag > 0 ? (_dragExtent / maxDrag).clamp(0.0, 1.0) : 0.0;
 
         return Container(
           width: double.infinity,
@@ -665,7 +742,9 @@ class _SwipeToConfirmState extends State<_SwipeToConfirm>
               // Label text (fades as thumb slides)
               Center(
                 child: Opacity(
-                  opacity: widget.isProcessing ? 0.0 : (1.0 - progress * 1.5).clamp(0.0, 1.0),
+                  opacity: widget.isProcessing
+                      ? 0.0
+                      : (1.0 - progress * 1.5).clamp(0.0, 1.0),
                   child: Row(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
@@ -709,7 +788,8 @@ class _SwipeToConfirmState extends State<_SwipeToConfirm>
                       decoration: BoxDecoration(
                         color: widget.thumbColor,
                         borderRadius: BorderRadius.circular(24),
-                        border: Border.all(color: widget.borderColor.withValues(alpha: 0.5)),
+                        border: Border.all(
+                            color: widget.borderColor.withValues(alpha: 0.5)),
                         boxShadow: [
                           BoxShadow(
                             color: Colors.black.withValues(alpha: 0.08),
